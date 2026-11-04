@@ -1,11 +1,11 @@
 # PostHog Herdr layouts and mods
 
 Layouts and mods for [Herdr](https://herdr.dev) that people at PostHog made for themselves and share here.
-Each top-level folder is one piece. You pick the pieces you want, and `install.sh` links them into your Herdr config, so a `git pull` brings you your teammates' updates.
+Each top-level folder is one piece. You pick the pieces you want, and `install.sh` copies them into your Herdr config and keeps them up to date with your teammates' changes.
 
 | Piece | What it is |
 | --- | --- |
-| [`posthog`](posthog/RECIPE.md) | Herdr's main layout plus a sidebar panel for your PRs, the Trunk merge queue and your reviews. |
+| [`github-and-trunk`](github-and-trunk/RECIPE.md) | Herdr's main layout plus a sidebar panel for your PRs, the Trunk merge queue and your reviews. |
 
 ## Install
 
@@ -18,12 +18,12 @@ cd herdr
 The first run asks which pieces to enable. Then pick a layout with `cmd-shift-l`, or:
 
 ```sh
-herdr-app do layout.switch '{"name":"posthog"}'
+herdr-app do layout.switch '{"name":"github-and-trunk"}'
 ```
 
 `ctrl-alt-shift-escape` always takes you back to Herdr's default layout.
 
-The `posthog` piece needs the [GitHub CLI](https://cli.github.com) logged in (`gh auth login`).
+The `github-and-trunk` piece needs the [GitHub CLI](https://cli.github.com) logged in (`gh auth login`).
 For the merge queue it also needs Trunk: a `PostHog/posthog` checkout, and `trunk` on your PATH or from that checkout's flox environment, after `trunk login`.
 Without Trunk, the rest of the panel works and the Queue tab says what's missing.
 
@@ -33,7 +33,7 @@ Without Trunk, the rest of the panel works and the Queue tab says what's missing
 ./install.sh
 ```
 
-This pulls the latest, relinks your pieces, and makes Herdr reload them.
+This pulls the latest and copies what changed. Herdr reloads it by itself.
 It asks about pieces added since your last run.
 It skips the pull when your checkout has local changes.
 
@@ -41,8 +41,8 @@ It skips the pull when your checkout has local changes.
 
 ```sh
 ./install.sh list               # every piece, [x] when enabled here
-./install.sh enable <piece>     # link it
-./install.sh disable <piece>    # unlink it
+./install.sh enable <piece>     # install it
+./install.sh disable <piece>    # remove it
 ```
 
 `cmd-shift-l` cycles through every layout in Herdr's config folder.
@@ -69,11 +69,11 @@ It only removes files it placed itself, which it lists in `~/.config/herdr-app/.
    Herdr's own guide, `~/.config/herdr-app/AGENTS.md`, covers layouts, mods and the `RECIPE.md` format.
    The first sentence of `RECIPE.md` is the summary `install.sh` shows, so keep it short.
 2. Pick names that no other piece uses and that Herdr doesn't ship (`main`, `terminals`, `win98`, `agents`, `tabs`, `spaces`, and the rest under `~/.config/herdr-app/mods/`). The script skips a name Herdr ships, because Herdr would overwrite it.
-3. Link it and try it: `./install.sh enable my-piece`, then `herdr-app check ~/.config/herdr-app/mods/<name>`.
+3. Install it and try it: `./install.sh enable my-piece`, then `herdr-app check ~/.config/herdr-app/mods/<name>`.
 4. Open a PR.
 
-`install.sh` symlinks `.js` and `.json` files and copies everything else, because Herdr won't load an SVG through a symlink, and other assets likely behave the same.
-Herdr also doesn't watch files through symlinks, so it won't reload your mod when you save.
-Run `./install.sh --no-pull` after a change: it reloads the code and refreshes the copied files.
+Herdr runs the copies in its config folder, not the files here, so saving in the repo changes nothing yet.
+Run `./install.sh --no-pull` after a change: it copies what changed, and Herdr reloads it.
+Symlinks don't work: Herdr refuses a module or an image that resolves outside its own folder.
 
 This repo is public. Keep tokens, customer data and internal URLs out of it, including screenshots.

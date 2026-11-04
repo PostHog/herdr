@@ -1,7 +1,7 @@
 {
   "id": "root",
   "type": "row",
-  "preview": "layouts/posthog.svg",
+  "preview": "layouts/github-and-trunk.svg",
   "children": [
     {
       "id": "sidebar",

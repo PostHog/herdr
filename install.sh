@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# Links the Herdr layouts and mods in this repo into Herdr's config folder.
+# Installs the Herdr layouts and mods in this repo into Herdr's config folder.
 #
-#   ./install.sh                 pull the latest, then relink what you enabled (asks about new pieces)
+#   ./install.sh                 pull the latest, then update what you enabled (asks about new pieces)
 #   ./install.sh list            every piece, and whether it's enabled here
-#   ./install.sh enable <piece>  link a piece
-#   ./install.sh disable <piece> unlink a piece
+#   ./install.sh enable <piece>  install a piece
+#   ./install.sh disable <piece> remove a piece
 #   --no-pull                    skip `git pull`
 #
-# A piece is a top-level folder with a RECIPE.md. Its layouts/ and mods/ go into
-# ~/.config/herdr-app (or $HERDR_APP_HOME), so a `git pull` here updates Herdr.
-# Code and JSON files are symlinked. Images and fonts are copied, because Herdr
-# refuses to load them through a symlink; each run refreshes the copies.
-# What you enabled, and every file this script placed, is kept in that folder.
+# A piece is a top-level folder with a RECIPE.md. Its layouts/ and mods/ are copied
+# into ~/.config/herdr-app (or $HERDR_APP_HOME). They're copies, not symlinks, because
+# Herdr refuses modules and images that resolve outside its folder. Each run copies
+# what changed, and Herdr reloads it. What you enabled, and every file this script
+# placed, is kept in that folder.
 
 set -euo pipefail
 
@@ -92,27 +92,14 @@ backup() {
   say "  moved your $rel to $(dim "${BACKUP_DIR#"$HOME_DIR"/}")" >&2
 }
 
-# Puts one file in place: a symlink for code and JSON, a copy for anything else.
+# Copies one file when it changed. Herdr sees the new file and reloads what uses it.
 place() {
   local src="$1" rel="$2" dst="$HOME_DIR/$2"
   mkdir -p "$(dirname "$dst")"
-  case "$rel" in
-    *.js | *.mjs | *.json)
-      if [ -L "$dst" ] && [ "$(readlink "$dst")" = "$src" ]; then
-        # Herdr doesn't watch through links; touching the link makes it reload the code.
-        touch -h "$dst"
-      else
-        rm -rf "$dst"
-        ln -s "$src" "$dst"
-      fi
-      ;;
-    *)
-      if [ -L "$dst" ] || ! cmp -s "$src" "$dst"; then
-        rm -rf "$dst"
-        cp "$src" "$dst"
-      fi
-      ;;
-  esac
+  if [ -L "$dst" ] || ! cmp -s "$src" "$dst"; then
+    rm -rf "$dst"
+    cp "$src" "$dst"
+  fi
 }
 
 # The top-level thing a piece adds (a layout file or a mod folder), checked for clashes.
@@ -128,10 +115,7 @@ claim() {
     warn "  skip $rel: the piece $other already has it."
     return 0
   fi
-  if [ -z "$other" ] && [ -L "$HOME_DIR/$rel" ] && case "$(readlink "$HOME_DIR/$rel")" in "$REPO"/*) true ;; *) false ;; esac; then
-    # A link into this repo from an older install of this script.
-    rm "$HOME_DIR/$rel"
-  elif [ -z "$other" ] && { [ -e "$HOME_DIR/$rel" ] || [ -L "$HOME_DIR/$rel" ]; }; then
+  if [ -z "$other" ] && { [ -e "$HOME_DIR/$rel" ] || [ -L "$HOME_DIR/$rel" ]; }; then
     backup "$rel"
   fi
   printf '%s' "$rel"

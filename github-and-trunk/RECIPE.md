@@ -1,10 +1,10 @@
-# PostHog
+# GitHub and Trunk
 
 Herdr's main layout plus a sidebar panel for your PRs, the merge queue and your reviews.
 The panel sits under the agents list: your open PRs grouped into stacks, the Trunk merge queue, and the PRs waiting on your review, each as a tab you can drag into any order.
 Rows say what happens next for each PR, and show a button only when something waits on you.
 
-![PostHog](preview.png)
+![GitHub and Trunk](preview.png)
 
 ## What you see
 
@@ -39,7 +39,7 @@ Rows say what happens next for each PR, and show a button only when something wa
 
 ## Built from
 
-- `layouts/posthog.json`: Herdr's `main` layout with a `pull-requests` block (`{ "mod": "gh-inbox" }`, min 140 px) added to `sidebar-lists`.
+- `layouts/github-and-trunk.json`: Herdr's `main` layout with a `pull-requests` block (`{ "mod": "gh-inbox" }`, min 140 px) added to `sidebar-lists`.
 - `mods/gh-inbox/`: `main.js` (the view), `data.js` (the `gh` and `trunk` calls), Lucide-style icons in `icons/`.
   Shipped mods it uses: `confirm` for the merge dialog, `toast` through `notify()`.
 - GitHub: one `gh api graphql` search per tab (`author:@me` and `review-requested:@me -author:@me`, both `org:PostHog is:pr is:open archived:false`), reading check counts by state, the review decision, latest reviews, review requests, unresolved threads, mergeability, and the `PostHog Visual Review / <type>` commit statuses.
@@ -53,7 +53,7 @@ Rows say what happens next for each PR, and show a button only when something wa
 - Trunk prints times in UTC.
 - Trunk keys a stack by its top layer; the lower layers say "via #top".
 - Cancelled check runs (superseded by a newer push) count apart from failures.
-- Herdr won't load an image through a symlink, and doesn't watch files through one. `install.sh` links code, copies icons, and touches the links to reload.
+- Herdr refuses a module or an image that resolves outside its folder, so the mod has to be real files there, not symlinks. `install.sh` copies it.
 - Without Trunk (no checkout, no CLI, or no `trunk login`), the Queue tab says why and the merge buttons don't show.
 
 ## Done when
