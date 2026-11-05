@@ -59,6 +59,13 @@ function visualStep(pr, p) {
   return { icon: "eye", color: p.warn, label: `Visuals: ${v.summary}`, url: v.url };
 }
 
+// The stack-depth check is the PR's only failure (see markStackDepth in data.js).
+function stackStep(pr, p) {
+  if (!pr.stack) return null;
+  const { checked, detail, url } = pr.stack;
+  return { icon: "stack", color: p.warn, label: checked ? "Stack too deep" : "Stack depth not checked", url, tip: detail || "Open the stack depth check" };
+}
+
 export default class GhInbox extends View {
   init(_props, cx) {
     const allowed = props()?.tabs;
@@ -220,6 +227,8 @@ export default class GhInbox extends View {
     const vr = visualStep(pr, p);
     if (vr) return vr;
     if (pr.checks.fail) return { icon: "fail", color: p.bad, label: `${plural(pr.checks.fail, "check")} failing` };
+    const st = stackStep(pr, p);
+    if (st) return st;
     if (pr.decision === "CHANGES_REQUESTED") return { icon: "changes", color: p.bad, label: "Changes requested" };
     if (pr.checks.running) return { icon: "spinner", spin: true, color: p.run, label: `CI ${pr.checks.pass}/${pr.checks.total}` };
     if (pr.decision === "REVIEW_REQUIRED") return { icon: "waiting", color: p.warn, label: "Needs review" };
@@ -267,7 +276,7 @@ export default class GhInbox extends View {
     const now = new Map();
     for (const pr of this.mine) {
       const q = pr.repo === TRUNK_REPO ? this.mineQueue?.get(pr.number) : null;
-      now.set(pr.key, { pr, ci: pr.checks.fail ? "fail" : pr.checks.running ? "run" : "ok", decision: pr.decision, queue: q?.state ?? null, visual: visualAsks(pr).length > 0 });
+      now.set(pr.key, { pr, ci: pr.checks.fail ? "fail" : pr.checks.running ? "run" : "ok", decision: pr.decision, queue: q?.state ?? null, visual: visualAsks(pr).length > 0, stack: Boolean(pr.stack) });
     }
     for (const i of this.mineQueue?.values() ?? []) {
       const key = `${TRUNK_REPO}#${i.number}`;
@@ -283,6 +292,7 @@ export default class GhInbox extends View {
         else if (s.queue !== was.queue && (s.queue === "Failed" || s.queue === "Cancelled")) say(s.pr, s.queue === "Failed" ? "Merge queue failed" : "Removed from the merge queue", "error");
         if (s.visual && was.visual === false) say(s.pr, "Visual changes to approve", "warning");
         if (s.ci === "fail" && was.ci && was.ci !== "fail" && !s.visual) say(s.pr, "Checks failing", "error");
+        if (s.stack && was.stack === false) say(s.pr, "Stack too deep", "warning");
         if (s.decision !== was.decision && s.decision === "APPROVED") say(s.pr, "Approved", "success");
         if (s.decision !== was.decision && s.decision === "CHANGES_REQUESTED") say(s.pr, "Changes requested", "warning");
       }
@@ -445,7 +455,7 @@ export default class GhInbox extends View {
     const ci = c.fail ? { icon: "fail", color: p.bad, label: `${c.fail}` } : c.running ? { icon: "spinner", spin: true, color: p.run, label: `${c.pass}/${c.total}` } : c.total ? { icon: "check", color: p.ok, label: "" } : null;
     const meta = [];
     if (review) meta.push(div().text_color(t.dim).child(`${pr.author} · ${ago(Date.now() - pr.created)}`));
-    else meta.push(this.chip(t, s));
+    else meta.push(s.tip ? this.link(t, `ghi-step-${pr.key}`, this.chip(t, s), s.url, s.tip) : this.chip(t, s));
     if (ci && (review || !["spinner", "fail", "check"].includes(s.icon))) meta.push(c.fail ? this.link(t, `ghi-ci-${pr.key}`, this.chip(t, ci), `${pr.url}/checks`, "Open the failing checks") : this.chip(t, ci));
     if (pr.approvedBy.length && s.icon !== "check") meta.push(this.chip(t, { icon: "approved", color: p.ok, label: String(pr.approvedBy.length) }));
     if (pr.unresolved) meta.push(this.chip(t, { icon: "comment", color: p.warn, label: String(pr.unresolved) }));

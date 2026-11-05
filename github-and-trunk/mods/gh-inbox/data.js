@@ -144,7 +144,35 @@ function shape(n) {
 
 export async function searchPrs(q) {
   const data = await graphql(SEARCH, { q: `${q} org:${ORG} is:pr is:open archived:false` });
-  return data.search.nodes.filter((n) => n?.number).map(shape);
+  const prs = data.search.nodes.filter((n) => n?.number).map(shape);
+  await markStackDepth(prs).catch(() => {});
+  return prs;
+}
+
+const STACK_CHECK = "stack-depth / Stack depth";
+
+// PostHog/posthog fails this check when a stack has too many open layers, which is about
+// the stack's shape rather than the code. When it is a PR's only failing check, take it out
+// of the check counts and set `pr.stack` so the panel can say what is actually wrong.
+// The rollup only carries counts, so this asks for the check by name, for those PRs only.
+async function markStackDepth(prs) {
+  const lone = prs.filter((p) => p.repo === TRUNK_REPO && p.checks.fail === 1);
+  if (!lone.length) return;
+  const [owner, name] = TRUNK_REPO.split("/");
+  const fields = lone.map((p, i) => `p${i}: pullRequest(number: ${p.number}) { commits(last: 1) { nodes { commit {
+    checkSuites(first: 100) { nodes { checkRuns(first: 1, filterBy: { checkName: "${STACK_CHECK}", checkType: LATEST, conclusions: [FAILURE] }) {
+    nodes { url annotations(first: 5) { nodes { title message } } } } } } } } } }`).join("\n");
+  const data = await graphql(`query($o: String!, $n: String!) { repository(owner: $o, name: $n) { ${fields} } }`, { o: owner, n: name });
+  lone.forEach((pr, i) => {
+    const suites = data.repository[`p${i}`]?.commits.nodes[0]?.commit.checkSuites.nodes ?? [];
+    const run = suites.flatMap((s) => s.checkRuns.nodes)[0];
+    if (!run) return;
+    // The script's own annotation has a title; the runner adds an untitled exit-code one.
+    const note = run.annotations.nodes.find((a) => a.title);
+    pr.checks.fail = 0;
+    pr.checks.total--;
+    pr.stack = { checked: note?.title !== "Stack depth not checked", detail: note?.message ?? "", url: run.url };
+  });
 }
 
 // Chains PRs whose base is another PR's head into stacks, bottom first.
