@@ -1,10 +1,11 @@
 // Your pull requests, the Trunk merge queue and your review requests, as tabs
 // you can drag into any order. Data comes from the `gh` and `trunk` CLIs.
 
-import { View, div, svg } from "gpui-kit";
+import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { theme, run, props, openOverlay, nextCommand, notify } from "herdr";
 import { TRUNK_REPO, TrunkUnavailable, login, searchPrs, stacks, queue, queueItem, testRun, enqueue, dequeue } from "./data.js";
+import { CLAUDE_ICON, startClaude } from "./claude.js";
 
 const ICON = (name) => `mods/gh-inbox/icons/${name}.svg`;
 const GH_EVERY = 60000;
@@ -450,6 +451,7 @@ export default class GhInbox extends View {
     if (pr.unresolved) meta.push(this.chip(t, { icon: "comment", color: p.warn, label: String(pr.unresolved) }));
 
     const actions = this.actions(t, pr, q, s, review, group);
+    const claude = () => startClaude(pr, { me: this.me, review, status: s.label, stack: group, asOf: this.updated });
     const lead = this.icon(t, pr.draft ? "pr-draft" : q?.state === "Merged" ? "merged" : "pr", pr.draft ? p.dim : review ? t.muted : s.color, 15);
     return [h_flex().id(`ghi-pr-${pr.key}`).px(8).py(5).gap(8).items_start().rounded(8).cursor_pointer()
       .hover((st) => st.bg(t.hover))
@@ -461,7 +463,7 @@ export default class GhInbox extends View {
         .child(h_flex().gap(5).items_center().min_w(0)
           .child(div().flex_none().text_size(11).text_color(t.dim).child(`#${pr.number}`))
           .child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(pr.draft ? t.muted : t.foreground).child(pr.title))
-          .when(this.hovered === pr.key, (el) => el.child(this.linkIcons(t, pr.key, pr.url))))
+          .when(this.hovered === pr.key, (el) => el.child(this.linkIcons(t, pr.key, pr.url, claude))))
         .child(h_flex().gap(8).items_center().min_w(0).overflow_hidden().text_size(11).children(meta))
         .when(Boolean(s.progress), (el) => el.child(this.progressBar(t, p, s.progress)))
         .when(actions.length > 0, (el) => el.child(h_flex().mt(3).gap(5).flex_wrap().children(actions))))];
@@ -625,6 +627,7 @@ export default class GhInbox extends View {
     const pct = r?.checks.total ? Math.round(((r.checks.pass + r.checks.fail) / r.checks.total) * 100) : null;
     const key = `q-${i.number}`;
     const url = `https://github.com/${TRUNK_REPO}/pull/${i.number}`;
+    const claude = () => startClaude({ repo: TRUNK_REPO, number: i.number, title: i.title, url }, { status: s.label, asOf: this.updated });
     return h_flex().id(`ghi-q-${i.number}`).px(8).h(26).gap(8).items_center().rounded(6).cursor_pointer()
       .text_size(12).hover((st) => st.bg(t.hover))
       .on_hover((on, cx) => this.hover(key, on, cx))
@@ -636,7 +639,7 @@ export default class GhInbox extends View {
       .child(div().flex_1().min_w(0).truncate().text_color(yours ? t.foreground : t.muted).when(yours, (el) => el.font_medium()).child(i.title))
       .when(pct != null && this.hovered !== key, (el) => el.child(div().flex_none().text_size(10.5).text_color(r.checks.fail ? p.bad : t.dim)
         .child(`${pct}% · ${ago(Date.now() - r.started)}`)))
-      .when(this.hovered === key, (el) => el.child(this.linkIcons(t, key, url)));
+      .when(this.hovered === key, (el) => el.child(this.linkIcons(t, key, url, claude)));
   }
 
   hover(key, on, cx) {
@@ -645,18 +648,19 @@ export default class GhInbox extends View {
     cx.notify();
   }
 
-  // Copy and open, shown on the hovered row.
-  linkIcons(t, key, url) {
-    const icon = (id, name, tip, onClick) => div().id(`ghi-${id}-${key}`).p(2).rounded(4).flex_none().cursor_pointer()
+  // Shown on the hovered row: start Claude Code on the PR, copy its link, open it.
+  linkIcons(t, key, url, claude) {
+    const icon = (id, glyph, tip, onClick) => div().id(`ghi-${id}-${key}`).p(2).rounded(4).flex_none().cursor_pointer()
       .text_color(t.dim).hover((st) => st.bg(t.raised).text_color(t.foreground)).tooltip(tip)
       .on_click((_e, cx) => { cx.stop_propagation(); onClick(cx); })
-      .child(svg(ICON(name)).size(13));
+      .child(glyph);
     return h_flex().flex_none().gap(2).items_center()
-      .child(icon("copy", "copy", "Copy link", (cx) => {
+      .child(icon("claude", image(CLAUDE_ICON).size(13), "Start Claude Code on this PR", (cx) => cx.spawn(claude)))
+      .child(icon("copy", svg(ICON("copy")).size(13), "Copy link", (cx) => {
         cx.write_to_clipboard(url);
         notify({ title: "Link copied", body: url, level: "success", timeout: 2500 });
       }))
-      .child(icon("open", "external", "Open on GitHub", (cx) => cx.open_url(url)));
+      .child(icon("open", svg(ICON("external")).size(13), "Open on GitHub", (cx) => cx.open_url(url)));
   }
 
   reviewView(t, cx) {

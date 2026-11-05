@@ -24,7 +24,11 @@ Rows say what happens next for each PR, and show a button only when something wa
 
 ## How it behaves
 
-- Clicking a row opens the PR on GitHub. Hovering a row shows a copy-link icon and an open icon at the end of its title.
+- Clicking a row opens the PR on GitHub. Hovering a row shows a Claude Code icon, a copy-link icon and an open icon at the end of its title.
+  The Claude Code icon opens a tab named "PR #n" in the shown space ("owner/repo#n" outside `PostHog/posthog`), running Claude Code with what the panel knows about the PR appended to its system prompt:
+  title and link, author, branches, size, next step, CI counts, reviews, unresolved threads, conflicts, visual review runs, and the PR's stack, bottom first.
+  Nothing is sent: the prompt stays empty for you to type into.
+  It starts Claude the way the new-tab menu does on that space's machine, else runs `claude` from the shell.
 - Buttons appear in a row only when something waits on you:
   "Approve storybook" or "Approve playwright" when visual review found changes (opens the visual review run),
   "Merge" on a ready PR that isn't in a stack, "Merge again" when the queue kicked the PR out,
@@ -40,7 +44,7 @@ Rows say what happens next for each PR, and show a button only when something wa
 ## Built from
 
 - `layouts/github-and-trunk.json`: Herdr's `main` layout with a `pull-requests` block (`{ "mod": "gh-inbox" }`, min 140 px) added to `sidebar-lists`.
-- `mods/gh-inbox/`: `main.js` (the view), `data.js` (the `gh` and `trunk` calls), Lucide-style icons in `icons/`.
+- `mods/gh-inbox/`: `main.js` (the view), `data.js` (the `gh` and `trunk` calls), `claude.js` (starting Claude Code on a PR), Lucide-style icons in `icons/`.
   Shipped mods it uses: `confirm` for the merge dialog, `toast` through `notify()`.
 - GitHub: one `gh api graphql` search per tab (`author:@me` and `review-requested:@me -author:@me`, both `org:PostHog is:pr is:open archived:false`), reading check counts by state, the review decision, latest reviews, review requests, unresolved threads, mergeability, and the `PostHog Visual Review / <type>` commit statuses.
   Stacks are worked out from head and base branches.
@@ -61,4 +65,4 @@ Rows say what happens next for each PR, and show a button only when something wa
 - `herdr-app check mods/gh-inbox` passes.
 - Mine lists your open PostHog PRs, with stacks grouped and the PR you submitted to Trunk showing its queue state.
 - Queue matches `trunk merge status`, and Review matches GitHub's review requests.
-- Clicking a row opens the PR; the hover icons copy and open its link.
+- Clicking a row opens the PR; the hover icons start Claude Code on it, and copy and open its link.
