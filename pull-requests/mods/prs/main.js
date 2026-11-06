@@ -11,7 +11,6 @@ import { forgetCheckouts, checkoutFor } from "./runner.js";
 import { loadTrunk, dequeue, resetTrunk } from "./trunk.js";
 import { sidebarHeader, sidebarMine, sidebarQueue, sidebarReviews, sidebarRail, statusLine, prIcon, progressLine, stackHeader } from "./sidebar.js";
 import { visualAsks, stackGroups } from "./steps.js";
-import { fetchKeeperStatus, systemctl, pollNow, openLiveLog, switchMode } from "./keeper.js";
 import { ago, button, iconButton, chip, badge, section, empty, field, menuItem, SPINNER, tone, TEXT } from "./ui.js";
 
 const MINE_EVERY_MS = 90000;
@@ -43,11 +42,8 @@ const PAGES = [
   { id: "code", label: "Code review" },
   { id: "tasks", label: "Tasks" },
   { id: "workflows", label: "Workflows" },
-  { id: "keeper", label: "PR Keeper" },
   { id: "settings", label: "Settings" },
 ];
-
-const visiblePages = () => PAGES.filter((page) => page.id !== "keeper" || config().prKeeper?.enabled);
 
 const MINE_CHIPS = [
   { id: "attention", label: "Needs attention", test: needsAttention },
@@ -70,19 +66,6 @@ function setBusy(key, on) {
 
 const isBusy = (pr) => Object.keys(shared("prs.busy") ?? {}).some((key) => key.startsWith(`${prKey(pr.repo, pr.number)}:`));
 
-const keeperBusy = () => Object.keys(shared("prs.busy") ?? {}).some((key) => key.startsWith("keeper:"));
-
-async function keeperAct(what, title, work) {
-  const key = `keeper:${what}`;
-  setBusy(key, true);
-  try {
-    await report(title, work);
-  } finally {
-    setBusy(key, false);
-    setShared("prs.keeper", Date.now());
-  }
-}
-
 async function act(pr, what, title, work, { refresh = true } = {}) {
   const key = busyKey(pr, what);
   setBusy(key, true);
@@ -95,13 +78,6 @@ async function act(pr, what, title, work, { refresh = true } = {}) {
 }
 
 export const NAMED = {
-  keeperStart: () => keeperAct("start", "Start PR Keeper", () => systemctl("start")),
-  keeperStop: () => keeperAct("stop", "Stop PR Keeper", () => systemctl("stop")),
-  keeperRestart: () => keeperAct("restart", "Restart PR Keeper", () => systemctl("restart")),
-  keeperPoll: () => keeperAct("poll", "Poll now", () => pollNow()),
-  keeperLog: () => keeperAct("log", "Live log", async () => openLiveLog()),
-  keeperLive: () => keeperAct("mode", "Switch to live", async () => switchMode(true)),
-  keeperDryRun: () => keeperAct("mode", "Switch to dry run", async () => switchMode(false)),
   details: (pr) => openOverlay({ mod: "prs", kind: "dialog", width: 880, height: 760, props: { mode: "sheet", pr } }),
   open: (pr) => openUrl(pr.url),
   copyLink: (pr) => act(pr, "copy", "Copy link", () => copyText(markdownLink(pr), "Copied a Markdown link."), { refresh: false }),
@@ -134,10 +110,6 @@ export const NAMED = {
 };
 
 const CONFIRM = {
-  keeperStop: () => ({ title: "Stop PR Keeper?", detail: "The daemon stops polling and starting agent runs until you start it again. An agent run in progress is stopped too. It starts again on its own the next time its machine boots.", label: "Stop" }),
-  keeperRestart: () => ({ title: "Restart PR Keeper?", detail: "systemd stops the daemon (up to 30 seconds for it to finish) and starts it again. An agent run in progress is stopped.", label: "Restart" }),
-  keeperLive: () => ({ title: "Switch PR Keeper to live?", detail: "Runs deploy/devbox-setup.sh --live in a devbox tab: it reinstalls dependencies, rebuilds the current checkout, rewrites the service and restarts it. After that the daemon acts on your PRs: it reruns checks, pushes agent fixes and replies to bots.", label: "Switch to live" }),
-  keeperDryRun: () => ({ title: "Switch PR Keeper to dry run?", detail: "Runs deploy/devbox-setup.sh in a devbox tab: it rebuilds the current checkout and restarts the service with --dry-run, so the daemon records decisions and executes none.", label: "Switch to dry run" }),
   merge: (pr) => ({ title: isTrunkPr(pr) || usesTrunk(pr) ? "Send to the Trunk merge queue?" : "Merge this PR?", detail: `${pr.repo}#${pr.number} "${pr.title}"${isTrunkPr(pr) || usesTrunk(pr) ? " is submitted to Trunk with trunk merge (or a /trunk merge comment when the Trunk CLI isn't available)." : ` is squash-merged at ${pr.headSha?.slice(0, 7) ?? "its current head"} (or queued, if the base branch uses GitHub's merge queue). It's refused if someone pushed since.`}`, label: isTrunkPr(pr) || usesTrunk(pr) ? "Send to queue" : "Merge" }),
   dequeue: (pr) => ({ title: "Remove from the merge queue?", detail: `${pr.repo}#${pr.number} "${pr.title}" leaves Trunk's queue (trunk merge cancel).`, label: "Remove" }),
   approve: (pr) => ({ title: "Approve this PR?", detail: `${pr.repo}#${pr.number} "${pr.title}" by @${pr.author}, at ${pr.headSha?.slice(0, 7) ?? "its current head"}.`, label: "Approve" }),
@@ -216,6 +188,7 @@ export default class Prs extends View {
     this.page = localStorage.getItem("page") ?? "mine";
     const requested = shared("prs.page.request");
     if (requested && Date.now() - requested.at < 15000) this.page = requested.page;
+    if (!PAGES.some((page) => page.id === this.page)) this.page = "mine";
     this.sidebarTab = localStorage.getItem("sidebarTab") ?? "mine";
     this.folded = new Set(JSON.parse(localStorage.getItem("folded") ?? '["review:teams","queue:merged"]'));
     this.trunk = shared("prs.cache.trunk") ?? null;
@@ -274,12 +247,6 @@ export default class Prs extends View {
         cx.notify();
       }
     });
-    this.keeper = shared("prs.cache.keeper") ?? null;
-    this.seenKeeper = shared("prs.keeper") ?? null;
-    if (this.page === "keeper") this.loadKeeper(cx);
-    cx.timer.every(15000, (cx) => {
-      if (this.page === "keeper") this.loadKeeper(cx);
-    });
     cx.timer.every(1500, (cx) => {
       if (this.leader) this.publishStatus();
       const refreshAll = shared("prs.refreshAll") ?? null;
@@ -298,11 +265,6 @@ export default class Prs extends View {
           this.initSettingsForm();
           this.refreshAll(cx);
         });
-      }
-      const keeperSignal = shared("prs.keeper") ?? null;
-      if (keeperSignal !== this.seenKeeper) {
-        this.seenKeeper = keeperSignal;
-        this.loadKeeper(cx);
       }
       const storeVersion = shared("prs.store") ?? null;
       if (storeVersion !== this.seenStore) {
@@ -339,23 +301,6 @@ export default class Prs extends View {
       }
       this.loadingMine = false;
       this.announce();
-      cx.notify();
-    });
-  }
-
-  loadKeeper(cx) {
-    if (this.loadingKeeper) return;
-    this.loadingKeeper = true;
-    cx.notify();
-    cx.spawn(async (cx) => {
-      try {
-        this.keeper = await fetchKeeperStatus();
-        this.keeperError = null;
-        setShared("prs.cache.keeper", this.keeper);
-      } catch (error) {
-        this.keeperError = String(error?.message ?? error);
-      }
-      this.loadingKeeper = false;
       cx.notify();
     });
   }
@@ -482,12 +427,10 @@ export default class Prs extends View {
   refreshAll(cx) {
     if (!this.leader) {
       setShared("prs.refreshAll", Date.now());
-      if (this.page === "keeper") this.loadKeeper(cx);
       return;
     }
     this.loadMine(cx);
     this.loadReviews(cx);
-    if (this.page === "keeper") this.loadKeeper(cx);
   }
 
   loadReviews(cx) {
@@ -618,7 +561,6 @@ export default class Prs extends View {
   setPage(id, cx) {
     this.page = id;
     localStorage.setItem("page", id);
-    if (id === "keeper") this.loadKeeper(cx);
     cx.notify();
   }
 
@@ -648,8 +590,8 @@ export default class Prs extends View {
 
   renderWide(t) {
     const counts = this.counts();
-    const loading = this.loadingMine || this.loadingReviews || (this.page === "keeper" && this.loadingKeeper);
-    const title = { mine: "My PRs", reviews: "Review requests", queue: "Merge queue", code: "Code review", tasks: "Tasks", workflows: "Workflows", keeper: "PR Keeper", settings: "Settings" }[this.page];
+    const loading = this.loadingMine || this.loadingReviews;
+    const title = { mine: "My PRs", reviews: "Review requests", queue: "Merge queue", code: "Code review", tasks: "Tasks", workflows: "Workflows", settings: "Settings" }[this.page];
     const nav = v_flex()
       .w(230)
       .flex_none()
@@ -660,7 +602,7 @@ export default class Prs extends View {
       .p(10)
       .gap(2)
       .child(div().px(8).pt(6).pb(12).text_size(14).font_semibold().child("Pull requests"))
-      .children(visiblePages().map((page) => h_flex()
+      .children(PAGES.map((page) => h_flex()
         .id(`prs-nav-${page.id}`)
         .h(34)
         .px(10)
@@ -909,8 +851,6 @@ export default class Prs extends View {
         return this.taskRows(t);
       case "workflows":
         return this.workflowRows(t);
-      case "keeper":
-        return this.keeperRows(t);
       case "settings":
         return this.settingsRows(t);
       default:
@@ -1031,69 +971,6 @@ export default class Prs extends View {
     });
   }
 
-  keeperRows(t) {
-    const k = this.keeper;
-    if (!k) return [empty(t, this.keeperError ? `${machineLabel(config().prKeeper?.machine || null)}: ${this.keeperError}` : "Reading PR Keeper's status…")];
-    if (!k.installed) return [empty(t, "pr-keeper.service isn't installed on the devbox. Run deploy/devbox-setup.sh there first.")];
-    const health = !k.active ? { label: "Stopped", tone: "bad" } : k.stale ? { label: "Stale", tone: "warn" } : { label: "Running", tone: "ok" };
-    const busy = keeperBusy();
-    const fact = (label, value, colorName) => h_flex().gap(10).py(2).child(div().w(120).flex_none().text_color(t.dim).child(label)).child(div().flex_1().min_w(0).truncate().text_color(colorName ? tone(t, colorName) : t.foreground).child(value));
-    const levelColor = { error: "bad", fatal: "bad", warn: "warn", info: "muted", debug: "dim", trace: "dim" };
-    return [
-      v_flex()
-        .m(8)
-        .p(14)
-        .gap(10)
-        .rounded(10)
-        .border_1()
-        .border_color(t.border)
-        .bg(t.surface)
-        .child(
-          h_flex()
-            .gap(8)
-            .items_center()
-            .child(div().w(10).h(10).rounded(5).flex_none().bg(tone(t, health.tone)))
-            .child(div().text_size(15).font_semibold().child(health.label))
-            .child(badge(t, k.dryRun ? "DRY RUN" : "LIVE", k.dryRun ? "warn" : "ok"))
-            .child(div().flex_1())
-            .when(busy || this.loadingKeeper, (el) => el.child(svg(SPINNER).size(12).spin(900).text_color(t.dim))),
-        )
-        .child(
-          v_flex()
-            .child(fact("Service", `${k.state}${k.enabled ? " · starts at boot" : " · not enabled at boot"}`))
-            .child(fact("Running since", k.since ?? "—"))
-            .child(fact("Last poll", k.heartbeatAt ? `${ago(k.heartbeatAt)} (every ${k.pollInterval})` : "never", k.stale ? "warn" : null))
-            .child(fact("Restarts", String(k.restarts), k.restarts > 0 ? "warn" : null))
-            .child(fact("Code", `${k.branch} @ ${k.commit}${k.dirty ? ` · ${k.dirty} uncommitted change${k.dirty === 1 ? "" : "s"}` : ""}`, k.dirty ? "warn" : null)),
-        )
-        .child(
-          h_flex()
-            .gap(6)
-            .flex_wrap()
-            .when(k.active, (el) => el
-              .child(button(t, "prs-k-poll", "Poll now", () => NAMED.keeperPoll(), { primary: true, disabled: busy }))
-              .child(button(t, "prs-k-restart", "Restart…", () => choose("keeperRestart", {}), { disabled: busy }))
-              .child(button(t, "prs-k-stop", "Stop…", () => choose("keeperStop", {}), { danger: true, disabled: busy })))
-            .when(!k.active, (el) => el.child(button(t, "prs-k-start", "Start", () => NAMED.keeperStart(), { primary: true, disabled: busy })))
-            .child(button(t, "prs-k-mode", k.dryRun ? "Switch to live…" : "Switch to dry run…", () => choose(k.dryRun ? "keeperLive" : "keeperDryRun", {}), { disabled: busy }))
-            .child(button(t, "prs-k-log", "Open live log", () => NAMED.keeperLog()))
-            .child(button(t, "prs-k-refresh", "Refresh", (_e, cx) => this.loadKeeper(cx))),
-        ),
-      section(t, "Recent log"),
-      ...(k.log.length ? k.log.slice(0, 40).map((entry, index) =>
-        h_flex()
-          .id(`prs-k-log-${index}`)
-          .px(8)
-          .py(3)
-          .gap(8)
-          .text_size(11.5)
-          .child(div().w(70).flex_none().text_color(t.dim).child(ago(entry.time)))
-          .child(div().w(44).flex_none().text_color(tone(t, levelColor[entry.level] ?? "muted")).child(entry.level))
-          .child(div().flex_1().min_w(0).truncate().child(`${entry.msg}${entry.extra ? `  ${entry.extra}` : ""}`)),
-      ) : [empty(t, "No log lines yet.")]),
-    ];
-  }
-
   initSettingsForm() {
     const c = config();
     const form = {
@@ -1101,7 +978,6 @@ export default class Prs extends View {
       trunkRepo: InputState.new({ placeholder: "owner/repo, empty turns Trunk off", value: c.trunk?.repo ?? "" }),
       review: InputState.new({ placeholder: "Model for the lenses", value: c.models?.review ?? "" }),
       judge: InputState.new({ placeholder: "Model for the judge", value: c.models?.judge ?? "" }),
-      keeperDir: InputState.new({ placeholder: "~/pr-keeper", value: c.prKeeper?.dir ?? "~/pr-keeper" }),
       checkouts: {},
       draft: JSON.parse(JSON.stringify(c)),
       detected: {},
@@ -1126,7 +1002,6 @@ export default class Prs extends View {
     const draft = form.draft;
     draft.trunk = { ...draft.trunk, repo: form.trunkRepo.value().trim() || null };
     draft.models = { review: form.review.value().trim() || "claude-sonnet-5-5", judge: form.judge.value().trim() || "claude-opus-5-5" };
-    draft.prKeeper = { ...draft.prKeeper, dir: form.keeperDir.value().trim() || "~/pr-keeper" };
     draft.checkouts = {};
     for (const repo of draft.repos) {
       const value = form.checkouts[repo]?.value().trim();
@@ -1206,17 +1081,6 @@ export default class Prs extends View {
           draft.notifications = false;
           cx.notify();
         }))),
-      card("PR Keeper panel", "Shows a PR Keeper page with its status, controls and log, for people who run the pr-keeper daemon.",
-        v_flex()
-          .gap(8)
-          .child(h_flex().gap(4).child(chip(t, "prs-set-keeper-on", "Show", Boolean(draft.prKeeper?.enabled), (_e, cx) => {
-            draft.prKeeper = { ...draft.prKeeper, enabled: true };
-            cx.notify();
-          })).child(chip(t, "prs-set-keeper-off", "Hide", !draft.prKeeper?.enabled, (_e, cx) => {
-            draft.prKeeper = { ...draft.prKeeper, enabled: false };
-            cx.notify();
-          })))
-          .when(Boolean(draft.prKeeper?.enabled), (el) => el.child(this.machinePicker(t, "prs-set-keeper-machine", draft.prKeeper?.machine, (name) => (draft.prKeeper = { ...draft.prKeeper, machine: name }))).child(this.input(t, form.keeperDir)))),
       h_flex()
         .mx(8)
         .mt(12)

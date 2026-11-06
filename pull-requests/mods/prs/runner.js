@@ -104,10 +104,6 @@ export async function launchClaudeOnPr(pr, prompt, tabName) {
   return machine;
 }
 
-export async function launchShell(tabName, script, machine = runnerMachine()) {
-  await launchTab(tabName, ["bash", "-lc", `${PATH_PRELUDE} ${script}`], machine);
-}
-
 export async function startHeadless(id, args, machine = runnerMachine()) {
   const runner = await asset("runner.sh");
   const where = machine ? ["--on", machine] : [];

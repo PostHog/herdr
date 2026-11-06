@@ -8,7 +8,6 @@ export const DEFAULT_CONFIG = {
   trunk: { repo: "PostHog/posthog", machine: null },
   models: { review: "claude-sonnet-5-5", judge: "claude-opus-5-5" },
   notifications: true,
-  prKeeper: { enabled: false, machine: null, dir: "~/pr-keeper" },
 };
 
 let cache = null;

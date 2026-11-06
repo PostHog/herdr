@@ -16,14 +16,14 @@ The panel sits under the agents list; `cmd-shift-g` swaps the terminals for the 
   - **Testing progress:** while Trunk tests a PR, a thin bar shows checks done out of the total, and the time since the test started.
   - **Queue** lists Trunk's queue in folding sections: Yours, Testing, Merging, Waiting (numbered), Not ready, Failing, Failed, and Recently merged (folded at first). Counts at Trunk's 10-item cap read "10+".
   - **Review** lists PRs waiting on your review under "Requested from you" and "Your teams" (folded at first), each sorted by priority with one reason label ("Unblocks others 3", "Last approval", "Quick (14 lines)", "Waited 36h", …). PRs you hid fold into "Hidden".
-- **The full page:** a 230 px nav (My PRs, Review requests, Merge queue, Code review, Tasks, Workflows, PR Keeper when enabled, Settings, and "Back to terminals ⌘⇧G" at the bottom), then the page's title, search, filter chips and a table.
+- **The full page:** a 230 px nav (My PRs, Review requests, Merge queue, Code review, Tasks, Workflows, Settings, and "Back to terminals ⌘⇧G" at the bottom), then the page's title, search, filter chips and a table.
   - **Tables:** My PRs and Review requests have Title, Status (or Requested) and Updated columns, plus Review/Copy/Open buttons on every row. They use the sidebar's icons, chips, stack headers and progress bars.
   - **Filter chips:** repo, Needs attention, Needs review, Ready to merge, Watching, newest/oldest, requested via (direct or a team), Priority, saved filters, "+ Filter", "+ Add PR" and Copy list.
 - **The detail sheet:** an 880×760 dialog with Overview, Findings, Checks, Reviews and Files.
   - **Overview:** actions, status, merge state, queue, size, open threads, labels, failing checks and the description.
   - **Checks:** tiles for passed, running and failed, then every check with a REQUIRED tag where it applies.
   - **Reviews:** review cards, then threads (unresolved first) with Resolve and Open.
-- **Settings page:** repositories (add, reorder, remove), where agents run, a checkout path per repo with Detect, the Trunk repo and the machine its CLI runs on, agent models, notifications, and the PR Keeper panel.
+- **Settings page:** repositories (add, reorder, remove), where agents run, a checkout path per repo with Detect, the Trunk repo and the machine its CLI runs on, agent models and notifications.
 - **Colors:** all from the theme, through named tones: ok `ansi2`, bad `ansi1`, warn `ansi3`, run `working`, merged `ansi5`, info `ansi6`, plus `accent`, `muted` and `dim`. Light themes and theme picks apply to both views, since they're one layout.
 
 ## How it behaves
@@ -55,7 +55,7 @@ The panel sits under the agents list; `cmd-shift-g` swaps the terminals for the 
 - **`mods/prs/`**:
   - `main.js` is the view: panel, sheet, menus, dialogs and editors, chosen by `props().mode`. `sidebar.js` and `steps.js` hold the shared row parts and the next-step logic, and `ui.js` the palette and controls.
   - `github.js` holds the GraphQL searches (`author:@me` / `review-requested:@me` with `repo:` qualifiers), check counts by state, visual review statuses, stacks, the review priority score and the detail query. `trunk.js` wraps the `trunk merge status` CLI.
-  - `runner.js` runs everything on the configured machine with `exec({ on })` and finds checkouts. `runner.sh` is the headless review driver. `agents.js` has the prompts and run tracking, `automation.js` the workflows, `actions.js` the `gh` actions, and `keeper.js` the optional PR Keeper panel.
+  - `runner.js` runs everything on the configured machine with `exec({ on })` and finds checkouts. `runner.sh` is the headless review driver. `agents.js` has the prompts and run tracking, `automation.js` the workflows, and `actions.js` the `gh` actions.
   - `config.js` and `store.js` keep the person's settings in `~/.config/herdr-app/data/prs-config.json`, and watched PRs, filters, workflows, runs and findings in `data/prs-state.json`.
 - **Shipped mods it uses:** `toast` through `notify()`. Its menus and dialogs are its own overlays.
 - **Programs:** `gh` (logged in), `git`, `hc`, `claude` on the agent machine, and `trunk` on the Trunk machine (PATH or the checkout's flox environment).
