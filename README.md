@@ -6,6 +6,7 @@ Each top-level folder is one piece. You pick the pieces you want, and `install.s
 | Piece | What it is |
 | --- | --- |
 | [`github-and-trunk`](github-and-trunk/RECIPE.md) | Herdr's main layout plus a sidebar panel for your PRs, the Trunk merge queue and your reviews. |
+| [`claude-usage`](claude-usage/RECIPE.md) | Herdr's main layout plus a strip with your live Claude plan limits, and token counts per session. |
 
 ## Install
 
@@ -26,6 +27,9 @@ herdr-app do layout.switch '{"name":"github-and-trunk"}'
 The `github-and-trunk` piece needs the [GitHub CLI](https://cli.github.com) logged in (`gh auth login`).
 For the merge queue it also needs Trunk: a `PostHog/posthog` checkout, and `trunk` on your PATH or from that checkout's flox environment, after `trunk login`.
 Without Trunk, the rest of the panel works and the Queue tab says what's missing.
+
+The `claude-usage` piece needs Claude Code logged in with a Claude subscription.
+Its Connect button changes your Claude Code `statusLine` setting to a wrapper that keeps your own statusline, and Disconnect puts the setting back.
 
 ## Update
 
