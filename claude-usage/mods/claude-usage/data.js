@@ -102,6 +102,16 @@ async function writeThrough(path, before, text) {
 
 const pretty = (o) => `${JSON.stringify(o, null, 2)}\n`;
 
+export const backupDir = (dir) => `${dataDir()}/configs/${String(dir).replace(/[^A-Za-z0-9_-]/g, "_")}`;
+
+async function backup(dir, name) {
+  return (await readTextFile(`${backupDir(dir)}/${name}`)) ?? (await readTextFile(`${dataDir()}/${name}`));
+}
+
+export async function originalCommand(dir) {
+  return (await backup(dir, "original-command")) ?? "";
+}
+
 export async function connect(dir) {
   const c = await connection(dir);
   if (c.error) throw new Error(c.error);
@@ -109,10 +119,12 @@ export async function connect(dir) {
   const original = c.settings.statusLine ?? null;
   const command = original?.type === "command" && typeof original.command === "string" ? original.command : "";
   await ensureDataDir();
-  await fs.writeFile(`${dataDir()}/original-statusline.json`, JSON.stringify(original));
-  await fs.writeFile(`${dataDir()}/original-command`, command);
+  const b = backupDir(dir);
+  await fs.mkdir(b, { recursive: true });
+  await fs.writeFile(`${b}/original-statusline.json`, JSON.stringify(original));
+  await fs.writeFile(`${b}/original-command`, command);
   const tap = shq(tapPath());
-  const statusLine = { ...(original ?? {}), type: "command", command: `[ -f ${tap} ] && exec sh ${tap}; ${command || "true"}` };
+  const statusLine = { ...(original ?? {}), type: "command", command: `[ -f ${tap} ] && exec sh ${tap} ${shq(b)}; ${command || "true"}` };
   await writeThrough(c.path, c.text, pretty({ ...c.settings, statusLine }));
 }
 
@@ -120,10 +132,10 @@ export async function disconnect(dir) {
   const c = await connection(dir);
   if (c.error) throw new Error(c.error);
   if (!c.connected) return;
-  const saved = await readTextFile(`${dataDir()}/original-statusline.json`);
+  const saved = await backup(dir, "original-statusline.json");
   let original = parse(saved);
   if (saved == null) {
-    const command = (await readTextFile(`${dataDir()}/original-command`)) ?? "";
+    const command = await originalCommand(dir);
     original = command ? { type: "command", command } : null;
   }
   const next = { ...c.settings };
@@ -188,6 +200,14 @@ export async function findTranscript(dir, sid) {
   return null;
 }
 
+const READ = [
+  '[ -r "$1" ] || exit 3',
+  'size="$(wc -c < "$1" | tr -d " ")" || exit 3',
+  '[ -n "$size" ] || exit 3',
+  'printf "%s\\n" "$size"',
+  'tail -c +"$2" "$1" | head -c "$3"',
+].join("\n");
+
 const fresh = () => ({ offset: 0, skip: false, seen: new Set(), output: 0, input: 0, cacheRead: 0, model: null });
 
 export class Totals {
@@ -234,9 +254,10 @@ export class Totals {
       this.files.set(file, s);
     }
     for (let i = 0; i < 8; i++) {
-      const r = await exec("/bin/sh", ["-c", 'wc -c < "$1" | tr -d " "; tail -c +"$2" "$1" | head -c "$3"', "sh", file, String(s.offset + 1), String(CHUNK)]);
-      if (r.code !== 0) break;
+      const r = await exec("/bin/sh", ["-c", READ, "sh", file, String(s.offset + 1), String(CHUNK)]).catch(() => null);
+      if (!r || r.code !== 0) break;
       const cut = r.stdout.indexOf("\n");
+      if (cut < 1 || !/^\d+$/.test(r.stdout.slice(0, cut))) break;
       const size = Number(r.stdout.slice(0, cut));
       const body = r.stdout.slice(cut + 1);
       if (!Number.isFinite(size)) break;

@@ -1,7 +1,7 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { theme, run, props, agents, spaces, home, openOverlay, closeOverlay, nextCommand, notify, playSound, shared, setShared, readTextFile } from "herdr";
-import { WINDOWS, dataDir, tapPath, auth, configDir, projectsDir, connection, connect, disconnect, prune, clearReports, ensureDataDir, limits, sessionOf, findTranscript, Totals, modelName } from "./data.js";
+import { theme, run, props, agents, spaces, home, openOverlay, closeOverlay, nextCommand, notify, playSound, shared, setShared } from "herdr";
+import { WINDOWS, tapPath, auth, configDir, projectsDir, connection, connect, disconnect, originalCommand, prune, clearReports, ensureDataDir, limits, sessionOf, findTranscript, Totals, modelName } from "./data.js";
 
 const ICON = (name) => `mods/claude-usage/icons/${name}.svg`;
 const REFRESH_EVERY = 10000;
@@ -104,16 +104,22 @@ export default class ClaudeUsage extends View {
     this.busy.refresh = true;
     cx.spawn(async (cx) => {
       try {
-        const signedOut = this.auth && (this.auth.loggedIn === false || this.auth.missing);
-        if (first || Date.now() - this.authAt > (signedOut ? REFRESH_EVERY : AUTH_EVERY)) {
-          this.auth = await auth();
+        const unsure = this.authError || (this.auth && (this.auth.loggedIn === false || this.auth.missing));
+        if (first || Date.now() - this.authAt > (unsure ? REFRESH_EVERY : AUTH_EVERY)) {
+          const a = await auth();
           this.authAt = Date.now();
-          if (!this.overlay) await this.checkAccount();
+          if (a.error && !a.missing) {
+            this.authError = a.error;
+          } else {
+            this.auth = a;
+            this.authError = null;
+            if (!this.overlay) await this.checkAccount();
+          }
         }
         if (this.auth && !this.auth.missing) {
           try {
             this.link = await connection(configDir(this.auth));
-            this.original = this.link.connected ? ((await readTextFile(`${dataDir()}/original-command`)) ?? "") : (this.link.settings?.statusLine?.command ?? "");
+            this.original = this.link.connected ? await originalCommand(configDir(this.auth)) : (this.link.settings?.statusLine?.command ?? "");
           } catch (e) {
             this.link = { error: String(e?.message ?? e) };
           }
@@ -135,8 +141,8 @@ export default class ClaudeUsage extends View {
   remember() {
     const sig = JSON.stringify(this.data?.windows ?? {});
     const seen = shared(SEEN);
-    if (this.overlay || seen?.sig === sig) return;
-    setShared(SEEN, { sig, at: seen ? Date.now() : null });
+    if (this.overlay || (seen?.sig === sig && seen?.at)) return;
+    setShared(SEEN, { sig, at: Date.now() });
   }
 
   alert() {
@@ -281,6 +287,7 @@ export default class ClaudeUsage extends View {
 
   state() {
     const a = this.auth;
+    if (!a && this.authError) return { kind: "error", text: `Couldn't read Claude Code's sign-in: ${this.authError}` };
     if (!a) return { kind: "loading", text: "Checking Claude Code." };
     if (a.missing) return { kind: "missing", text: "Claude Code isn't installed here." };
     if (a.loggedIn === false) return { kind: "signedout", text: "Claude Code is signed out." };
@@ -321,14 +328,14 @@ export default class ClaudeUsage extends View {
     const s = this.state();
     if (this.narrow) return this.sized(this.renderRail(t, s));
     const seen = shared(SEEN);
-    const stale = Boolean(this.failed);
+    const stale = Boolean(this.failed || this.authError);
     const old = stale || (seen?.at && Date.now() - seen.at > DIM_AFTER);
     const card = v_flex().id("cu-strip").flex_none().gap(8).px(12).pt(8).pb(9).rounded(8)
       .bg(t.surface).border_1().border_color(t.border).cursor_pointer()
       .on_click(() => this.openSettings("usage"))
       .child(h_flex().h(16).line_height("16px").items_center().gap(8)
         .child(div().flex_1().text_size(11).font_medium().text_color(t.muted).child("Claude usage"))
-        .when(s.kind === "ok" && stale, (el) => el.child(div().id("cu-stale").text_size(11).text_color(t.working).tooltip(this.failed).child("couldn't refresh")))
+        .when(s.kind === "ok" && stale, (el) => el.child(div().id("cu-stale").text_size(11).text_color(t.working).tooltip(this.failed || this.authError).child("couldn't refresh")))
         .when(s.kind === "ok" && !stale && Boolean(seen?.at), (el) => el.child(div().text_size(11).text_color(t.muted).child(ago(Date.now() - seen.at))))
         .child(div().id("cu-gear").cursor_pointer().text_color(t.muted).hover((st) => st.text_color(t.foreground))
           .tooltip("Usage settings")
@@ -474,7 +481,8 @@ export default class ClaudeUsage extends View {
   accountPage(t) {
     const a = this.auth;
     const account = this.box(t);
-    if (!a) account.child(div().text_color(t.muted).child("Checking Claude Code."));
+    if (this.authError) account.child(div().text_size(12).text_color(t.blocked).child(`Couldn't read Claude Code's sign-in: ${this.authError}`));
+    if (!a) account.child(div().text_color(t.muted).child(this.authError ? "Retrying in 10 s." : "Checking Claude Code."));
     else if (a.missing) account.child(div().text_color(t.muted).child("Claude Code isn't installed here, or Herdr can't find it on your PATH."));
     else if (a.loggedIn === false) {
       account.child(h_flex().items_center().gap(12)

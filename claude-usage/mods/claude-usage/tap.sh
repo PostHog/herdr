@@ -7,6 +7,7 @@ if [ -n "$sid" ]; then
   mkdir -p "$dir/sessions"
   printf '%s' "$payload" > "$dir/sessions/$sid.json.tmp" && mv -f "$dir/sessions/$sid.json.tmp" "$dir/sessions/$sid.json"
 fi
-if [ -s "$dir/original-command" ]; then
-  printf '%s' "$payload" | sh -c "$(cat "$dir/original-command")"
+backup="${1:-$dir}"
+if [ -s "$backup/original-command" ]; then
+  printf '%s' "$payload" | sh -c "$(cat "$backup/original-command")"
 fi
