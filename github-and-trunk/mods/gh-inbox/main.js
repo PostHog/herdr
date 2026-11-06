@@ -1,10 +1,11 @@
 // Your pull requests, the Trunk merge queue and your review requests, as tabs
 // you can drag into any order. Data comes from the `gh` and `trunk` CLIs.
 
-import { View, div, svg } from "gpui-kit";
+import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { theme, run, props, openOverlay, nextCommand, notify } from "herdr";
 import { TRUNK_REPO, TrunkUnavailable, login, searchPrs, stacks, queue, queueItem, testRun, enqueue, dequeue } from "./data.js";
+import { CLAUDE_ICON, startClaude } from "./claude.js";
 
 const ICON = (name) => `mods/gh-inbox/icons/${name}.svg`;
 const GH_EVERY = 60000;
@@ -56,6 +57,13 @@ function visualStep(pr, p) {
   if (!asks.length) return null;
   const v = asks[0];
   return { icon: "eye", color: p.warn, label: `Visuals: ${v.summary}`, url: v.url };
+}
+
+// The stack-depth check is the PR's only failure (see markStackDepth in data.js).
+function stackStep(pr, p) {
+  if (!pr.stack) return null;
+  const { checked, detail, url } = pr.stack;
+  return { icon: "stack", color: p.warn, label: checked ? "Stack too deep" : "Stack depth not checked", url, tip: detail || "Open the stack depth check" };
 }
 
 export default class GhInbox extends View {
@@ -219,6 +227,8 @@ export default class GhInbox extends View {
     const vr = visualStep(pr, p);
     if (vr) return vr;
     if (pr.checks.fail) return { icon: "fail", color: p.bad, label: `${plural(pr.checks.fail, "check")} failing` };
+    const st = stackStep(pr, p);
+    if (st) return st;
     if (pr.decision === "CHANGES_REQUESTED") return { icon: "changes", color: p.bad, label: "Changes requested" };
     if (pr.checks.running) return { icon: "spinner", spin: true, color: p.run, label: `CI ${pr.checks.pass}/${pr.checks.total}` };
     if (pr.decision === "REVIEW_REQUIRED") return { icon: "waiting", color: p.warn, label: "Needs review" };
@@ -266,7 +276,7 @@ export default class GhInbox extends View {
     const now = new Map();
     for (const pr of this.mine) {
       const q = pr.repo === TRUNK_REPO ? this.mineQueue?.get(pr.number) : null;
-      now.set(pr.key, { pr, ci: pr.checks.fail ? "fail" : pr.checks.running ? "run" : "ok", decision: pr.decision, queue: q?.state ?? null, visual: visualAsks(pr).length > 0 });
+      now.set(pr.key, { pr, ci: pr.checks.fail ? "fail" : pr.checks.running ? "run" : "ok", decision: pr.decision, queue: q?.state ?? null, visual: visualAsks(pr).length > 0, stack: Boolean(pr.stack) });
     }
     for (const i of this.mineQueue?.values() ?? []) {
       const key = `${TRUNK_REPO}#${i.number}`;
@@ -282,6 +292,7 @@ export default class GhInbox extends View {
         else if (s.queue !== was.queue && (s.queue === "Failed" || s.queue === "Cancelled")) say(s.pr, s.queue === "Failed" ? "Merge queue failed" : "Removed from the merge queue", "error");
         if (s.visual && was.visual === false) say(s.pr, "Visual changes to approve", "warning");
         if (s.ci === "fail" && was.ci && was.ci !== "fail" && !s.visual) say(s.pr, "Checks failing", "error");
+        if (s.stack && was.stack === false) say(s.pr, "Stack too deep", "warning");
         if (s.decision !== was.decision && s.decision === "APPROVED") say(s.pr, "Approved", "success");
         if (s.decision !== was.decision && s.decision === "CHANGES_REQUESTED") say(s.pr, "Changes requested", "warning");
       }
@@ -444,12 +455,13 @@ export default class GhInbox extends View {
     const ci = c.fail ? { icon: "fail", color: p.bad, label: `${c.fail}` } : c.running ? { icon: "spinner", spin: true, color: p.run, label: `${c.pass}/${c.total}` } : c.total ? { icon: "check", color: p.ok, label: "" } : null;
     const meta = [];
     if (review) meta.push(div().text_color(t.dim).child(`${pr.author} · ${ago(Date.now() - pr.created)}`));
-    else meta.push(this.chip(t, s));
+    else meta.push(s.tip ? this.link(t, `ghi-step-${pr.key}`, this.chip(t, s), s.url, s.tip) : this.chip(t, s));
     if (ci && (review || !["spinner", "fail", "check"].includes(s.icon))) meta.push(c.fail ? this.link(t, `ghi-ci-${pr.key}`, this.chip(t, ci), `${pr.url}/checks`, "Open the failing checks") : this.chip(t, ci));
     if (pr.approvedBy.length && s.icon !== "check") meta.push(this.chip(t, { icon: "approved", color: p.ok, label: String(pr.approvedBy.length) }));
     if (pr.unresolved) meta.push(this.chip(t, { icon: "comment", color: p.warn, label: String(pr.unresolved) }));
 
     const actions = this.actions(t, pr, q, s, review, group);
+    const claude = () => startClaude(pr, { me: this.me, review, status: s.label, stack: group, asOf: this.updated });
     const lead = this.icon(t, pr.draft ? "pr-draft" : q?.state === "Merged" ? "merged" : "pr", pr.draft ? p.dim : review ? t.muted : s.color, 15);
     return [h_flex().id(`ghi-pr-${pr.key}`).px(8).py(5).gap(8).items_start().rounded(8).cursor_pointer()
       .hover((st) => st.bg(t.hover))
@@ -461,7 +473,7 @@ export default class GhInbox extends View {
         .child(h_flex().gap(5).items_center().min_w(0)
           .child(div().flex_none().text_size(11).text_color(t.dim).child(`#${pr.number}`))
           .child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(pr.draft ? t.muted : t.foreground).child(pr.title))
-          .when(this.hovered === pr.key, (el) => el.child(this.linkIcons(t, pr.key, pr.url))))
+          .when(this.hovered === pr.key, (el) => el.child(this.linkIcons(t, pr.key, pr.url, claude))))
         .child(h_flex().gap(8).items_center().min_w(0).overflow_hidden().text_size(11).children(meta))
         .when(Boolean(s.progress), (el) => el.child(this.progressBar(t, p, s.progress)))
         .when(actions.length > 0, (el) => el.child(h_flex().mt(3).gap(5).flex_wrap().children(actions))))];
@@ -625,6 +637,7 @@ export default class GhInbox extends View {
     const pct = r?.checks.total ? Math.round(((r.checks.pass + r.checks.fail) / r.checks.total) * 100) : null;
     const key = `q-${i.number}`;
     const url = `https://github.com/${TRUNK_REPO}/pull/${i.number}`;
+    const claude = () => startClaude({ repo: TRUNK_REPO, number: i.number, title: i.title, url }, { status: s.label, asOf: this.updated });
     return h_flex().id(`ghi-q-${i.number}`).px(8).h(26).gap(8).items_center().rounded(6).cursor_pointer()
       .text_size(12).hover((st) => st.bg(t.hover))
       .on_hover((on, cx) => this.hover(key, on, cx))
@@ -636,7 +649,7 @@ export default class GhInbox extends View {
       .child(div().flex_1().min_w(0).truncate().text_color(yours ? t.foreground : t.muted).when(yours, (el) => el.font_medium()).child(i.title))
       .when(pct != null && this.hovered !== key, (el) => el.child(div().flex_none().text_size(10.5).text_color(r.checks.fail ? p.bad : t.dim)
         .child(`${pct}% · ${ago(Date.now() - r.started)}`)))
-      .when(this.hovered === key, (el) => el.child(this.linkIcons(t, key, url)));
+      .when(this.hovered === key, (el) => el.child(this.linkIcons(t, key, url, claude)));
   }
 
   hover(key, on, cx) {
@@ -645,18 +658,19 @@ export default class GhInbox extends View {
     cx.notify();
   }
 
-  // Copy and open, shown on the hovered row.
-  linkIcons(t, key, url) {
-    const icon = (id, name, tip, onClick) => div().id(`ghi-${id}-${key}`).p(2).rounded(4).flex_none().cursor_pointer()
+  // Shown on the hovered row: start Claude Code on the PR, copy its link, open it.
+  linkIcons(t, key, url, claude) {
+    const icon = (id, glyph, tip, onClick) => div().id(`ghi-${id}-${key}`).p(2).rounded(4).flex_none().cursor_pointer()
       .text_color(t.dim).hover((st) => st.bg(t.raised).text_color(t.foreground)).tooltip(tip)
       .on_click((_e, cx) => { cx.stop_propagation(); onClick(cx); })
-      .child(svg(ICON(name)).size(13));
+      .child(glyph);
     return h_flex().flex_none().gap(2).items_center()
-      .child(icon("copy", "copy", "Copy link", (cx) => {
+      .child(icon("claude", image(CLAUDE_ICON).size(13), "Start Claude Code on this PR", (cx) => cx.spawn(claude)))
+      .child(icon("copy", svg(ICON("copy")).size(13), "Copy link", (cx) => {
         cx.write_to_clipboard(url);
         notify({ title: "Link copied", body: url, level: "success", timeout: 2500 });
       }))
-      .child(icon("open", "external", "Open on GitHub", (cx) => cx.open_url(url)));
+      .child(icon("open", svg(ICON("external")).size(13), "Open on GitHub", (cx) => cx.open_url(url)));
   }
 
   reviewView(t, cx) {
