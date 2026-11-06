@@ -1,7 +1,7 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { theme, run, props, agents, home, openOverlay, closeOverlay, nextCommand, notify, playSound, shared, setShared, readTextFile } from "herdr";
-import { WINDOWS, dataDir, tapPath, auth, configDir, projectsDir, connection, connect, disconnect, prune, limits, sessionOf, findTranscript, Totals, modelName } from "./data.js";
+import { theme, run, props, agents, spaces, home, openOverlay, closeOverlay, nextCommand, notify, playSound, shared, setShared, readTextFile } from "herdr";
+import { WINDOWS, dataDir, tapPath, auth, configDir, projectsDir, connection, connect, disconnect, prune, clearReports, ensureDataDir, limits, sessionOf, findTranscript, Totals, modelName } from "./data.js";
 
 const ICON = (name) => `mods/claude-usage/icons/${name}.svg`;
 const REFRESH_EVERY = 10000;
@@ -10,6 +10,7 @@ const SESSIONS_EVERY = 5000;
 const DIM_AFTER = 3600000;
 const PREFS = "claude-usage.prefs";
 const SEEN = "claude-usage.seen";
+const ACCOUNT = "claude-usage.account";
 const DEFAULTS = { warn: 80, urgent: 95, sound: true };
 const PLANS = { pro: "Claude Pro", max: "Claude Max", team: "Claude Team", enterprise: "Claude Enterprise", ultra: "Claude Ultra" };
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -81,7 +82,7 @@ export default class ClaudeUsage extends View {
     cx.timer.every(60000, (cx) => cx.notify());
     if (this.overlay) cx.timer.every(SESSIONS_EVERY, (cx) => this.refreshSessions(cx));
     else {
-      prune();
+      ensureDataDir().then(() => prune()).catch(() => null);
       cx.timer.every(3600000, () => prune());
     }
     this.refresh(cx, true);
@@ -92,7 +93,7 @@ export default class ClaudeUsage extends View {
         if (c === "settings" || c === "account") {
           if (!this.overlay) this.openSettings(c === "account" ? "account" : "usage");
         }
-        else if (this.pending === c) await this.act(c, cx);
+        else if (this.pending && c === this.pending) await this.act(c.split("-")[0], cx);
         cx.notify();
       }
     });
@@ -107,10 +108,15 @@ export default class ClaudeUsage extends View {
         if (first || Date.now() - this.authAt > (signedOut ? REFRESH_EVERY : AUTH_EVERY)) {
           this.auth = await auth();
           this.authAt = Date.now();
+          if (!this.overlay) await this.checkAccount();
         }
         if (this.auth && !this.auth.missing) {
-          this.link = await connection(configDir(this.auth));
-          this.original = this.link.connected ? ((await readTextFile(`${dataDir()}/original-command`)) ?? "") : (this.link.settings?.statusLine?.command ?? "");
+          try {
+            this.link = await connection(configDir(this.auth));
+            this.original = this.link.connected ? ((await readTextFile(`${dataDir()}/original-command`)) ?? "") : (this.link.settings?.statusLine?.command ?? "");
+          } catch (e) {
+            this.link = { error: String(e?.message ?? e) };
+          }
         }
         this.data = await limits();
         this.remember();
@@ -156,8 +162,18 @@ export default class ClaudeUsage extends View {
     localStorage.setItem("alerted", JSON.stringify([...this.alerted].slice(-40)));
   }
 
+  async checkAccount() {
+    const a = this.auth;
+    if (!a || a.missing || a.loggedIn === false) return;
+    const who = `${a.email ?? ""}|${a.orgId ?? ""}`;
+    const last = shared(ACCOUNT);
+    if (last === who) return;
+    if (last) await clearReports();
+    setShared(ACCOUNT, who);
+  }
+
   refreshSessions(cx) {
-    if (this.busy.sessions || !this.auth || this.auth.missing) return;
+    if (this.busy.sessions || this.page !== "usage" || !this.auth || this.auth.missing) return;
     this.busy.sessions = true;
     cx.spawn(async (cx) => {
       try {
@@ -192,8 +208,8 @@ export default class ClaudeUsage extends View {
   }
 
   ask(action, title, detail) {
-    this.pending = action;
-    openOverlay({ mod: "confirm", kind: "dialog", width: 420, height: 200, props: { title, detail, command: { name: `claude-usage.${action}` } } });
+    this.pending = `${action}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+    openOverlay({ mod: "confirm", kind: "dialog", width: 420, height: 200, props: { title, detail, command: { name: `claude-usage.${this.pending}` } } });
   }
 
   async act(action, cx) {
@@ -225,7 +241,9 @@ export default class ClaudeUsage extends View {
   }
 
   startClaude(name, argv) {
-    run("tab.new", { name, argv });
+    const local = spaces().find((s) => s.machine == null && s.active) ?? spaces().find((s) => s.machine == null);
+    if (local) run("tab.new", { name, space: local.id, argv });
+    else run("space.new", { name, argv, machine: "" });
     this.authAt = 0;
     if (this.overlay) closeOverlay(this.overlay);
   }
@@ -303,13 +321,15 @@ export default class ClaudeUsage extends View {
     const s = this.state();
     if (this.narrow) return this.sized(this.renderRail(t, s));
     const seen = shared(SEEN);
-    const old = seen?.at && Date.now() - seen.at > DIM_AFTER;
+    const stale = Boolean(this.failed);
+    const old = stale || (seen?.at && Date.now() - seen.at > DIM_AFTER);
     const card = v_flex().id("cu-strip").flex_none().gap(8).px(12).pt(8).pb(9).rounded(8)
       .bg(t.surface).border_1().border_color(t.border).cursor_pointer()
       .on_click(() => this.openSettings("usage"))
       .child(h_flex().h(16).line_height("16px").items_center().gap(8)
         .child(div().flex_1().text_size(11).font_medium().text_color(t.muted).child("Claude usage"))
-        .when(s.kind === "ok" && Boolean(seen?.at), (el) => el.child(div().text_size(11).text_color(t.muted).child(ago(Date.now() - seen.at))))
+        .when(s.kind === "ok" && stale, (el) => el.child(div().id("cu-stale").text_size(11).text_color(t.working).tooltip(this.failed).child("couldn't refresh")))
+        .when(s.kind === "ok" && !stale && Boolean(seen?.at), (el) => el.child(div().text_size(11).text_color(t.muted).child(ago(Date.now() - seen.at))))
         .child(div().id("cu-gear").cursor_pointer().text_color(t.muted).hover((st) => st.text_color(t.foreground))
           .tooltip("Usage settings")
           .on_click((e, cx) => {
@@ -357,6 +377,7 @@ export default class ClaudeUsage extends View {
         .hover((s) => s.text_color(t.foreground))
         .on_click((_e, cx) => {
           this.page = id;
+          if (id === "usage") this.refreshSessions(cx);
           cx.notify();
         })
         .child(this.icon(icon, on ? t.foreground : t.muted, 15))
