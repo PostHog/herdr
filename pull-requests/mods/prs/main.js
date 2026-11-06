@@ -1,6 +1,6 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
-import { theme, props, openOverlay, closeOverlay, shared, setShared, run, spaces, machines, notify, layout, nextCommand } from "herdr";
+import { theme, props, openOverlay, closeOverlay, shared, setShared, run, spaces, machines, notify, layout, nextCommand, focused } from "herdr";
 import { loadStore, store, updateStore, prKey, newId } from "./store.js";
 import { fetchMyPrs, fetchReviews, fetchDetail, statusPill, needsAttention, needsReview, readyToMerge, orderWithStacks, comparePriority } from "./github.js";
 import { mergePr, updateBranch, rerunFailed, approvePr, commentOnPr, resolveThread, openUrl, copyText, markdownLink, toggleWatch, toggleHidden, report, usesTrunk, isTrunkPr } from "./actions.js";
@@ -34,6 +34,21 @@ function findNode(node, id) {
 
 const pageShown = () => findNode(layout(), VIEW_STACK)?.active === PAGE_NODE;
 const showView = (child) => run("layout.select", { stack: VIEW_STACK, child });
+
+function leavePage() {
+  showView(WORK_NODE);
+  const now = focused();
+  if (now?.pane) run("pane.focus", { pane: now.pane });
+  else if (now?.terminal) run("pane.focus", { terminal: now.terminal });
+}
+
+function toggleView() {
+  const last = shared("prs.toggleAt") ?? 0;
+  if (Date.now() - last < 500) return;
+  setShared("prs.toggleAt", Date.now());
+  if (pageShown()) leavePage();
+  else showView(PAGE_NODE);
+}
 
 const PAGES = [
   { id: "mine", label: "My PRs" },
@@ -246,10 +261,7 @@ export default class Prs extends View {
       for (;;) {
         const command = await nextCommand();
         if (command !== "toggle") continue;
-        const last = shared("prs.toggleAt") ?? 0;
-        if (Date.now() - last < 500) continue;
-        setShared("prs.toggleAt", Date.now());
-        showView(pageShown() ? WORK_NODE : PAGE_NODE);
+        toggleView();
         cx.notify();
       }
     });
@@ -621,7 +633,20 @@ export default class Prs extends View {
         .child(div().flex_1().text_size(13).child(page.id === "reviews" ? "Review requests" : page.id === "queue" ? "Merge queue" : page.label))
         .when(Boolean(counts[page.id]), (el) => el.child(div().px(7).rounded(9).bg(t.raised).text_size(11).text_color(t.muted).child(String(counts[page.id]))))))
       .child(div().flex_1())
-      .child(button(t, "prs-back", "Back to terminals  ⌘⇧G", () => showView(WORK_NODE), { small: true }));
+      .child(h_flex()
+        .id("prs-back")
+        .h(34)
+        .px(10)
+        .gap(8)
+        .rounded(8)
+        .items_center()
+        .text_color(t.muted)
+        .cursor_pointer()
+        .hover((el) => el.bg(t.hover))
+        .on_click(() => leavePage())
+        .child(svg("mods/prs/icons/terminal.svg").size(14).flex_none().text_color(t.muted))
+        .child(div().flex_1().text_size(13).child("Back to terminals"))
+        .child(div().text_size(11).text_color(t.dim).child("⌘⇧G")));
     const columns = this.page === "mine" || this.page === "reviews"
       ? h_flex()
           .px(16)
@@ -644,6 +669,14 @@ export default class Prs extends View {
       .bg(t.background)
       .text_color(t.foreground)
       .text_size(13)
+      .when(Boolean(props()?.page), (el) => el
+        .track_focus(this.handle)
+        .on_mouse_down("left", () => this.handle.focus())
+        .on_key_down((e, cx) => {
+          if (e.keystroke !== "cmd-shift-g") return;
+          toggleView();
+          cx.stop_propagation();
+        }))
       .child(nav)
       .child(
         v_flex()
