@@ -17,8 +17,8 @@ finish() {
 
 read_only_claude() {
   claude -p "$1" --model "$2" --output-format text \
-    --setting-sources user --strict-mcp-config \
-    --allowedTools "Read" "Grep" "Glob" \
+    --setting-sources "" --strict-mcp-config --permission-mode dontAsk \
+    --allowedTools "Read(/$tree/**)" "Read(/$dir/**)" \
     --disallowedTools "Bash" "Edit" "Write" "NotebookEdit" "WebFetch" "WebSearch"
 }
 
