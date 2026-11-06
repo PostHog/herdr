@@ -62,6 +62,7 @@ Its Settings dialog adds real token counts for each Claude Code session in Herdr
 - `exec` output stops at 8 MiB and `readTextFile` at 1 MiB. The transcript reader reads 4 MiB chunks from a byte offset with `tail -c` and `head -c`, and skips a line longer than one chunk (a pasted image).
 - `writeTextFile` replaces a file, which turns a symlinked `settings.json` (dotfiles) into a plain file. `cat >` keeps the link but empties the file first, so a failed write loses every setting. Resolve the link, then rename a full copy over the real file. Connect also refuses when the file changed since it was read.
 - `wc -c < missing | tr -d " "` exits 0 with empty output, and `Number("")` is 0. Without an explicit check, a transcript that disappears for a moment reads as truncated and its totals reset to zero.
+- Statusline runs overlap: `refreshInterval: 1` with a slow statusline command starts the next run before the last one ends. Every temporary file needs `mktemp`. With a fixed `.tmp` name, 36 of 60 overlapping runs failed to rename.
 - A command a `confirm` dialog runs reaches every shown copy of the mod. A fixed name like `claude-usage.connect` lets a cancelled request in one copy act on another copy's confirmation.
 - The mod needs `/bin/sh` and the usual Unix tools, so it doesn't run on Windows.
 - Connect rewrites `settings.json` with 2-space JSON. A project's own `statusLine` (`.claude/settings.json` in a repo) wins over yours, so sessions in that repo don't report.

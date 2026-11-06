@@ -5,7 +5,9 @@ payload="$(cat)"
 sid="$(printf '%s' "$payload" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([A-Za-z0-9_-]*\)".*/\1/p' | head -n 1)"
 if [ -n "$sid" ]; then
   mkdir -p "$dir/sessions"
-  printf '%s' "$payload" > "$dir/sessions/$sid.json.tmp" && mv -f "$dir/sessions/$sid.json.tmp" "$dir/sessions/$sid.json"
+  if tmp="$(mktemp "$dir/sessions/.$sid.XXXXXX")"; then
+    { printf '%s' "$payload" > "$tmp" && mv -f "$tmp" "$dir/sessions/$sid.json"; } || rm -f "$tmp"
+  fi
 fi
 backup="${1:-$dir}"
 if [ -s "$backup/original-command" ]; then
