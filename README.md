@@ -6,6 +6,7 @@ Each top-level folder is one piece. You pick the pieces you want, and `install.s
 | Piece | What it is |
 | --- | --- |
 | [`github-and-trunk`](github-and-trunk/RECIPE.md) | Herdr's main layout plus a sidebar panel for your PRs, the Trunk merge queue and your reviews. |
+| [`pull-requests`](pull-requests/RECIPE.md) | Herdr's main layout plus a PR panel and a full-page PR workspace (`cmd-shift-g`), with the Trunk queue, review ranking, workflows, and agent fixes and reviews on this computer or a Herdr machine. |
 
 ## Install
 
@@ -26,6 +27,8 @@ herdr-app do layout.switch '{"name":"github-and-trunk"}'
 The `github-and-trunk` piece needs the [GitHub CLI](https://cli.github.com) logged in (`gh auth login`).
 For the merge queue it also needs Trunk: a `PostHog/posthog` checkout, and `trunk` on your PATH or from that checkout's flox environment, after `trunk login`.
 Without Trunk, the rest of the panel works and the Queue tab says what's missing.
+
+The `pull-requests` piece needs the same, plus `claude` on the machine its agents run on. Its Settings page sets the repos, where agents and Trunk run, and each repo's checkout. Merge its `keys.json` (`cmd-shift-g`) into yours by hand.
 
 ## Update
 
