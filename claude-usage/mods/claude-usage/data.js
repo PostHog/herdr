@@ -37,11 +37,23 @@ export function utf8Len(s) {
   return n;
 }
 
+async function envConfigDir() {
+  const r = await exec("/bin/sh", ["-c", 'printf %s "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"']).catch(() => null);
+  return r?.code === 0 && r.stdout ? r.stdout : null;
+}
+
+export async function ensureDataDir() {
+  await exec("/bin/sh", ["-c", 'umask 077; mkdir -p "$1/sessions" && chmod 700 "$1"', "sh", dataDir()]);
+}
+
 export async function auth() {
   try {
     const r = await exec("claude", ["auth", "status", "--json"]);
     const s = parse(r.stdout.trim());
-    if (s && typeof s === "object") return s;
+    if (s && typeof s === "object") {
+      if (!s.configDirectory) s.configDirectory = await envConfigDir();
+      return s;
+    }
     return { error: (r.stderr || r.stdout).trim().split("\n").pop() || `claude exited ${r.code}` };
   } catch (e) {
     return { missing: true, error: String(e?.message ?? e) };
@@ -60,13 +72,31 @@ export async function connection(dir) {
   return { path, text, settings, connected: typeof command === "string" && command.includes("/mods/claude-usage/tap.sh") };
 }
 
+const REPLACE = [
+  'src="$1"; t="$2"; new=""',
+  'trap \'rm -f "$src" "$new"\' EXIT',
+  'n=0',
+  'while [ -L "$t" ] && [ "$n" -lt 40 ]; do',
+  '  l="$(readlink "$t")"',
+  '  case "$l" in /*) t="$l" ;; *) t="$(dirname "$t")/$l" ;; esac',
+  '  n=$((n + 1))',
+  'done',
+  'new="$(mktemp "$t.XXXXXX")" || exit 1',
+  'cat "$src" > "$new" || exit 1',
+  'if [ -e "$t" ]; then',
+  '  case "$(uname)" in Darwin) mode="$(stat -f %Lp "$t")" ;; *) mode="$(stat -c %a "$t")" ;; esac',
+  '  chmod "$mode" "$new" || exit 1',
+  'fi',
+  'mv -f "$new" "$t"',
+].join("\n");
+
 async function writeThrough(path, before, text) {
   const now = await readTextFile(path);
   if (now !== before) throw new Error("Claude Code's settings changed while this ran. Try again.");
-  await fs.mkdir(dataDir(), { recursive: true });
-  const tmp = `${dataDir()}/settings.next.json`;
+  await ensureDataDir();
+  const tmp = `${dataDir()}/settings-${Date.now()}-${Math.random().toString(36).slice(2, 10)}.json`;
   await fs.writeFile(tmp, text);
-  const r = await exec("/bin/sh", ["-c", 'cat "$1" > "$2" && rm -f "$1"', "sh", tmp, path]);
+  const r = await exec("/bin/sh", ["-c", REPLACE, "sh", tmp, path]);
   if (r.code !== 0) throw new Error(r.stderr.trim() || `Couldn't write ${path}`);
 }
 
@@ -78,7 +108,7 @@ export async function connect(dir) {
   if (c.connected) return;
   const original = c.settings.statusLine ?? null;
   const command = original?.type === "command" && typeof original.command === "string" ? original.command : "";
-  await fs.mkdir(dataDir(), { recursive: true });
+  await ensureDataDir();
   await fs.writeFile(`${dataDir()}/original-statusline.json`, JSON.stringify(original));
   await fs.writeFile(`${dataDir()}/original-command`, command);
   const tap = shq(tapPath());
@@ -100,6 +130,10 @@ export async function disconnect(dir) {
   if (original) next.statusLine = original;
   else delete next.statusLine;
   await writeThrough(c.path, c.text, pretty(next));
+}
+
+export async function clearReports() {
+  await exec("find", [`${dataDir()}/sessions`, "-name", "*.json", "-delete"]).catch(() => null);
 }
 
 export async function prune() {
@@ -169,15 +203,28 @@ export class Totals {
     } catch {
       subs = [];
     }
+    const files = [transcript, ...subs];
+    const sizes = await this.sizes(files);
     const sum = { output: 0, input: 0, cacheRead: 0, model: null };
-    for (const file of [transcript, ...subs]) {
-      const s = await this.read(file);
+    for (const file of files) {
+      const known = this.files.get(file);
+      const s = known && sizes.get(file) === known.offset ? known : await this.read(file);
       sum.output += s.output;
       sum.input += s.input;
       sum.cacheRead += s.cacheRead;
       if (file === transcript) sum.model = s.model;
     }
     return sum;
+  }
+
+  async sizes(files) {
+    const out = new Map();
+    const r = await exec("wc", ["-c", "--", ...files]).catch(() => null);
+    for (const line of (r?.stdout ?? "").split("\n")) {
+      const m = /^\s*(\d+)\s+(.+)$/.exec(line);
+      if (m && files.includes(m[2])) out.set(m[2], Number(m[1]));
+    }
+    return out;
   }
 
   async read(file) {
