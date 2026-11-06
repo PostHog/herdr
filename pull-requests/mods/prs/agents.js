@@ -1,6 +1,6 @@
 import { notify } from "herdr";
 import { store, updateStore, prKey, newId } from "./store.js";
-import { config } from "./config.js";
+import { config, loadConfig } from "./config.js";
 import { runnerMachine, runsDir, checkoutFor, launchClaudeOnPr, startHeadless, readRuns, readRunFile } from "./runner.js";
 
 const LENSES = {
@@ -65,6 +65,7 @@ export function reviewPromptForOthers(pr) {
 }
 
 export async function startFixSession(pr, prompt, label = "fix") {
+  await loadConfig();
   const machine = await launchClaudeOnPr(pr, prompt, `${label} #${pr.number}`);
   return updateStore((state) => {
     const id = newId();
@@ -73,6 +74,7 @@ export async function startFixSession(pr, prompt, label = "fix") {
 }
 
 export async function startReview(pr) {
+  await loadConfig();
   const id = newId();
   const machine = runnerMachine();
   const dir = `${await runsDir(machine)}/${id}`;

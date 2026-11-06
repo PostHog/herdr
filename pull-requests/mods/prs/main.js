@@ -12,7 +12,7 @@ import { loadTrunk, dequeue, resetTrunk } from "./trunk.js";
 import { sidebarHeader, sidebarMine, sidebarQueue, sidebarReviews, sidebarRail, statusLine, prIcon, progressLine, stackHeader } from "./sidebar.js";
 import { visualAsks, stackGroups } from "./steps.js";
 import { fetchKeeperStatus, systemctl, pollNow, openLiveLog, switchMode } from "./keeper.js";
-import { ago, button, chip, badge, section, empty, field, menuItem, SPINNER, tone, TEXT } from "./ui.js";
+import { ago, button, iconButton, chip, badge, section, empty, field, menuItem, SPINNER, tone, TEXT } from "./ui.js";
 
 const MINE_EVERY_MS = 90000;
 const REVIEWS_EVERY_MS = 180000;
@@ -22,6 +22,7 @@ const FAILURES_BEFORE_ERROR = 3;
 const VIEW_STACK = "pr-center";
 const PAGE_NODE = "prs-page";
 const WORK_NODE = "work";
+const QUICK_ACTIONS_WIDTH = 110;
 
 function findNode(node, id) {
   if (node?.id === id) return node;
@@ -686,7 +687,7 @@ export default class Prs extends View {
           .child(div().flex_1().child("TITLE"))
           .child(div().w(300).child(this.page === "mine" ? "STATUS" : "REQUESTED"))
           .child(div().w(80).child("UPDATED"))
-          .child(div().w(190))
+          .child(div().w(QUICK_ACTIONS_WIDTH))
       : null;
     const body = this.page === "mine" ? this.wideMineRows(t) : this.page === "reviews" ? this.wideReviewRows(t) : this.pageBody(t);
     return h_flex()
@@ -719,10 +720,13 @@ export default class Prs extends View {
   }
 
   quickActions(t, pr, scope) {
-    const entries = scope === "reviews"
-      ? [["reviewInClaude", "Review"], ["agentReview", "Agent"], ["copyLink", "Copy"], ["open", "Open"]]
-      : [["agentReview", "Review"], ["copyLink", "Copy"], ["open", "Open"]];
-    return h_flex().w(190).flex_none().gap(4).justify_end().children(entries.map(([name, label]) => button(t, `prs-q-${scope}-${pr.number}-${name}`, label, () => choose(name, pr), { small: true })));
+    const entries = [
+      ...(scope === "reviews" ? [["reviewInClaude", "terminal", "Review in Claude"]] : []),
+      ["agentReview", "bot", "Agent review (headless)"],
+      ["copyLink", "copy", "Copy as Markdown link"],
+      ["open", "external", "Open on GitHub"],
+    ];
+    return h_flex().w(QUICK_ACTIONS_WIDTH).flex_none().gap(2).justify_end().children(entries.map(([name, iconName, label]) => iconButton(t, `prs-q-${scope}-${pr.number}-${name}`, iconName, label, () => choose(name, pr))));
   }
 
   wideRow(t, id, pr, scope, depth, left, middle, right) {
