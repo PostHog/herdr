@@ -63,6 +63,27 @@ export function iconButton(t, id, iconName, label, onClick) {
     .child(svg(`mods/prs/icons/${iconName}.svg`).size(14).text_color(t.muted));
 }
 
+export function textIconButton(t, id, iconName, label, onClick) {
+  return h_flex()
+    .id(id)
+    .h(26)
+    .px(8)
+    .gap(6)
+    .flex_none()
+    .items_center()
+    .rounded(6)
+    .text_size(12.5)
+    .text_color(t.foreground)
+    .cursor_pointer()
+    .hover((s) => s.bg(t.hover))
+    .on_click((event, cx) => {
+      cx.stop_propagation();
+      onClick(event, cx);
+    })
+    .child(svg(`mods/prs/icons/${iconName}.svg`).size(14).text_color(t.foreground))
+    .child(label);
+}
+
 export function chip(t, id, label, on, onClick, count) {
   return h_flex()
     .id(id)

@@ -11,7 +11,7 @@ import { forgetCheckouts, checkoutFor } from "./runner.js";
 import { loadTrunk, dequeue, resetTrunk } from "./trunk.js";
 import { sidebarHeader, sidebarMine, sidebarQueue, sidebarReviews, sidebarRail, statusLine, prIcon, progressLine, stackHeader } from "./sidebar.js";
 import { visualAsks, stackGroups } from "./steps.js";
-import { ago, button, iconButton, chip, badge, section, empty, field, menuItem, SPINNER, tone, TEXT } from "./ui.js";
+import { ago, button, iconButton, textIconButton, chip, badge, section, empty, field, menuItem, SPINNER, tone, TEXT } from "./ui.js";
 
 const MINE_EVERY_MS = 90000;
 const REVIEWS_EVERY_MS = 180000;
@@ -51,6 +51,12 @@ const MINE_CHIPS = [
   { id: "ready", label: "Ready to merge", test: readyToMerge },
   { id: "watching", label: "Watching", test: (pr) => pr.watching },
 ];
+
+const REVIEW_SORTS = {
+  priority: { label: "✦ Priority", next: "newest", compare: comparePriority },
+  newest: { label: "↓ Newest", next: "oldest", compare: (a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt) },
+  oldest: { label: "↑ Oldest", next: "priority", compare: (a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt) },
+};
 
 const agentsWhere = () => machineLabel(config().runner?.machine || null);
 const repos = () => (config().repos?.length ? config().repos : ["PostHog/posthog"]);
@@ -197,7 +203,7 @@ export default class Prs extends View {
     this.seen = null;
     this.seenConfig = shared("prs.config") ?? null;
     this.sortNewest = localStorage.getItem("sort") !== "oldest";
-    this.reviewSort = localStorage.getItem("reviewSort") ?? "priority";
+    this.reviewSort = REVIEW_SORTS[localStorage.getItem("reviewSort")] ? localStorage.getItem("reviewSort") : "priority";
     this.chips = new Set();
     this.repoFilter = null;
     this.viaFilter = null;
@@ -210,7 +216,7 @@ export default class Prs extends View {
     this.reviewsError = null;
     this.loadingMine = false;
     this.loadingReviews = false;
-    this.search = InputState.new({ placeholder: "Search title, repo or #number" });
+    this.search = InputState.new({ placeholder: "Search title, repo or #number…" });
     this.search.on("change", (_e, cx) => cx.notify());
     this.seenStore = shared("prs.store") ?? null;
     this.seenRefresh = shared("prs.refresh") ?? null;
@@ -653,7 +659,9 @@ export default class Prs extends View {
               .items_center()
               .child(div().flex_1().text_size(18).font_semibold().child(title))
               .when(loading, (el) => el.child(svg(SPINNER).size(13).spin(900).text_color(t.dim)))
-              .child(button(t, "prs-wide-refresh", "Refresh", (_e, cx) => this.refreshAll(cx), { small: true })),
+              .when(this.page === "mine", (el) => el.child(textIconButton(t, "prs-addpr", "plus", "Add PR", () => openOverlay({ mod: "prs", kind: "dialog", width: 440, height: 200, props: { mode: "addPr" } }))))
+              .when(["mine", "reviews"].includes(this.page), (el) => el.child(textIconButton(t, "prs-copylist", "copy", "Copy list", () => copyText(this.visibleList().map((pr) => `- ${markdownLink(pr)}`).join("\n"), "Copied the filtered PRs as a list."))))
+              .child(iconButton(t, "prs-wide-refresh", "refresh", "Refresh", (_e, cx) => this.refreshAll(cx))),
           )
           .child(div().px(10).child(this.toolbar(t)))
           .when(Boolean(columns), (el) => el.child(columns))
@@ -759,14 +767,29 @@ export default class Prs extends View {
     const scope = this.page;
     const repoLabel = this.repoFilter ? this.repoFilter.split("/")[1] : "All repos";
     const filters = store().filters.filter((filter) => (filter.scope ?? "mine") === scope);
-    return v_flex()
+    const search = h_flex()
+      .w(320)
+      .h(28)
+      .flex_none()
+      .pl(8)
+      .gap(2)
+      .items_center()
+      .rounded(7)
+      .border_1()
+      .border_color(t.input)
+      .bg(t.background)
+      .child(svg("mods/prs/icons/search.svg").size(13).flex_none().text_color(t.dim))
+      .child(div().flex_1().min_w(0).child(Input.new(this.search).h(26).px(4).bg(t.background).text_size(12).text_color(t.foreground)));
+    return h_flex()
       .px(8)
       .pt(8)
       .pb(4)
-      .gap(6)
-      .child(Input.new(this.search).h(28).px(8).rounded(7).border_1().border_color(t.input).bg(t.background).text_size(12).text_color(t.foreground))
+      .gap(12)
+      .items_start()
       .child(
         h_flex()
+          .flex_1()
+          .min_w(0)
           .gap(4)
           .flex_wrap()
           .child(chip(t, "prs-repo", `${repoLabel} ▾`, Boolean(this.repoFilter), () => this.pick("prs.pick.repo", [{ label: "All repos", value: null }, ...repos().map((repo) => ({ label: repo, value: repo }))], this.repoFilter)))
@@ -782,8 +805,8 @@ export default class Prs extends View {
           })))
           .when(scope === "reviews", (el) => el
             .child(chip(t, "prs-via", `${this.viaLabel()} ▾`, Boolean(this.viaFilter), () => this.pick("prs.pick.via", this.viaOptions(), this.viaFilter)))
-            .child(chip(t, "prs-rsort", this.reviewSort === "priority" ? "✦ Priority" : "↓ Newest", this.reviewSort === "priority", (_e, cx) => {
-              this.reviewSort = this.reviewSort === "priority" ? "newest" : "priority";
+            .child(chip(t, "prs-rsort", REVIEW_SORTS[this.reviewSort].label, this.reviewSort === "priority", (_e, cx) => {
+              this.reviewSort = REVIEW_SORTS[this.reviewSort].next;
               localStorage.setItem("reviewSort", this.reviewSort);
               cx.notify();
             })))
@@ -792,9 +815,8 @@ export default class Prs extends View {
             cx.notify();
           })))
           .child(chip(t, "prs-newfilter", "+ Filter", false, () => openOverlay({ mod: "prs", kind: "dialog", width: 460, height: 640, props: { mode: "filter", scope, repos: repos() } })))
-          .when(scope === "mine", (el) => el.child(chip(t, "prs-addpr", "+ Add PR", false, () => openOverlay({ mod: "prs", kind: "dialog", width: 440, height: 200, props: { mode: "addPr" } }))))
-          .child(chip(t, "prs-copylist", "Copy list", false, () => copyText(this.visibleList().map((pr) => `- ${markdownLink(pr)}`).join("\n"), "Copied the filtered PRs as a list.").then(() => {}))),
-      );
+      )
+      .child(search);
   }
 
   viaOptions() {
@@ -835,7 +857,7 @@ export default class Prs extends View {
   reviewsVisible() {
     const all = (this.reviews ?? []).map((pr) => ({ ...pr, hidden: this.isHidden(pr) }));
     const filtered = this.applyCommon(all).filter((pr) => !this.viaFilter || (this.viaFilter === "direct" ? pr.via.direct : pr.via.teams.includes(this.viaFilter)));
-    const sorter = this.reviewSort === "priority" ? comparePriority : (a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt);
+    const sorter = REVIEW_SORTS[this.reviewSort].compare;
     return { visible: filtered.filter((pr) => !pr.hidden).sort(sorter), hidden: filtered.filter((pr) => pr.hidden) };
   }
 
