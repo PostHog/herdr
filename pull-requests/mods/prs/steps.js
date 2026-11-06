@@ -1,4 +1,5 @@
 import { LISTING_CAP } from "./trunk.js";
+import { readyToMerge } from "./github.js";
 
 const ordinal = (n) => `${n}${n % 10 === 1 && n % 100 !== 11 ? "st" : n % 10 === 2 && n % 100 !== 12 ? "nd" : n % 10 === 3 && n % 100 !== 13 ? "rd" : "th"}`;
 const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
@@ -64,7 +65,14 @@ export function step(pr, entry, trunk) {
       }
     }
   }
-  return blocker(pr) ?? { icon: "check", tone: "ok", label: "Ready to merge", ready: true };
+  if (pr.state === "MERGED") return { icon: "merged", tone: "merged", label: "Merged" };
+  if (pr.state === "CLOSED") return { icon: "ban", tone: "dim", label: "Closed" };
+  const why = blocker(pr);
+  if (why) return why;
+  if (pr.queue?.active) return { icon: "queue", tone: "accent", label: "In merge queue" };
+  if (pr.mergeState === "BEHIND") return { icon: "waiting", tone: "warn", label: "Behind base" };
+  if (!readyToMerge(pr)) return { icon: "waiting", tone: "warn", label: "Not mergeable yet" };
+  return { icon: "check", tone: "ok", label: "Ready to merge", ready: true };
 }
 
 export function stackGroups(prs, newestFirst = true) {

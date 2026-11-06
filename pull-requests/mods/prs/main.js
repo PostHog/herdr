@@ -3,12 +3,12 @@ import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { theme, props, openOverlay, closeOverlay, shared, setShared, run, spaces, machines, notify, layout, nextCommand } from "herdr";
 import { loadStore, store, updateStore, prKey, newId } from "./store.js";
 import { fetchMyPrs, fetchReviews, fetchDetail, statusPill, needsAttention, needsReview, readyToMerge, orderWithStacks, comparePriority } from "./github.js";
-import { mergePr, updateBranch, rerunFailed, approvePr, commentOnPr, resolveThread, openUrl, copyText, markdownLink, toggleWatch, toggleHidden, report, usesTrunk } from "./actions.js";
+import { mergePr, updateBranch, rerunFailed, approvePr, commentOnPr, resolveThread, openUrl, copyText, markdownLink, toggleWatch, toggleHidden, report, usesTrunk, isTrunkPr } from "./actions.js";
 import { startFixSession, startReview, syncRuns, fixPrompt, findingsFixPrompt, reviewPromptForOthers, setFindingState, findingsMarkdown } from "./agents.js";
 import { processSnapshot, TRIGGERS, ACTION_KINDS } from "./automation.js";
 import { loadConfig, config, updateConfig, configPath, machineLabel } from "./config.js";
 import { forgetCheckouts, checkoutFor } from "./runner.js";
-import { loadTrunk, enqueue, dequeue, resetTrunk, trunkRepo, TrunkUnavailable } from "./trunk.js";
+import { loadTrunk, dequeue, resetTrunk } from "./trunk.js";
 import { sidebarHeader, sidebarMine, sidebarQueue, sidebarReviews, sidebarRail, statusLine, prIcon, progressLine, stackHeader } from "./sidebar.js";
 import { visualAsks, stackGroups } from "./steps.js";
 import { fetchKeeperStatus, systemctl, pollNow, openLiveLog, switchMode } from "./keeper.js";
@@ -57,18 +57,6 @@ const MINE_CHIPS = [
 
 const agentsWhere = () => machineLabel(config().runner?.machine || null);
 const repos = () => (config().repos?.length ? config().repos : ["PostHog/posthog"]);
-const isTrunkPr = (pr) => Boolean(trunkRepo()) && pr.repo === trunkRepo();
-
-async function mergeOrEnqueue(pr) {
-  if (isTrunkPr(pr)) {
-    try {
-      return await enqueue(pr.number);
-    } catch (error) {
-      if (!(error instanceof TrunkUnavailable)) throw error;
-    }
-  }
-  return mergePr(pr);
-}
 const refreshSoon = () => setShared("prs.refresh", Date.now());
 const busyKey = (pr, what) => `${prKey(pr.repo, pr.number)}:${what}`;
 
@@ -80,6 +68,19 @@ function setBusy(key, on) {
 }
 
 const isBusy = (pr) => Object.keys(shared("prs.busy") ?? {}).some((key) => key.startsWith(`${prKey(pr.repo, pr.number)}:`));
+
+const keeperBusy = () => Object.keys(shared("prs.busy") ?? {}).some((key) => key.startsWith("keeper:"));
+
+async function keeperAct(what, title, work) {
+  const key = `keeper:${what}`;
+  setBusy(key, true);
+  try {
+    await report(title, work);
+  } finally {
+    setBusy(key, false);
+    setShared("prs.keeper", Date.now());
+  }
+}
 
 async function act(pr, what, title, work, { refresh = true } = {}) {
   const key = busyKey(pr, what);
@@ -103,7 +104,7 @@ export const NAMED = {
   details: (pr) => openOverlay({ mod: "prs", kind: "dialog", width: 880, height: 760, props: { mode: "sheet", pr } }),
   open: (pr) => openUrl(pr.url),
   copyLink: (pr) => act(pr, "copy", "Copy link", () => copyText(markdownLink(pr), "Copied a Markdown link."), { refresh: false }),
-  merge: (pr) => act(pr, "merge", isTrunkPr(pr) || usesTrunk(pr) ? `Send #${pr.number} to Trunk` : `Merge #${pr.number}`, () => mergeOrEnqueue(pr)),
+  merge: (pr) => act(pr, "merge", isTrunkPr(pr) || usesTrunk(pr) ? `Send #${pr.number} to Trunk` : `Merge #${pr.number}`, () => mergePr(pr)),
   dequeue: (pr) => act(pr, "dequeue", `Remove #${pr.number} from the queue`, () => dequeue(pr.number)),
   openUrl: (pr) => openUrl(pr.url),
   updateBranch: (pr) => act(pr, "update", `Update #${pr.number}`, () => updateBranch(pr)),
@@ -136,9 +137,9 @@ const CONFIRM = {
   keeperRestart: () => ({ title: "Restart PR Keeper?", detail: "systemd stops the daemon (up to 30 seconds for it to finish) and starts it again. An agent run in progress is stopped.", label: "Restart" }),
   keeperLive: () => ({ title: "Switch PR Keeper to live?", detail: "Runs deploy/devbox-setup.sh --live in a devbox tab: it reinstalls dependencies, rebuilds the current checkout, rewrites the service and restarts it. After that the daemon acts on your PRs: it reruns checks, pushes agent fixes and replies to bots.", label: "Switch to live" }),
   keeperDryRun: () => ({ title: "Switch PR Keeper to dry run?", detail: "Runs deploy/devbox-setup.sh in a devbox tab: it rebuilds the current checkout and restarts the service with --dry-run, so the daemon records decisions and executes none.", label: "Switch to dry run" }),
-  merge: (pr) => ({ title: isTrunkPr(pr) || usesTrunk(pr) ? "Send to the Trunk merge queue?" : "Merge this PR?", detail: `${pr.repo}#${pr.number} "${pr.title}"${isTrunkPr(pr) || usesTrunk(pr) ? " is submitted to Trunk with trunk merge (or a /trunk merge comment when the Trunk CLI isn't available)." : " is squash-merged (or queued, if the base branch uses GitHub's merge queue)."}`, label: isTrunkPr(pr) || usesTrunk(pr) ? "Send to queue" : "Merge" }),
+  merge: (pr) => ({ title: isTrunkPr(pr) || usesTrunk(pr) ? "Send to the Trunk merge queue?" : "Merge this PR?", detail: `${pr.repo}#${pr.number} "${pr.title}"${isTrunkPr(pr) || usesTrunk(pr) ? " is submitted to Trunk with trunk merge (or a /trunk merge comment when the Trunk CLI isn't available)." : ` is squash-merged at ${pr.headSha?.slice(0, 7) ?? "its current head"} (or queued, if the base branch uses GitHub's merge queue). It's refused if someone pushed since.`}`, label: isTrunkPr(pr) || usesTrunk(pr) ? "Send to queue" : "Merge" }),
   dequeue: (pr) => ({ title: "Remove from the merge queue?", detail: `${pr.repo}#${pr.number} "${pr.title}" leaves Trunk's queue (trunk merge cancel).`, label: "Remove" }),
-  approve: (pr) => ({ title: "Approve this PR?", detail: `${pr.repo}#${pr.number} "${pr.title}" by @${pr.author}.`, label: "Approve" }),
+  approve: (pr) => ({ title: "Approve this PR?", detail: `${pr.repo}#${pr.number} "${pr.title}" by @${pr.author}, at ${pr.headSha?.slice(0, 7) ?? "its current head"}.`, label: "Approve" }),
 };
 
 function choose(name, pr) {
@@ -629,7 +630,7 @@ export default class Prs extends View {
       this.width = size.width;
       cx.notify();
     });
-    if (this.width >= 900) return sized(this.renderWide(t));
+    if (props()?.page || this.width >= 900) return sized(this.renderWide(t));
     const counts = this.counts();
     if (this.width > 0 && this.width < 160) return sized(v_flex().id("prs-root")).size_full().bg(t.chrome).child(sidebarRail(this, t, counts));
     const body = this.sidebarTab === "queue" ? sidebarQueue(this, t) : this.sidebarTab === "reviews" ? sidebarReviews(this, t) : sidebarMine(this, t);
@@ -1636,6 +1637,7 @@ export default class Prs extends View {
     this.wfBase = InputState.new({ placeholder: "Base branch, e.g. master", value: this.wf.conditions.base ?? "" });
     this.wfTitle = InputState.new({ placeholder: "Title contains", value: this.wf.conditions.titleContains ?? "" });
     this.wfActionInputs = this.wf.actions.map((action) => this.actionInput(action));
+    for (const key of ["prs.pick.wfTrigger", "prs.pick.wfAction"]) this[`seen-${key}`] = shared(key)?.at;
     for (const input of [this.wfName, this.wfLabelsAny, this.wfLabelsNone, this.wfBase, this.wfTitle]) input.on("change", (_e, cx) => cx.notify());
     this.wfName.focus();
     cx.timer.every(250, (cx) => {

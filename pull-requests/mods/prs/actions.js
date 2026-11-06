@@ -1,12 +1,25 @@
 import { exec, notify } from "herdr";
 import { gh, fetchDetail, graphql, RESOLVE_THREAD } from "./github.js";
 import { updateStore, prKey } from "./store.js";
+import { enqueue, trunkRepo, TrunkUnavailable } from "./trunk.js";
 
+export const isTrunkPr = (pr) => Boolean(trunkRepo()) && pr.repo === trunkRepo();
 export const usesTrunk = (pr) => pr.queue?.provider === "trunk";
 
-export function mergePr(pr) {
-  if (usesTrunk(pr)) return gh(["pr", "comment", String(pr.number), "-R", pr.repo, "-b", "/trunk merge"]);
-  return gh(["pr", "merge", String(pr.number), "-R", pr.repo, "--squash"]);
+const commentTrunkMerge = (pr) => gh(["pr", "comment", String(pr.number), "-R", pr.repo, "-b", "/trunk merge"]);
+
+export async function mergePr(pr) {
+  if (isTrunkPr(pr)) {
+    try {
+      return await enqueue(pr.number);
+    } catch (error) {
+      if (!(error instanceof TrunkUnavailable)) throw error;
+    }
+    return commentTrunkMerge(pr);
+  }
+  if (usesTrunk(pr)) return commentTrunkMerge(pr);
+  if (!pr.headSha) return { ok: false, message: "The PR's head commit isn't known yet; refresh and try again." };
+  return gh(["pr", "merge", String(pr.number), "-R", pr.repo, "--squash", "--match-head-commit", pr.headSha]);
 }
 
 export function updateBranch(pr) {
@@ -23,7 +36,8 @@ export async function rerunFailed(pr, detail) {
 }
 
 export function approvePr(pr) {
-  return gh(["pr", "review", String(pr.number), "-R", pr.repo, "--approve"]);
+  if (!pr.headSha) return { ok: false, message: "The PR's head commit isn't known yet; refresh and try again." };
+  return gh(["api", "--method", "POST", `repos/${pr.repo}/pulls/${pr.number}/reviews`, "-f", "event=APPROVE", "-f", `commit_id=${pr.headSha}`, "--jq", '"Approved " + .commit_id[0:7] + "."']);
 }
 
 export function commentOnPr(pr, body) {

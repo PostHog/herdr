@@ -87,9 +87,12 @@ checkout="$1"; repo="$2"; number="$3"; tree="$4"; shift 4
 if [ ! -d "$tree" ]; then
   git -C "$checkout" fetch -q origin
   git -C "$checkout" worktree add -q --detach "$tree" "origin/HEAD"
+  cd "$tree"
+  gh pr checkout "$number" -R "$repo" || gh pr checkout "$number" -R "$repo" --detach
+else
+  cd "$tree"
+  gh pr checkout "$number" -R "$repo" || echo "Kept the worktree as it was: its branch has local work that doesn't fast-forward to the PR head."
 fi
-cd "$tree"
-gh pr checkout "$number" -R "$repo" --force || gh pr checkout "$number" -R "$repo" --detach
 exec claude "$@"`;
 
 export async function launchClaudeOnPr(pr, prompt, tabName) {

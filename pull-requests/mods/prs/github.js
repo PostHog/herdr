@@ -22,7 +22,7 @@ const MY_PRS_QUERY = `query($q: String!, $after: String) { viewer { login }
 
 const REVIEW_FIELDS = `fragment ReviewFields on PullRequest {
   id number url title isDraft createdAt updatedAt additions deletions changedFiles
-  author { login __typename } authorAssociation repository { nameWithOwner }
+  author { login __typename } authorAssociation headRefName baseRefName repository { nameWithOwner }
   mergeable mergeStateStatus reviewDecision autoMergeRequest { enabledAt } mergeQueueEntry { state position }
   stack { size } stackEntry { position }
   labels(first: 30) { nodes { name } }
@@ -140,13 +140,15 @@ const TRUNK_COMMENT_STATES = [
   [/\b(queued|waiting|submitted)\b/i, "queued"],
 ];
 
+const TRUNK_QUEUE_LINK = /https:\/\/app\.trunk\.io\/[^\s)"']*\/merge-queue\//;
+
 function trunkFromComments(comments) {
   let state = null;
   for (const comment of comments ?? []) {
     if (comment?.author?.login !== "trunk-io") continue;
     const body = comment.body ?? "";
     if (body.includes("<!-- Trunk Test Analytics -->")) continue;
-    const isMerge = body.includes("<!-- Trunk Merge -->") || body.includes("<!-- Start PR Submit Checkbox -->") || (body.includes("app.trunk.io") && body.includes("/merge-queue/"));
+    const isMerge = body.includes("<!-- Trunk Merge -->") || body.includes("<!-- Start PR Submit Checkbox -->") || TRUNK_QUEUE_LINK.test(body);
     if (!isMerge) continue;
     const statusText = body
       .split("\n")

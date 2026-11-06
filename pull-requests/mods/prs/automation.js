@@ -109,47 +109,89 @@ async function runAction(action, pr) {
   }
 }
 
+const MAX_ATTEMPTS = 3;
+
+async function runSteps(workflow, pr, from) {
+  const results = [];
+  const actions = workflow.actions ?? [];
+  for (let index = from; index < actions.length; index++) {
+    const action = actions[index];
+    try {
+      const result = await runAction(action, pr);
+      results.push(`${action.kind}: ${result.ok ? "ok" : result.message}`);
+      if (!result.ok) return { results, failedAt: index };
+    } catch (error) {
+      results.push(`${action.kind}: ${String(error?.message ?? error)}`);
+      return { results, failedAt: index };
+    }
+  }
+  return { results, failedAt: null };
+}
+
 export async function processSnapshot({ viewer, prs, reviews }) {
   const state = store();
-  const seeded = Object.keys(state.lastPrs).length > 0;
-  const nextSummaries = {};
-  const fired = [];
-  for (const pr of prs) {
+  const seeded = state.snapshotSeeded === true || Object.keys(state.lastPrs).length > 0;
+  const previousReviews = new Set(state.lastReviewKeys ?? []);
+  const reviewKeys = reviews ? reviews.map((pr) => prKey(pr.repo, pr.number)) : [...previousReviews];
+  const tracked = new Map();
+  for (const pr of [...prs, ...(reviews ?? [])]) {
     const key = prKey(pr.repo, pr.number);
+    if (!tracked.has(key)) tracked.set(key, pr);
+  }
+  const nextSummaries = {};
+  if (!reviews) for (const key of previousReviews) if (state.lastPrs[key] && !tracked.has(key)) nextSummaries[key] = state.lastPrs[key];
+  const fired = [];
+  for (const [key, pr] of tracked) {
+    const before = state.lastPrs[key];
     const after = summary(pr);
     nextSummaries[key] = after;
-    if (seeded) for (const event of eventsFor(state.lastPrs[key], after)) fired.push({ pr, event });
+    if (!seeded) continue;
+    if (!before && !prs.includes(pr)) continue;
+    for (const event of eventsFor(before, after)) fired.push({ pr, event });
   }
-  const previousReviews = new Set(state.lastReviewKeys ?? []);
-  const reviewKeys = (reviews ?? []).map((pr) => prKey(pr.repo, pr.number));
   if (seeded && reviews) for (const pr of reviews) if (!previousReviews.has(prKey(pr.repo, pr.number))) fired.push({ pr, event: { kind: "review_requested" } });
 
   const hourAgo = Date.now() - 3600000;
-  const recent = (state.workflowLog ?? []).filter((entry) => Date.parse(entry.at) > hourAgo);
+  const recentRuns = (state.workflowRuns ?? []).filter((entry) => Date.parse(entry.at) > hourAgo);
+  const newRuns = [];
   const log = [];
+  const pending = [];
+  const used = (key) => recentRuns.filter((entry) => entry.pr === key).length + newRuns.filter((entry) => entry.pr === key).length;
+
+  const execute = async (workflow, pr, event, from, attempts) => {
+    const key = prKey(pr.repo, pr.number);
+    const at = new Date().toISOString();
+    newRuns.push({ at, pr: key });
+    const { results, failedAt } = await runSteps(workflow, pr, from);
+    const retrying = failedAt !== null && attempts + 1 < MAX_ATTEMPTS;
+    if (retrying) pending.push({ workflow: workflow.id, pr: key, event, from: failedAt, attempts: attempts + 1 });
+    log.push({ at, workflow: workflow.id, name: workflow.name, pr: key, event: event.kind, results, ...(retrying ? { retry: attempts + 1 } : {}) });
+  };
+
+  for (const item of state.pendingWorkflows ?? []) {
+    const workflow = state.workflows.find((entry) => entry.id === item.workflow && entry.enabled !== false);
+    const pr = tracked.get(item.pr);
+    if (!workflow || !pr) continue;
+    if (used(item.pr) >= MAX_RUNS_PER_PR_PER_HOUR) {
+      pending.push(item);
+      continue;
+    }
+    await execute(workflow, pr, item.event, item.from, item.attempts);
+  }
+
   for (const { pr, event } of fired) {
     for (const workflow of state.workflows.filter((item) => item.enabled !== false && item.triggers?.includes(event.kind))) {
       if (!matches(workflow, pr, viewer)) continue;
-      const key = prKey(pr.repo, pr.number);
-      const used = recent.filter((entry) => entry.pr === key).length + log.filter((entry) => entry.pr === key).length;
-      if (used >= MAX_RUNS_PER_PR_PER_HOUR) continue;
-      const results = [];
-      for (const action of workflow.actions ?? []) {
-        try {
-          const result = await runAction(action, pr);
-          results.push(`${action.kind}: ${result.ok ? "ok" : result.message}`);
-          if (!result.ok) break;
-        } catch (error) {
-          results.push(`${action.kind}: ${String(error?.message ?? error)}`);
-          break;
-        }
-      }
-      log.push({ at: new Date().toISOString(), workflow: workflow.id, name: workflow.name, pr: key, event: event.kind, results });
+      if (used(prKey(pr.repo, pr.number)) >= MAX_RUNS_PER_PR_PER_HOUR) continue;
+      await execute(workflow, pr, event, 0, 0);
     }
   }
   await updateStore((next) => {
     next.lastPrs = nextSummaries;
-    if (reviews) next.lastReviewKeys = reviewKeys;
+    next.snapshotSeeded = true;
+    next.lastReviewKeys = reviewKeys;
+    next.pendingWorkflows = pending;
+    next.workflowRuns = [...newRuns, ...(next.workflowRuns ?? []).filter((entry) => Date.parse(entry.at) > hourAgo)];
     next.workflowLog = [...log, ...(next.workflowLog ?? [])].slice(0, 200);
   });
   return log;

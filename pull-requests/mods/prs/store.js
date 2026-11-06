@@ -10,6 +10,10 @@ const EMPTY = {
   runs: {},
   findings: {},
   lastPrs: {},
+  snapshotSeeded: false,
+  lastReviewKeys: [],
+  pendingWorkflows: [],
+  workflowRuns: [],
   loopState: {},
   workflowLog: [],
 };

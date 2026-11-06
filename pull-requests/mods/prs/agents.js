@@ -112,6 +112,15 @@ function parseFindings(text, run) {
   return out;
 }
 
+const REVIEW_DEADLINE_MS = 2 * 3600000;
+const MISSING_GRACE_MS = 10 * 60000;
+
+function stalled(run, status) {
+  const age = Date.now() - Date.parse(run.startedAt);
+  if (status === "missing") return age > MISSING_GRACE_MS;
+  return status === "running" && age > REVIEW_DEADLINE_MS;
+}
+
 export async function syncRuns() {
   const running = Object.values(store().runs).filter((run) => !run.interactive && run.status === "running");
   if (!running.length) return false;
@@ -119,13 +128,17 @@ export async function syncRuns() {
   for (const machine of [...new Set(running.map((run) => run.machine ?? null))]) {
     Object.assign(statuses, await readRuns(machine, running.filter((run) => (run.machine ?? null) === machine).map((run) => run.id)));
   }
-  const finished = running.filter((run) => ["done", "failed"].includes(statuses[run.id]?.status));
+  for (const run of running) {
+    if (stalled(run, statuses[run.id]?.status)) statuses[run.id] = { status: "failed", summary: "The review stopped responding: its worker exited or the machine restarted." };
+  }
+  const finished = running.filter((run) => ["done", "failed"].includes(statuses[run.id]?.status)).sort((a, b) => Date.parse(a.startedAt) - Date.parse(b.startedAt));
   if (!finished.length) return false;
   const findingsByRun = {};
   for (const run of finished) {
     if (statuses[run.id].status === "done" && run.kind === "review") findingsByRun[run.id] = parseFindings(await readRunFile(run.machine ?? null, run.id, "findings.jsonl"), run);
   }
   await updateStore((state) => {
+    state.findingsFrom ??= {};
     for (const run of finished) {
       const target = state.runs[run.id];
       if (!target) continue;
@@ -134,11 +147,18 @@ export async function syncRuns() {
       target.finishedAt = new Date().toISOString();
       const findings = findingsByRun[run.id];
       if (!findings) continue;
+      target.findingCount = findings.length;
       const key = prKey(run.repo, run.number);
+      const current = state.findingsFrom[key];
+      if (current && Date.parse(current.startedAt) > Date.parse(run.startedAt)) {
+        target.summary = `${target.summary} Superseded by a newer review.`;
+        continue;
+      }
       const dismissed = new Set((state.findings[key] ?? []).filter((finding) => finding.state === "dismissed").map((finding) => `${finding.path}:${finding.title}`));
       const kept = (state.findings[key] ?? []).filter((finding) => finding.state !== "open");
       for (const finding of findings) if (dismissed.has(`${finding.path}:${finding.title}`)) finding.state = "dismissed";
       state.findings[key] = [...findings, ...kept.filter((finding) => finding.runId !== run.id)];
+      state.findingsFrom[key] = { runId: run.id, startedAt: run.startedAt };
       target.findingCount = findings.filter((finding) => finding.state === "open").length;
     }
   });
