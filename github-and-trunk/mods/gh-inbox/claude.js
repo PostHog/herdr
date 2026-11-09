@@ -1,7 +1,9 @@
-// Starts Claude Code on a pull request: a new tab in the shown space, with what the
-// panel knows about the PR in Claude's system prompt and an empty input to type into.
+// Starts Claude Code on a pull request, or goes back to work already open on it: a tab
+// named after the PR, or an agent in a space checked out on the PR's branch. A new
+// session gets what the panel knows about the PR in Claude's system prompt and an empty
+// input to type into.
 
-import { run, spaces, shared, knownAgents, notify } from "herdr";
+import { run, spaces, agents, panes, exec, shared, knownAgents, notify } from "herdr";
 import { TRUNK_REPO } from "./data.js";
 
 // Herdr ships the agent icons in its own icons/ folder.
@@ -15,14 +17,61 @@ export const CLAUDE_ICON = "icons/claude.svg";
  *                 asOf: when the panel last refreshed (ms since the epoch).
  */
 export async function startClaude(pr, context) {
-  const space = spaces().find((s) => s.active);
   const name = `PR ${ref(pr)}`;
+  const tab = prTab(name);
+  if (tab) return show(tab);
+  const checkouts = await branchSpaces(pr);
+  const agent = agents().find((a) => checkouts.some((s) => s.id === a.space));
+  if (agent) return show({ space: agent.space, tab: agent.tab });
+  const space = checkouts[0] ?? spaces().find((s) => s.active);
   try {
     const claude = await claudeArgv(space?.machine);
     run("tab.new", { name, space: space?.id, argv: [...claude, "--name", name, "--append-system-prompt", systemPrompt(pr, context)] });
   } catch (e) {
     notify({ title: `Couldn't start Claude Code on ${name}`, body: String(e?.message ?? e), level: "error" });
   }
+}
+
+function show({ space, tab }) {
+  run("space.select", { id: space });
+  run("tab.select", { id: tab });
+}
+
+// A tab named after the PR, in any space.
+function prTab(name) {
+  for (const s of spaces()) {
+    const tab = s.tabs.find((t) => t.name === name);
+    if (tab) return { space: s.id, tab: tab.id };
+  }
+  return null;
+}
+
+const DEFAULT_BRANCHES = new Set(["main", "master"]);
+
+// Spaces checked out on the PR's head branch, so a new session starts in that checkout.
+// A head named like a default branch (a fork's main) says nothing about which checkout it is.
+async function branchSpaces(pr) {
+  if (!pr.head || pr.head === pr.base || DEFAULT_BRANCHES.has(pr.head)) return [];
+  const found = [];
+  for (const space of spaces().filter((s) => s.branch === pr.head)) {
+    if (await inRepo(space, pr.repo)) found.push(space);
+  }
+  return found;
+}
+
+// Another repository can have a branch of the same name, so one of the checkout's remotes
+// has to be the PR's repository.
+async function inRepo(space, repo) {
+  const tabs = new Set(space.tabs.map((t) => t.id));
+  const cwd = panes().find((p) => tabs.has(p.tab) && p.branch === space.branch && p.cwd)?.cwd;
+  if (!cwd) return false;
+  const result = await exec("git", ["remote", "-v"], { cwd, on: space.machine, timeout: 5000 }).catch(() => null);
+  if (result?.code !== 0) return false;
+  const want = repo.toLowerCase();
+  return result.stdout.toLowerCase().split("\n").some((line) => {
+    const url = (line.split(/\s+/)[1] ?? "").replace(/\.git$/, "");
+    return url.endsWith(`/${want}`) || url.endsWith(`:${want}`);
+  });
 }
 
 const ref = (pr) => (pr.repo === TRUNK_REPO ? `#${pr.number}` : `${pr.repo}#${pr.number}`);
