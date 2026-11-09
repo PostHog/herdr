@@ -29,7 +29,7 @@ Rows say what happens next for each PR, and show a button only when something wa
   title and link, author, branches, size, next step, CI counts, reviews, unresolved threads, conflicts, visual review runs, and the PR's stack, bottom first.
   Nothing is sent: the prompt stays empty for you to type into.
   It starts Claude the way the new-tab menu does on that space's machine, else runs `claude` from the shell.
-  When work on the PR is already open, the icon goes there instead: a tab named "PR #n" in any space, else the tab of an agent in a space checked out on the PR's head branch (a Herdr worktree, say). With no agent there, the new tab opens in that space, so Claude starts in the PR's checkout. Heads named `main` or `master` never match a space.
+  When work on the PR is already open, the icon goes there instead: a tab named "PR #n" in any space, else the tab of an agent in any space checked out on the PR's head branch (a Herdr worktree, say) whose git remotes include the PR's repository. With no agent there, the new tab opens in the first such space, so Claude starts in the PR's checkout. Heads named `main` or `master` never match a space.
 - Buttons appear in a row only when something waits on you:
   "Approve storybook" or "Approve playwright" when visual review found changes (opens the visual review run),
   "Merge" on a ready PR that isn't in a stack, "Merge again" when the queue kicked the PR out,
