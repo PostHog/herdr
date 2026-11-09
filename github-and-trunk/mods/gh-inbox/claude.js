@@ -1,7 +1,9 @@
-// Starts Claude Code on a pull request: a new tab in the shown space, with what the
-// panel knows about the PR in Claude's system prompt and an empty input to type into.
+// Starts Claude Code on a pull request, or goes back to work already open on it: a tab
+// named after the PR, or an agent in a space checked out on the PR's branch. A new
+// session gets what the panel knows about the PR in Claude's system prompt and an empty
+// input to type into.
 
-import { run, spaces, shared, knownAgents, notify } from "herdr";
+import { run, spaces, agents, shared, knownAgents, notify } from "herdr";
 import { TRUNK_REPO } from "./data.js";
 
 // Herdr ships the agent icons in its own icons/ folder.
@@ -15,14 +17,40 @@ export const CLAUDE_ICON = "icons/claude.svg";
  *                 asOf: when the panel last refreshed (ms since the epoch).
  */
 export async function startClaude(pr, context) {
-  const space = spaces().find((s) => s.active);
   const name = `PR ${ref(pr)}`;
+  const open = openWork(pr, name);
+  if (open) {
+    run("space.select", { id: open.space });
+    run("tab.select", { id: open.tab });
+    return;
+  }
+  const space = branchSpace(pr) ?? spaces().find((s) => s.active);
   try {
     const claude = await claudeArgv(space?.machine);
     run("tab.new", { name, space: space?.id, argv: [...claude, "--name", name, "--append-system-prompt", systemPrompt(pr, context)] });
   } catch (e) {
     notify({ title: `Couldn't start Claude Code on ${name}`, body: String(e?.message ?? e), level: "error" });
   }
+}
+
+// A space checked out on the PR's head branch, so a new session starts in that checkout.
+// A head named like a default branch (a fork's main) says nothing about which checkout it is.
+function branchSpace(pr) {
+  if (!pr.head || pr.head === pr.base || DEFAULT_BRANCHES.has(pr.head)) return null;
+  return spaces().find((s) => s.branch === pr.head) ?? null;
+}
+
+const DEFAULT_BRANCHES = new Set(["main", "master"]);
+
+// The tab to go back to: one named after the PR, else one with an agent in the PR branch's space.
+function openWork(pr, name) {
+  for (const s of spaces()) {
+    const tab = s.tabs.find((t) => t.name === name);
+    if (tab) return { space: s.id, tab: tab.id };
+  }
+  const space = branchSpace(pr);
+  const agent = space && agents().find((a) => a.space === space.id);
+  return agent ? { space: space.id, tab: agent.tab } : null;
 }
 
 const ref = (pr) => (pr.repo === TRUNK_REPO ? `#${pr.number}` : `${pr.repo}#${pr.number}`);
