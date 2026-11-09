@@ -75,6 +75,7 @@ export default class GhInbox extends View {
     this.tab = this.order.includes(localStorage.getItem("tab")) ? localStorage.getItem("tab") : this.order[0];
     this.folded = new Set(JSON.parse(localStorage.getItem("folded") ?? '["review:teams","queue:merged"]'));
     this.known = new Set(JSON.parse(localStorage.getItem("known") ?? "[]"));
+    this.hideDrafts = localStorage.getItem("hideDrafts") === "true";
     this.notifies = props()?.notify ?? !allowed;
 
     this.me = null;
@@ -100,6 +101,7 @@ export default class GhInbox extends View {
         const c = await nextCommand();
         if (c === "confirmed" && this.pending) await this.act(cx);
         else if (c === "refresh") this.refreshAll(cx);
+        else if (c === "toggle-drafts") this.toggleDrafts(cx);
         else if (c.startsWith("show-") && this.order.includes(c.slice(5))) this.select(c.slice(5), cx);
         cx.notify();
       }
@@ -345,6 +347,24 @@ export default class GhInbox extends View {
     cx.notify();
   }
 
+  toggleDrafts(cx) {
+    this.hideDrafts = !this.hideDrafts;
+    localStorage.setItem("hideDrafts", String(this.hideDrafts));
+    cx.notify();
+  }
+
+  // Hiding drafts drops a group only when every PR in it is a draft, so a draft layer stays in its
+  // stack and the stack's "k/N ready" still counts it.
+  mineGroups() {
+    const groups = stacks(this.mine ?? []);
+    return this.hideDrafts ? groups.filter((g) => g.members.some((m) => !m.pr.draft)) : groups;
+  }
+
+  hiddenDrafts() {
+    const shown = this.mineGroups().reduce((n, g) => n + g.members.length, 0);
+    return (this.mine?.length ?? 0) - shown;
+  }
+
   select(id, cx) {
     const was = this.tab;
     this.tab = id;
@@ -368,7 +388,8 @@ export default class GhInbox extends View {
   counts() {
     const qMine = [...(this.mineQueue?.values() ?? [])].filter((i) => i.state !== "Merged").length;
     const direct = (this.reviews ?? []).filter((r) => r.requested.includes(this.me)).length;
-    return { mine: this.mine?.length, queue: qMine || null, review: direct || this.reviews?.length };
+    const mine = this.mine ? this.mine.length - this.hiddenDrafts() : undefined;
+    return { mine, queue: qMine || null, review: direct || this.reviews?.length };
   }
 
   // ---- drawing ----
@@ -404,7 +425,21 @@ export default class GhInbox extends View {
           .when(n != null, (el) => el.child(div().text_size(10.5).text_color(on ? t.muted : t.dim).child(String(n))));
       }))
       .child(div().flex_1())
+      .when(this.tab === "mine", (el) => el.child(this.draftsButton(t)))
       .child(this.refreshButton(t));
+  }
+
+  // Colored while drafts are hidden, like an active filter.
+  draftsButton(t) {
+    const hidden = this.hiddenDrafts();
+    const color = this.hideDrafts ? t.accent : t.dim;
+    const tip = this.hideDrafts
+      ? `${plural(hidden, "draft")} hidden. Drafts in a stack with a ready-for-review layer stay. Click to show all.`
+      : "Click to hide drafts. Drafts in a stack with a ready-for-review layer stay.";
+    return div().id("ghi-drafts").mr(8).cursor_pointer().hover((s) => s.text_color(t.foreground))
+      .tooltip(tip)
+      .on_click((_e, cx) => this.toggleDrafts(cx))
+      .child(this.icon(t, "pr-draft", color, 13));
   }
 
   // Turns yellow while the last refresh failed and the list shows older data.
@@ -542,8 +577,9 @@ export default class GhInbox extends View {
     if (this.errors.gh && !this.mine) return [this.errorLine(t, `gh: ${this.errors.gh}`)];
     if (!this.mine) return [this.empty(t, "Loading your pull requests...")];
     if (!this.mine.length) return [this.empty(t, "No open pull requests.")];
-    const rows = [];
-    const groups = stacks(this.mine);
+    const groups = this.mineGroups();
+    // Not an early return: refresh errors below still need to show over the empty state.
+    const rows = groups.length ? [] : [this.empty(t, `No open pull requests besides ${plural(this.hiddenDrafts(), "draft")}.`)];
     const p = palette(t);
     let repo = null;
     for (const g of [...groups].sort((a, b) => (a.members[0].pr.repo === TRUNK_REPO ? 0 : 1) - (b.members[0].pr.repo === TRUNK_REPO ? 0 : 1))) {

@@ -10,7 +10,7 @@ Rows say what happens next for each PR, and show a button only when something wa
 
 - The left sidebar, 372 px wide: the brand bar, then spaces, agents and pull requests stacked at weights 0.8, 1.18 and 1.22, then the footer.
   The rest of the window is Herdr's main layout unchanged: tabs, panes as cards, the Files and Changes panel, the status bar.
-- The pull request panel (`gh-inbox`) opens with a tab strip: **Mine**, **Queue** and **Review**, each with a count, and a refresh icon on the right.
+- The pull request panel (`gh-inbox`) opens with a tab strip: **Mine**, **Queue** and **Review**, each with a count, and a refresh icon on the right. On Mine, a draft icon sits left of it.
 - **Mine** lists your open PRs in the PostHog org.
   PRs in a stack sit under a header ("Stack of 3 · top-branch"), top layer first, indented, with the stack's queue state or how many layers are ready.
   `PostHog/posthog` comes first without a header; other repos follow under their name.
@@ -36,6 +36,7 @@ Rows say what happens next for each PR, and show a button only when something wa
   Merge buttons open the shipped `confirm` dialog, then run `trunk merge <n>` (for a stack, on its top layer).
 - A layer that is ready but sits above a layer that isn't says "Waiting on #n below".
 - Tabs drag into any order; the order and the selected tab persist per copy.
+- The draft icon on Mine hides draft PRs, and turns the accent color while they are hidden. A stack stays while any layer in it is ready for review, draft layers included, so its "k/N ready" doesn't change. Mine's count leaves the hidden drafts out. The choice persists per copy, and the `toggle-drafts` command flips it.
 - GitHub refreshes every 60 s, Trunk every 45 s. A failed refresh keeps the last good data and turns the refresh icon yellow; the error line shows after three failures in a row. An empty search result only replaces a full list when the next refresh agrees.
 - Notifications: approved, changes requested, checks failing, visual changes to approve, merged, queue failed or cancelled, and a new direct review request.
 - Narrower than 160 px, the panel draws a rail of tab icons with counts.
