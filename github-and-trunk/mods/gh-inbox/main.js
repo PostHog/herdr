@@ -578,8 +578,8 @@ export default class GhInbox extends View {
     if (!this.mine) return [this.empty(t, "Loading your pull requests...")];
     if (!this.mine.length) return [this.empty(t, "No open pull requests.")];
     const groups = this.mineGroups();
-    if (!groups.length) return [this.empty(t, `No open pull requests besides ${plural(this.hiddenDrafts(), "draft")}.`)];
-    const rows = [];
+    // Not an early return: refresh errors below still need to show over the empty state.
+    const rows = groups.length ? [] : [this.empty(t, `No open pull requests besides ${plural(this.hiddenDrafts(), "draft")}.`)];
     const p = palette(t);
     let repo = null;
     for (const g of [...groups].sort((a, b) => (a.members[0].pr.repo === TRUNK_REPO ? 0 : 1) - (b.members[0].pr.repo === TRUNK_REPO ? 0 : 1))) {
