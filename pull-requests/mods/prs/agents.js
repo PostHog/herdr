@@ -1,7 +1,7 @@
 import { notify } from "herdr";
 import { store, updateStore, prKey, newId } from "./store.js";
 import { config, loadConfig } from "./config.js";
-import { findTab, showTab } from "./claude.js";
+import { findTab, showTab, prRef } from "./claude.js";
 import { runnerMachine, runsDir, checkoutFor, launchClaudeOnPr, startHeadless, readRuns, readRunFile } from "./runner.js";
 
 const LENSES = {
@@ -66,16 +66,17 @@ export function reviewPromptForOthers(pr) {
 }
 
 export async function startFixSession(pr, prompt, label = "fix") {
-  const open = findTab(`${label} #${pr.number}`);
+  const tabName = `${label} ${prRef(pr)}`;
+  const open = findTab(tabName);
   if (open) {
     showTab(open);
     return false;
   }
   await loadConfig();
-  const machine = await launchClaudeOnPr(pr, prompt, `${label} #${pr.number}`);
+  const machine = await launchClaudeOnPr(pr, prompt, tabName);
   return updateStore((state) => {
     const id = newId();
-    state.runs[id] = { id, kind: label, interactive: true, machine, repo: pr.repo, number: pr.number, title: pr.title, startedAt: new Date().toISOString(), status: "interactive", tabName: `${label} #${pr.number}` };
+    state.runs[id] = { id, kind: label, interactive: true, machine, repo: pr.repo, number: pr.number, title: pr.title, startedAt: new Date().toISOString(), status: "interactive", tabName };
   });
 }
 

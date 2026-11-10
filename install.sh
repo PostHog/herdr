@@ -30,17 +30,29 @@ say() { printf '%s\n' "$*"; }
 warn() { printf '\033[33m%s\033[0m\n' "$*" >&2; }
 die() { printf '\033[31m%s\033[0m\n' "$*" >&2; exit 1; }
 
+MERGED_PIECES="github-and-trunk:pull-requests"
+
+merged_into() {
+  local pair
+  for pair in $MERGED_PIECES; do
+    if [ "${pair%%:*}" = "$1" ]; then
+      printf '%s' "${pair#*:}"
+      return 0
+    fi
+  done
+  return 1
+}
+
 pieces() {
-  local d
+  local d name
   for d in "$REPO"/*/; do
-    [ -f "$d/RECIPE.md" ] && basename "$d"
+    name="$(basename "$d")"
+    [ -f "$d/RECIPE.md" ] && ! merged_into "$name" >/dev/null && printf '%s\n' "$name"
   done
   return 0
 }
 
 is_piece() { [ -f "$REPO/$1/RECIPE.md" ]; }
-
-MERGED_PIECES="github-and-trunk:pull-requests"
 
 # The first sentence of the recipe's opening paragraph.
 summary() {
@@ -192,7 +204,7 @@ migrate() {
   local pair old new moved=0
   for pair in $MERGED_PIECES; do
     old="${pair%%:*}" new="${pair#*:}"
-    enabled "$old" && ! is_piece "$old" || continue
+    enabled "$old" || continue
     forget "$ENABLED_FILE" "$old"
     remember "$ENABLED_FILE" "$new"
     remember "$SEEN_FILE" "$new"
@@ -275,9 +287,22 @@ case "$cmd" in
     ;;
   list) list ;;
   enable | disable)
-    migrate
     [ $# -gt 0 ] || die "Name a piece: ./install.sh $cmd <piece>. ./install.sh list shows them."
+    resolved=()
     for piece in "$@"; do
+      if new="$(merged_into "$piece")"; then
+        if [ "$cmd" = disable ]; then
+          forget "$ENABLED_FILE" "$piece"
+          say "$(bold "$piece") is part of $(bold "$new") now. Removed $piece, and left $new as it was."
+          continue
+        fi
+        say "$(bold "$piece") is part of $(bold "$new") now, so that's what gets enabled."
+        piece="$new"
+      fi
+      resolved+=("$piece")
+    done
+    migrate
+    for piece in ${resolved[@]+"${resolved[@]}"}; do
       is_piece "$piece" || die "No piece named $piece. ./install.sh list shows them."
       remember "$SEEN_FILE" "$piece"
       if [ "$cmd" = enable ]; then

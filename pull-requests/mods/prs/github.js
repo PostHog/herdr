@@ -210,7 +210,7 @@ export function statusPill(pr) {
 }
 
 export function needsAttention(pr) {
-  return pr.mergeable === "CONFLICTING" || pr.mergeState === "DIRTY" || pr.reviewDecision === "CHANGES_REQUESTED" || (pr.checks.failed > 0 && pr.mergeState !== "UNSTABLE") || pr.mergeState === "BEHIND";
+  return pr.mergeable === "CONFLICTING" || pr.mergeState === "DIRTY" || pr.reviewDecision === "CHANGES_REQUESTED" || (pr.checks.failed > 0 && pr.mergeState !== "UNSTABLE") || pr.mergeState === "BEHIND" || Boolean(pr.stackDepth);
 }
 
 export function needsReview(pr) {
@@ -218,7 +218,7 @@ export function needsReview(pr) {
 }
 
 export function readyToMerge(pr) {
-  if (pr.isDraft || pr.queue?.active) return false;
+  if (pr.isDraft || pr.queue?.active || pr.stackDepth) return false;
   if (pr.checks.inProgress > 0 || pr.reviewDecision === "REVIEW_REQUIRED") return false;
   if (pr.mergeable === "CONFLICTING" || pr.reviewDecision === "CHANGES_REQUESTED") return false;
   return ["CLEAN", "UNSTABLE", "HAS_HOOKS", "BLOCKED", "UNKNOWN"].includes(pr.mergeState) && !(pr.checks.failed > 0 && pr.mergeState !== "UNSTABLE");
@@ -371,7 +371,7 @@ export async function fetchMyPrs(repos, watched, trunkRepo = null) {
   }
   const watchedSet = new Set(watched);
   for (const pr of prs) pr.watching = watchedSet.has(`${pr.repo}#${pr.number}`);
-  if (trunkRepo) await markStackDepth(prs, trunkRepo).catch(() => {});
+  if (trunkRepo) await markStackDepth(prs, trunkRepo);
   return { viewer, prs: attachStacks(prs) };
 }
 

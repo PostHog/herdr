@@ -31,7 +31,7 @@ The panel sits under the agents list. In the `Pull-Requests` layout, `cmd-shift-
 ## How it behaves
 
 - **Opening things:** click a row for the detail sheet, and right-click for the full action menu.
-- **Claude Code on this PR** (the hover icon, or the menu) goes back to work already open on the PR: a tab named "PR #n" (`owner/repo#n` outside the Trunk repo), "fix #n" or "review #n", else an agent in a space checked out on the PR's head branch (a git remote has to be the PR's repo; `main`/`master` heads never match). Otherwise it opens a "PR #n" tab in that checkout's space, or the shown space, running Claude Code with what the panel knows appended to its system prompt (author, branches, size, next step, CI, approvals, threads, conflicts, visual review, the stack bottom first). Nothing is sent: the prompt stays empty. It starts Claude the way the new-tab menu does on that machine, else runs `claude`.
+- **Claude Code on this PR** (the hover icon, or the menu) goes back to work already open on the PR: a tab named "PR #n", "fix #n" or "review #n" (`owner/repo#n` outside the Trunk repo), else an agent in a space checked out on the PR's head branch (a git remote has to be the PR's repo; `main`/`master` heads never match). Otherwise it opens a "PR #n" tab in that checkout's space, or the shown space, running Claude Code with what the panel knows appended to its system prompt (author, branches, size, next step, CI, approvals, threads, conflicts, visual review, the stack bottom first). For someone else's PR, the title and branch names stay out of it, and Claude is told to read them with `gh` as data, since their author wrote them. Nothing is sent: the prompt stays empty. It starts Claude the way the new-tab menu does on that machine, else runs `claude`.
 - **Row buttons:** they appear only when something waits on you:
   - "Approve storybook" or "Approve playwright" opens the visual review run.
   - "Merge" shows on a ready PR outside a stack, and "Merge again" when the queue removed it.
@@ -49,7 +49,7 @@ The panel sits under the agents list. In the `Pull-Requests` layout, `cmd-shift-
 - **Refresh:** GitHub every 90 s for your PRs and 180 s for reviews, Trunk every 45 s, agent runs every 20 s.
   - A failed refresh keeps the last good data and turns the refresh icon yellow; the error line shows after three failures in a row.
   - Only the sidebar copy fetches, notifies and runs workflows. The page copy reads what it shares through `shared()` and asks it to refresh.
-- **Stack depth:** in the Trunk repo, when `stack-depth / Stack depth` is a PR's only failing check, it's taken out of the check counts and the next step reads "Stack too deep" (or "Stack depth not checked"), since the stack's shape is what's wrong, not the code.
+- **Stack depth:** in the Trunk repo, when `stack-depth / Stack depth` is a PR's only failing check, it's taken out of the check counts and the next step reads "Stack too deep" (or "Stack depth not checked"), since the stack's shape is what's wrong, not the code. The PR isn't ready to merge and needs attention, and workflows see neither checks passed nor checks failed. If that lookup fails, the whole refresh fails and the last good data stays.
 - **Notifications:** approved, changes requested, checks failing, stack too deep, visual changes to approve, merged, queue failed or cancelled, and a new direct review request. Clicking one opens the page in `Pull-Requests`.
 - **Commands:** `prs.toggle` flips the work area between terminals and the page (`keys.json` binds `cmd-shift-g`).
 

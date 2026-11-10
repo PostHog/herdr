@@ -41,7 +41,7 @@ const summary = (pr) => ({
   conflicting: pr.mergeable === "CONFLICTING" || pr.mergeState === "DIRTY",
   behind: pr.mergeState === "BEHIND",
   decision: pr.reviewDecision,
-  checks: pr.checks.inProgress > 0 ? "running" : pr.checks.failed > 0 && pr.mergeState !== "UNSTABLE" ? "failed" : pr.checks.total > 0 ? "passed" : "none",
+  checks: pr.stackDepth ? "blocked" : pr.checks.inProgress > 0 ? "running" : pr.checks.failed > 0 && pr.mergeState !== "UNSTABLE" ? "failed" : pr.checks.total > 0 ? "passed" : "none",
   ready: readyToMerge(pr),
 });
 
