@@ -10,6 +10,7 @@ The panel sits under the agents list. In the `Pull-Requests` layout, `cmd-shift-
 - **The layouts:**
   - **`Pull-Requests`:** Herdr's `main` layout with a 372 px sidebar. The sidebar stacks spaces, agents and the PR panel at weights 0.8, 1.18 and 1.22.
   - **`github-and-trunk`:** the same sidebar, and Herdr's `main` work area unchanged, with no full page. It was its own piece with its own mod (`gh-inbox`) and now runs `prs`. Without the page in the layout, `⤢` and rail clicks open the full page as a 1180×800 dialog (its "Back to terminals" reads "Close"), notifications don't open anything, and `cmd-shift-g` does nothing.
+- **`flat-spaces`, a spaces list to opt into:** Herdr's spaces list without the worktree nesting. Every space keeps its own row and avatar, even when its first terminal is in a git worktree, so tabs and panes in one space can each sit in their own worktree. The repo and branch still show after the name. No layout here uses it; set a layout's `spaces` block to `{ "mod": "flat-spaces" }` to use it.
 - **The work area:** a stack (`pr-center`) with two children. `work` is Herdr's tabs, panes, Files/Changes panel and status bar, unchanged. `prs-page` is the full PR page. Only one shows at a time; the other keeps running.
 - **The sidebar panel:** tabs **Mine**, **Queue** and **Review**, each with a count, then on Mine a draft icon that hides drafts (colored while they're hidden), a refresh icon (yellow after a failed refresh) and `⤢` to open the full page. Narrower than 160 px it draws a rail of tab icons with counts.
   - **Mine** groups your open PRs by repo. The first configured repo has no header; the others follow under their name. Hiding drafts drops a stack only when every layer is a draft, so "k/N ready" still counts draft layers.
@@ -57,6 +58,7 @@ The panel sits under the agents list. In the `Pull-Requests` layout, `cmd-shift-
 
 - **`layouts/github-and-trunk.json`:** Herdr's `main` with a `{ "mod": "prs" }` block (min 140 px) in `sidebar-lists`, and the work area unchanged. `github-and-trunk.svg` is its preview.
 - **`layouts/Pull-Requests.json`:** Herdr's `main` with a `pull-requests` block (`{ "mod": "prs" }`, min 140 px) in `sidebar-lists`. The `work` column is wrapped in the `pr-center` stack, next to `prs-page` (`{ "mod": "prs", "props": { "page": true } }`). `Pull-Requests.svg` is its preview.
+- **`mods/flat-spaces/`:** a `mod.clone` of the shipped `spaces` (0.1.14) with `ordered()` returning spaces as they are, so nothing is nested or moved under its repo's checkout. Re-clone and redo that change to pick up a newer `spaces`.
 - **`mods/prs/`**:
   - `main.js` is the view: panel, sheet, menus, dialogs and editors, chosen by `props().mode`. `sidebar.js` and `steps.js` hold the shared row parts and the next-step logic, and `ui.js` the palette and controls.
   - `github.js` holds the GraphQL searches (`author:@me` / `review-requested:@me` with `repo:` or, for `owner/*`, `org:` qualifiers), check counts by state, the stack depth check, visual review statuses, stacks, the review priority score and the detail query. `trunk.js` wraps the `trunk merge status` CLI.
