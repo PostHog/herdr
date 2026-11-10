@@ -311,7 +311,14 @@ export function orderWithStacks(prs, newestFirst) {
   return out;
 }
 
-const repoQualifier = (repos) => repos.map((repo) => `repo:${repo}`).join(" ");
+export const isOrgWide = (repo) => repo.endsWith("/*");
+export const ownerOf = (repo) => repo.split("/")[0];
+
+export function repoQualifier(repos) {
+  const orgs = new Set(repos.filter(isOrgWide).map(ownerOf));
+  const single = repos.filter((repo) => !isOrgWide(repo) && !orgs.has(ownerOf(repo)));
+  return [...[...orgs].map((org) => `org:${org}`), ...single.map((repo) => `repo:${repo}`)].join(" ");
+}
 
 async function searchAll(query, q, maxPages) {
   let after = null;
@@ -327,7 +334,28 @@ async function searchAll(query, q, maxPages) {
   return { viewer, nodes };
 }
 
-export async function fetchMyPrs(repos, watched) {
+const STACK_CHECK = "stack-depth / Stack depth";
+
+async function markStackDepth(prs, trunkRepo) {
+  const lone = prs.filter((pr) => pr.repo === trunkRepo && pr.checks.failed === 1);
+  if (!lone.length) return;
+  const [owner, name] = trunkRepo.split("/");
+  const fields = lone.map((pr, index) => `p${index}: pullRequest(number: ${pr.number}) { commits(last: 1) { nodes { commit {
+    checkSuites(first: 100) { nodes { checkRuns(first: 1, filterBy: { checkName: "${STACK_CHECK}", checkType: LATEST, conclusions: [FAILURE] }) {
+    nodes { url annotations(first: 5) { nodes { title message } } } } } } } } } }`).join("\n");
+  const data = await graphql(`query($o: String!, $n: String!) { repository(owner: $o, name: $n) { ${fields} } }`, { o: owner, n: name });
+  lone.forEach((pr, index) => {
+    const suites = data.repository[`p${index}`]?.commits.nodes[0]?.commit.checkSuites.nodes ?? [];
+    const run = suites.flatMap((suite) => suite.checkRuns.nodes)[0];
+    if (!run) return;
+    const note = run.annotations.nodes.find((annotation) => annotation.title);
+    pr.checks.failed = 0;
+    pr.checks.total--;
+    pr.stackDepth = { checked: note?.title !== "Stack depth not checked", detail: note?.message ?? "", url: run.url };
+  });
+}
+
+export async function fetchMyPrs(repos, watched, trunkRepo = null) {
   const { viewer, nodes } = await searchAll(MY_PRS_QUERY, `is:pr is:open author:@me archived:false ${repoQualifier(repos)}`, 3);
   const prs = nodes.map((node) => normalizePr(node, viewer));
   const known = new Set(prs.map((pr) => `${pr.repo}#${pr.number}`));
@@ -343,6 +371,7 @@ export async function fetchMyPrs(repos, watched) {
   }
   const watchedSet = new Set(watched);
   for (const pr of prs) pr.watching = watchedSet.has(`${pr.repo}#${pr.number}`);
+  if (trunkRepo) await markStackDepth(prs, trunkRepo).catch(() => {});
   return { viewer, prs: attachStacks(prs) };
 }
 

@@ -40,6 +40,8 @@ pieces() {
 
 is_piece() { [ -f "$REPO/$1/RECIPE.md" ]; }
 
+MERGED_PIECES="github-and-trunk:pull-requests"
+
 # The first sentence of the recipe's opening paragraph.
 summary() {
   local line
@@ -186,6 +188,21 @@ prune() {
   mv "$keep" "$MANIFEST"
 }
 
+migrate() {
+  local pair old new moved=0
+  for pair in $MERGED_PIECES; do
+    old="${pair%%:*}" new="${pair#*:}"
+    enabled "$old" && ! is_piece "$old" || continue
+    forget "$ENABLED_FILE" "$old"
+    remember "$ENABLED_FILE" "$new"
+    remember "$SEEN_FILE" "$new"
+    say "$(bold "$old") is now part of $(bold "$new"), so that's enabled instead. Its layout keeps its name."
+    moved=1
+  done
+  if [ "$moved" = 1 ]; then prune; fi
+  return 0
+}
+
 ask() {
   local piece="$1" answer
   [ -t 0 ] || return 1
@@ -253,10 +270,12 @@ cmd="${1:-update}"
 case "$cmd" in
   update)
     if [ "$do_pull" = 1 ]; then pull; fi
+    migrate
     update
     ;;
   list) list ;;
   enable | disable)
+    migrate
     [ $# -gt 0 ] || die "Name a piece: ./install.sh $cmd <piece>. ./install.sh list shows them."
     for piece in "$@"; do
       is_piece "$piece" || die "No piece named $piece. ./install.sh list shows them."

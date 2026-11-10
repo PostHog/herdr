@@ -1,9 +1,10 @@
-import { div, svg } from "gpui-kit";
+import { div, svg, image } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { run } from "herdr";
 import { comparePriority } from "./github.js";
 import { LISTING_CAP } from "./trunk.js";
 import { step, queueFor, stackGroups, layerWaitingOn, visualAsks, fixable } from "./steps.js";
+import { CLAUDE_ICON } from "./claude.js";
 import { ago, tone, button, badge, TEXT } from "./ui.js";
 
 const ICON = (name) => `mods/prs/icons/${name}.svg`;
@@ -114,10 +115,32 @@ export function progressLine(view, t, pr, group) {
     .child(div().text_size(TEXT.section).text_color(t.dim).child(`${run.checks.passed + run.checks.failed}/${run.checks.total} checks · started ${ago(new Date(next.since ?? run.started).toISOString())}`));
 }
 
+function hoverIcon(t, id, glyph, tip, onClick) {
+  return div().id(id).p(2).rounded(4).flex_none().cursor_pointer().text_color(t.dim)
+    .hover((el) => el.bg(t.raised).text_color(t.foreground))
+    .tooltip(tip)
+    .on_click((_e, cx) => {
+      cx.stop_propagation();
+      onClick();
+    })
+    .child(glyph);
+}
+
+function linkIcons(view, t, id, pr) {
+  return h_flex()
+    .flex_none()
+    .gap(2)
+    .items_center()
+    .child(hoverIcon(t, `${id}-claude`, image(CLAUDE_ICON).size(13), "Claude Code on this PR", () => view.act("claude", pr)))
+    .child(hoverIcon(t, `${id}-copy`, svg(ICON("copy")).size(13), "Copy as Markdown link", () => view.act("copyLink", pr)))
+    .child(hoverIcon(t, `${id}-open`, svg(ICON("external")).size(13), "Open on GitHub", () => view.act("open", pr)));
+}
+
 function prRow(view, t, pr, { depth = 0, group = null, scope = "mine" } = {}) {
   const progress = scope === "mine" ? progressLine(view, t, pr, group) : null;
+  const id = `prs-sb-${scope}-${pr.repo}-${pr.number}`;
   return v_flex()
-    .id(`prs-sb-${scope}-${pr.repo}-${pr.number}`)
+    .id(id)
     .pl(8 + depth * 12)
     .pr(8)
     .py(5)
@@ -125,6 +148,7 @@ function prRow(view, t, pr, { depth = 0, group = null, scope = "mine" } = {}) {
     .rounded(7)
     .cursor_pointer()
     .hover((el) => el.bg(t.hover))
+    .on_hover((on, cx) => view.hover(id, on, cx))
     .on_click(() => view.act("details", pr))
     .on_mouse_down("right", (_e, cx) => {
       cx.stop_propagation();
@@ -137,7 +161,8 @@ function prRow(view, t, pr, { depth = 0, group = null, scope = "mine" } = {}) {
         .child(prIcon(view, t, pr, { scope, group }))
         .child(div().flex_none().text_size(TEXT.meta).text_color(t.dim).child(`#${pr.number}`))
         .child(div().flex_1().min_w(0).truncate().text_size(TEXT.title).child(pr.title))
-        .when(view.isBusy(pr), (el) => el.child(icon(t, "spinner", "dim", 11, true))),
+        .when(view.isBusy(pr), (el) => el.child(icon(t, "spinner", "dim", 11, true)))
+        .when(view.hovered === id, (el) => el.child(linkIcons(view, t, id, pr))),
     )
     .child(div().pl(19).child(statusLine(view, t, pr, { scope, group })))
     .when(Boolean(progress), (el) => el.child(div().pl(19).child(progress)));
@@ -165,8 +190,11 @@ export function stackHeader(view, t, group) {
 
 export function sidebarMine(view, t) {
   if (!view.mine) return [view.placeholder(t, view.mineError, "Loading your PRs…")];
-  const prs = view.applyCommon(view.mine.prs);
-  if (!prs.length) return [view.placeholder(t, null, "No open PRs in your repos.")];
+  const prs = view.applyCommon(view.withDraftsApplied(view.mine.prs));
+  if (!prs.length) {
+    const drafts = view.hiddenDrafts();
+    return [view.placeholder(t, null, drafts ? `No open PRs besides ${drafts} hidden draft${drafts === 1 ? "" : "s"}.` : "No open PRs in your repos.")];
+  }
   const byRepo = new Map();
   for (const group of stackGroups(prs)) byRepo.set(group.repo, [...(byRepo.get(group.repo) ?? []), group]);
   const repoOrder = [...byRepo.keys()].sort((a, b) => view.repoIndex(a) - view.repoIndex(b));
@@ -217,8 +245,9 @@ export function sidebarQueue(view, t) {
   const row = (item, index, numbered) => {
     const [iconName, toneName] = STATE_ICON[item.state] ?? ["pr", "muted"];
     const pr = view.findPr(trunk.repo, item.number, item.title);
+    const id = `prs-q-${item.state}-${item.number}`;
     return h_flex()
-      .id(`prs-q-${item.state}-${item.number}`)
+      .id(id)
       .px(8)
       .py(4)
       .gap(6)
@@ -226,6 +255,7 @@ export function sidebarQueue(view, t) {
       .rounded(7)
       .cursor_pointer()
       .hover((el) => el.bg(t.hover))
+      .on_hover((on, cx) => view.hover(id, on, cx))
       .on_click(() => view.act("details", pr))
       .on_mouse_down("right", (_e, cx) => {
         cx.stop_propagation();
@@ -234,7 +264,8 @@ export function sidebarQueue(view, t) {
       .child(icon(t, iconName, toneName, 12))
       .when(numbered, (el) => el.child(div().w(18).flex_none().text_size(10.5).text_color(t.dim).child(String(index + 1))))
       .child(div().flex_none().text_size(11).text_color(t.dim).child(`#${item.number}`))
-      .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(mine.has(item.number) ? t.foreground : t.muted).child(item.title));
+      .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(mine.has(item.number) ? t.foreground : t.muted).child(item.title))
+      .when(view.hovered === id, (el) => el.child(linkIcons(view, t, id, pr)));
   };
   if (yours.length) {
     rows.push(foldHeader(view, t, "queue:yours", "Yours", yours.length));
@@ -295,8 +326,19 @@ export function sidebarHeader(view, t, counts) {
       }),
     )
     .child(div().flex_1())
+    .when(view.sidebarTab === "mine", (el) => el.child(draftsButton(view, t)))
     .child(h_flex().id("prs-sb-refresh").p(4).rounded(5).cursor_pointer().hover((el) => el.bg(t.hover)).on_click((_e, cx) => view.refreshAll(cx)).child(icon(t, "refresh", failing ? "warn" : "dim", 12, view.loading())))
     .child(h_flex().id("prs-sb-page").px(5).h(20).items_center().rounded(5).cursor_pointer().hover((el) => el.bg(t.hover)).on_click(() => view.openPage()).child(div().text_size(11).text_color(t.dim).child("⤢")));
+}
+
+function draftsButton(view, t) {
+  const hidden = view.hiddenDrafts();
+  const tip = view.hideDrafts
+    ? `${hidden} draft${hidden === 1 ? "" : "s"} hidden. Drafts in a stack with a ready-for-review layer stay. Click to show all.`
+    : "Click to hide drafts. Drafts in a stack with a ready-for-review layer stay.";
+  return h_flex().id("prs-sb-drafts").p(4).rounded(5).cursor_pointer().hover((el) => el.bg(t.hover)).tooltip(tip)
+    .on_click((_e, cx) => view.toggleDrafts(cx))
+    .child(icon(t, "pr-draft", view.hideDrafts ? "accent" : "dim", 12));
 }
 
 export function sidebarRail(view, t, counts) {

@@ -5,8 +5,9 @@ Each top-level folder is one piece. You pick the pieces you want, and `install.s
 
 | Piece | What it is |
 | --- | --- |
-| [`github-and-trunk`](github-and-trunk/RECIPE.md) | Herdr's main layout plus a sidebar panel for your PRs, the Trunk merge queue and your reviews. |
-| [`pull-requests`](pull-requests/RECIPE.md) | Herdr's main layout plus a PR panel and a full-page PR workspace (`cmd-shift-g`), with the Trunk queue, review ranking, workflows, and agent fixes and reviews on this computer or a Herdr machine. |
+| [`pull-requests`](pull-requests/RECIPE.md) | A PR panel for Herdr's sidebar: your PRs, the Trunk merge queue and your reviews. Two layouts: `github-and-trunk` has just the panel, and `Pull-Requests` adds a full-page PR workspace (`cmd-shift-g`) with review ranking, workflows, and agent fixes and reviews on this computer or a Herdr machine. |
+
+`github-and-trunk` used to be its own piece. It's part of `pull-requests` now, and `./install.sh` moves you over if you had it enabled.
 
 ## Install
 
@@ -24,11 +25,11 @@ herdr-app do layout.switch '{"name":"github-and-trunk"}'
 
 `ctrl-alt-shift-escape` always takes you back to Herdr's default layout.
 
-The `github-and-trunk` piece needs the [GitHub CLI](https://cli.github.com) logged in (`gh auth login`).
+The `pull-requests` piece needs the [GitHub CLI](https://cli.github.com) logged in (`gh auth login`).
 For the merge queue it also needs Trunk: a `PostHog/posthog` checkout, and `trunk` on your PATH or from that checkout's flox environment, after `trunk login`.
 Without Trunk, the rest of the panel works and the Queue tab says what's missing.
 
-The `pull-requests` piece needs the same, plus `claude` on the machine its agents run on. Its Settings page sets the repos, where agents and Trunk run, and each repo's checkout. Merge its `keys.json` (`cmd-shift-g`) into yours by hand.
+Agent fixes and reviews also need `claude` on the machine they run on. The Settings page (on the full page) sets the repos, where agents and Trunk run, and each repo's checkout. Merge `pull-requests/keys.json` (`cmd-shift-g`) into yours by hand.
 
 ## Update
 

@@ -2,7 +2,7 @@ import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { theme, props, openOverlay, closeOverlay, shared, setShared, run, spaces, machines, notify, layout, nextCommand, focused } from "herdr";
 import { loadStore, store, updateStore, prKey, newId } from "./store.js";
-import { fetchMyPrs, fetchReviews, fetchDetail, statusPill, needsAttention, needsReview, readyToMerge, orderWithStacks, comparePriority } from "./github.js";
+import { fetchMyPrs, fetchReviews, fetchDetail, statusPill, needsAttention, needsReview, readyToMerge, orderWithStacks, comparePriority, isOrgWide, ownerOf } from "./github.js";
 import { mergePr, updateBranch, rerunFailed, approvePr, commentOnPr, resolveThread, openUrl, copyText, markdownLink, toggleWatch, toggleHidden, report, usesTrunk, isTrunkPr } from "./actions.js";
 import { startFixSession, startReview, syncRuns, fixPrompt, findingsFixPrompt, reviewPromptForOthers, setFindingState, findingsMarkdown } from "./agents.js";
 import { processSnapshot, TRIGGERS, ACTION_KINDS } from "./automation.js";
@@ -10,7 +10,8 @@ import { loadConfig, config, updateConfig, configPath, machineLabel } from "./co
 import { forgetCheckouts, checkoutFor } from "./runner.js";
 import { loadTrunk, dequeue, resetTrunk } from "./trunk.js";
 import { sidebarHeader, sidebarMine, sidebarQueue, sidebarReviews, sidebarRail, statusLine, prIcon, progressLine, stackHeader } from "./sidebar.js";
-import { visualAsks, stackGroups } from "./steps.js";
+import { visualAsks, stackGroups, withoutDraftStacks, step, queueFor } from "./steps.js";
+import { openClaude } from "./claude.js";
 import { ago, button, iconButton, textIconButton, chip, badge, section, empty, field, menuItem, SPINNER, tone, TEXT } from "./ui.js";
 
 const MINE_EVERY_MS = 90000;
@@ -32,10 +33,14 @@ function findNode(node, id) {
   return null;
 }
 
+const hasPage = () => Boolean(findNode(layout(), VIEW_STACK));
 const pageShown = () => findNode(layout(), VIEW_STACK)?.active === PAGE_NODE;
-const showView = (child) => run("layout.select", { stack: VIEW_STACK, child });
+const showView = (child) => hasPage() && run("layout.select", { stack: VIEW_STACK, child });
+
+const PAGE_DIALOG = { mod: "prs", kind: "dialog", width: 1180, height: 800, props: { page: true } };
 
 function leavePage() {
+  if (props()?.overlay) return closeOverlay(props().overlay);
   showView(WORK_NODE);
   const now = focused();
   if (now?.pane) run("pane.focus", { pane: now.pane });
@@ -43,6 +48,7 @@ function leavePage() {
 }
 
 function toggleView() {
+  if (!hasPage()) return;
   const last = shared("prs.toggleAt") ?? 0;
   if (Date.now() - last < 500) return;
   setShared("prs.toggleAt", Date.now());
@@ -76,6 +82,16 @@ const REVIEW_SORTS = {
 const agentsWhere = () => machineLabel(config().runner?.machine || null);
 const repos = () => (config().repos?.length ? config().repos : ["PostHog/posthog"]);
 const refreshSoon = () => setShared("prs.refresh", Date.now());
+const samePr = (a, b) => a.repo === b.repo && a.number === b.number;
+
+function claudeOn(pr) {
+  const mine = shared("prs.cache.mine");
+  const trunk = shared("prs.cache.trunk");
+  const group = stackGroups(mine?.prs ?? []).find((candidate) => candidate.members.some((member) => samePr(member.pr, pr)));
+  const own = group?.members.find((member) => samePr(member.pr, pr))?.pr ?? pr;
+  const status = own.mine ? step(own, queueFor(own, group, trunk), trunk).label : null;
+  return openClaude(own, { me: mine?.viewer ?? null, review: Boolean(pr.via), status, stack: group ?? null });
+}
 const busyKey = (pr, what) => `${prKey(pr.repo, pr.number)}:${what}`;
 
 function setBusy(key, on) {
@@ -101,6 +117,7 @@ async function act(pr, what, title, work, { refresh = true } = {}) {
 export const NAMED = {
   details: (pr) => openOverlay({ mod: "prs", kind: "dialog", width: 880, height: 760, props: { mode: "sheet", pr } }),
   open: (pr) => openUrl(pr.url),
+  claude: (pr) => claudeOn(pr),
   copyLink: (pr) => act(pr, "copy", "Copy link", () => copyText(markdownLink(pr), "Copied a Markdown link."), { refresh: false }),
   merge: (pr) => act(pr, "merge", isTrunkPr(pr) || usesTrunk(pr) ? `Send #${pr.number} to Trunk` : `Merge #${pr.number}`, () => mergePr(pr)),
   dequeue: (pr) => act(pr, "dequeue", `Remove #${pr.number} from the queue`, () => dequeue(pr.number)),
@@ -108,16 +125,16 @@ export const NAMED = {
   updateBranch: (pr) => act(pr, "update", `Update #${pr.number}`, () => updateBranch(pr)),
   rerunFailed: (pr) => act(pr, "rerun", `Rerun failed checks on #${pr.number}`, () => rerunFailed(pr)),
   fix: (pr) => act(pr, "fix", `Fix #${pr.number}`, async () => {
-    await startFixSession(pr, fixPrompt(pr));
-    return { ok: true, message: `Opened a Claude session on ${agentsWhere()}.` };
+    const started = await startFixSession(pr, fixPrompt(pr));
+    return started === false ? { ok: true, quiet: true } : { ok: true, message: `Opened a Claude session on ${agentsWhere()}.` };
   }),
   agentReview: (pr) => act(pr, "review", `Agent review of #${pr.number}`, async () => {
     await startReview(pr);
     return { ok: true, message: `Started on ${agentsWhere()}: four lenses, then a judge.` };
   }),
   reviewInClaude: (pr) => act(pr, "claude-review", `Review #${pr.number}`, async () => {
-    await startFixSession(pr, reviewPromptForOthers(pr), "review");
-    return { ok: true, message: `Opened a Claude review session on ${agentsWhere()}.` };
+    const started = await startFixSession(pr, reviewPromptForOthers(pr), "review");
+    return started === false ? { ok: true, quiet: true } : { ok: true, message: `Opened a Claude review session on ${agentsWhere()}.` };
   }),
   approve: (pr) => act(pr, "approve", `Approve #${pr.number}`, () => approvePr(pr)),
   watch: (pr) => act(pr, "watch", pr.watching ? "Stopped watching" : "Watching", async () => {
@@ -150,6 +167,7 @@ function menuEntries(pr, scope) {
       ["details", "Details"],
       ["open", "Open on GitHub"],
       ["copyLink", "Copy as Markdown link"],
+      ["claude", "Claude Code on this PR"],
       ["agentReview", "Agent review (headless)"],
       ["reviewInClaude", "Review in Claude"],
       ["approve", "Approve…"],
@@ -160,6 +178,7 @@ function menuEntries(pr, scope) {
     ["details", "Details"],
     ["open", "Open on GitHub"],
     ["copyLink", "Copy as Markdown link"],
+    ["claude", "Claude Code on this PR"],
     ["fix", "Fix with Claude"],
     ["agentReview", "Agent review (headless)"],
     ...(pr.mine ? [["merge", isTrunkPr(pr) || usesTrunk(pr) ? "Send to merge queue…" : "Merge…"]] : []),
@@ -220,6 +239,8 @@ export default class Prs extends View {
     this.sortNewest = localStorage.getItem("sort") !== "oldest";
     this.reviewSort = REVIEW_SORTS[localStorage.getItem("reviewSort")] ? localStorage.getItem("reviewSort") : "priority";
     this.chips = new Set();
+    this.hideDrafts = localStorage.getItem("hideDrafts") === "true";
+    this.hovered = null;
     this.repoFilter = null;
     this.viaFilter = null;
     this.savedFilter = null;
@@ -307,7 +328,7 @@ export default class Prs extends View {
     cx.spawn(async (cx) => {
       try {
         await Promise.all([loadStore(), loadConfig()]);
-        this.mine = await fetchMyPrs(repos(), store().watched);
+        this.mine = await fetchMyPrs(repos(), store().watched, config().trunk?.repo ?? null);
         this.mineFailures = 0;
         this.mineError = null;
         setShared("prs.cache.mine", this.mine);
@@ -345,12 +366,13 @@ export default class Prs extends View {
     const now = new Map();
     for (const pr of this.mine.prs) {
       const entry = isTrunkPr(pr) ? this.trunk?.items?.[pr.number] : null;
-      now.set(prKey(pr.repo, pr.number), { pr, ci: pr.checks.failed ? "fail" : pr.checks.inProgress ? "run" : "ok", decision: pr.reviewDecision, queue: entry?.state ?? null, visual: visualAsks(pr).length > 0 });
+      now.set(prKey(pr.repo, pr.number), { pr, ci: pr.checks.failed ? "fail" : pr.checks.inProgress ? "run" : "ok", decision: pr.reviewDecision, queue: entry?.state ?? null, visual: visualAsks(pr).length > 0, stack: Boolean(pr.stackDepth) });
     }
     const viewer = this.mine.viewer;
     const direct = new Set((this.reviews ?? []).filter((pr) => pr.via?.direct).map((pr) => prKey(pr.repo, pr.number)));
     if (this.seen) {
-      const say = (pr, title, level) => notify({ title, body: `#${pr.number} ${pr.title}`, level, timeout: 8000, action: { name: "layout.select", args: { stack: VIEW_STACK, child: PAGE_NODE } } });
+      const action = hasPage() ? { action: { name: "layout.select", args: { stack: VIEW_STACK, child: PAGE_NODE } } } : {};
+      const say = (pr, title, level) => notify({ title, body: `#${pr.number} ${pr.title}`, level, timeout: 8000, ...action });
       for (const [key, state] of now) {
         const was = this.seen.mine.get(key);
         if (!was) continue;
@@ -358,6 +380,7 @@ export default class Prs extends View {
         else if (state.queue !== was.queue && (state.queue === "Failed" || state.queue === "Cancelled")) say(state.pr, state.queue === "Failed" ? "Merge queue failed" : "Removed from the merge queue", "error");
         if (state.visual && !was.visual) say(state.pr, "Visual changes to approve", "warning");
         if (state.ci === "fail" && was.ci !== "fail" && !state.visual) say(state.pr, "Checks failing", "error");
+        if (state.stack && !was.stack) say(state.pr, "Stack too deep", "warning");
         if (state.decision !== was.decision && state.decision === "APPROVED") say(state.pr, "Approved", "success");
         if (state.decision !== was.decision && state.decision === "CHANGES_REQUESTED") say(state.pr, "Changes requested", "warning");
       }
@@ -407,6 +430,27 @@ export default class Prs extends View {
     return isBusy(pr);
   }
 
+  hover(id, on, cx) {
+    if (on) this.hovered = id;
+    else if (this.hovered === id) this.hovered = null;
+    cx.notify();
+  }
+
+  toggleDrafts(cx) {
+    this.hideDrafts = !this.hideDrafts;
+    localStorage.setItem("hideDrafts", String(this.hideDrafts));
+    cx.notify();
+  }
+
+  withDraftsApplied(prs) {
+    return this.hideDrafts ? withoutDraftStacks(prs) : prs;
+  }
+
+  hiddenDrafts() {
+    const all = this.mine?.prs ?? [];
+    return all.length - this.withDraftsApplied(all).length;
+  }
+
   placeholder(t, error, text) {
     return empty(t, error ? error : text);
   }
@@ -425,8 +469,15 @@ export default class Prs extends View {
   }
 
   repoIndex(repo) {
-    const index = repos().indexOf(repo);
-    return index === -1 ? 999 : index;
+    const exact = repos().indexOf(repo);
+    if (exact !== -1) return exact;
+    const org = repos().indexOf(`${ownerOf(repo)}/*`);
+    return org === -1 ? 999 : org + 0.5;
+  }
+
+  knownRepos() {
+    const seen = [...(this.mine?.prs ?? []), ...(this.reviews ?? [])].map((pr) => pr.repo);
+    return [...new Set([...repos().filter((repo) => !isOrgWide(repo)), ...seen])].sort((a, b) => this.repoIndex(a) - this.repoIndex(b) || a.localeCompare(b));
   }
 
   get failures() {
@@ -439,7 +490,8 @@ export default class Prs extends View {
 
   openPage(page) {
     setShared("prs.page.request", { page: page ?? (this.sidebarTab === "queue" ? "queue" : this.sidebarTab), at: Date.now() });
-    showView(PAGE_NODE);
+    if (hasPage()) showView(PAGE_NODE);
+    else openOverlay(PAGE_DIALOG);
   }
 
   refreshAll(cx) {
@@ -568,7 +620,7 @@ export default class Prs extends View {
 
   counts() {
     return {
-      mine: this.mine?.prs.length,
+      mine: this.mine ? this.mine.prs.length - this.hiddenDrafts() : undefined,
       reviews: this.reviews?.filter((pr) => !this.isHidden(pr)).length,
       code: Object.values(store().runs).filter((run) => run.kind === "review" && run.status === "running").length || null,
       tasks: Object.values(store().runs).filter((run) => run.status === "running").length || null,
@@ -645,8 +697,8 @@ export default class Prs extends View {
         .hover((el) => el.bg(t.hover))
         .on_click(() => leavePage())
         .child(svg("mods/prs/icons/terminal.svg").size(14).flex_none().text_color(t.muted))
-        .child(div().flex_1().text_size(13).child("Back to terminals"))
-        .child(div().text_size(11).text_color(t.dim).child("⌘⇧G")));
+        .child(div().flex_1().text_size(13).child(props()?.overlay ? "Close" : "Back to terminals"))
+        .when(!props()?.overlay, (el) => el.child(div().text_size(11).text_color(t.dim).child("⌘⇧G"))));
     const columns = this.page === "mine" || this.page === "reviews"
       ? h_flex()
           .px(16)
@@ -825,12 +877,13 @@ export default class Prs extends View {
           .min_w(0)
           .gap(4)
           .flex_wrap()
-          .child(chip(t, "prs-repo", `${repoLabel} ▾`, Boolean(this.repoFilter), () => this.pick("prs.pick.repo", [{ label: "All repos", value: null }, ...repos().map((repo) => ({ label: repo, value: repo }))], this.repoFilter)))
+          .child(chip(t, "prs-repo", `${repoLabel} ▾`, Boolean(this.repoFilter), () => this.pick("prs.pick.repo", [{ label: "All repos", value: null }, ...this.knownRepos().map((repo) => ({ label: repo, value: repo }))], this.repoFilter)))
           .when(scope === "mine", (el) => el.children(MINE_CHIPS.map((item) => chip(t, `prs-chip-${item.id}`, item.label, this.chips.has(item.id), (_e, cx) => {
             if (this.chips.has(item.id)) this.chips.delete(item.id);
             else this.chips.add(item.id);
             cx.notify();
           }, this.mine ? this.mine.prs.filter(item.test).length || null : null))))
+          .when(scope === "mine", (el) => el.child(chip(t, "prs-drafts", "Hide drafts", this.hideDrafts, (_e, cx) => this.toggleDrafts(cx), this.hideDrafts ? this.hiddenDrafts() || null : null)))
           .when(scope === "mine", (el) => el.child(chip(t, "prs-sort", this.sortNewest ? "↓ Newest" : "↑ Oldest", false, (_e, cx) => {
             this.sortNewest = !this.sortNewest;
             localStorage.setItem("sort", this.sortNewest ? "newest" : "oldest");
@@ -847,7 +900,7 @@ export default class Prs extends View {
             this.savedFilter = this.savedFilter === filter.id ? null : filter.id;
             cx.notify();
           })))
-          .child(chip(t, "prs-newfilter", "+ Filter", false, () => openOverlay({ mod: "prs", kind: "dialog", width: 460, height: 640, props: { mode: "filter", scope, repos: repos() } })))
+          .child(chip(t, "prs-newfilter", "+ Filter", false, () => openOverlay({ mod: "prs", kind: "dialog", width: 460, height: 640, props: { mode: "filter", scope, repos: this.knownRepos() } })))
       )
       .child(search);
   }
@@ -883,7 +936,7 @@ export default class Prs extends View {
   }
 
   mineVisible() {
-    const prs = this.applyCommon(this.mine?.prs ?? []).filter((pr) => MINE_CHIPS.every((item) => !this.chips.has(item.id) || item.test(pr)));
+    const prs = this.applyCommon(this.withDraftsApplied(this.mine?.prs ?? [])).filter((pr) => MINE_CHIPS.every((item) => !this.chips.has(item.id) || item.test(pr)));
     return orderWithStacks(prs, this.sortNewest);
   }
 
@@ -1029,7 +1082,7 @@ export default class Prs extends View {
   initSettingsForm() {
     const c = config();
     const form = {
-      repoInput: InputState.new({ placeholder: "owner/repo" }),
+      repoInput: InputState.new({ placeholder: "owner/repo, or owner/* for every repo there" }),
       trunkRepo: InputState.new({ placeholder: "owner/repo, empty turns Trunk off", value: c.trunk?.repo ?? "" }),
       review: InputState.new({ placeholder: "Model for the lenses", value: c.models?.review ?? "" }),
       judge: InputState.new({ placeholder: "Model for the judge", value: c.models?.judge ?? "" }),
@@ -1045,7 +1098,7 @@ export default class Prs extends View {
   addRepo() {
     const form = this.settingsForm;
     const repo = form.repoInput.value().trim().replace(/^https:\/\/github\.com\//, "").replace(/\/$/, "");
-    if (!/^[\w.-]+\/[\w.-]+$/.test(repo) || form.draft.repos.includes(repo)) return;
+    if (!/^[\w.-]+\/([\w.-]+|\*)$/.test(repo) || form.draft.repos.includes(repo)) return;
     form.draft.repos.push(repo);
     form.checkouts[repo] = InputState.new({ placeholder: "Found automatically" });
     form.repoInput.set_value?.("");
@@ -1093,7 +1146,7 @@ export default class Prs extends View {
       cx.notify();
     });
     return [
-      card("Repositories", "Pull requests from these repos show in every view. The first one comes first in the sidebar.",
+      card("Repositories", "Pull requests from these repos show in every view. owner/* covers every repo of that owner. The first one comes first in the sidebar.",
         v_flex()
           .gap(6)
           .children(draft.repos.map((repo, index) =>
@@ -1118,7 +1171,7 @@ export default class Prs extends View {
       card("Agents run on", "Where Fix sessions, agent reviews and workflow agents run. Pick this computer or any machine you added to Herdr.",
         this.machinePicker(t, "prs-set-runner", draft.runner?.machine, (name) => (draft.runner = { ...draft.runner, machine: name }))),
       card("Checkouts", `Where each repo is checked out on ${machineLabel(draft.runner?.machine ?? null)}. Leave empty to find it from your open spaces and common folders, else it's cloned to ~/.herdr-prs/repos the first time it's needed.`,
-        v_flex().gap(6).children(draft.repos.map((repo) =>
+        v_flex().gap(6).children(draft.repos.filter((repo) => !isOrgWide(repo)).map((repo) =>
           v_flex()
             .gap(3)
             .child(h_flex().gap(6).items_center().child(div().w(170).flex_none().truncate().text_size(12).child(repo)).child(div().flex_1().child(this.input(t, form.checkouts[repo]))).child(button(t, `prs-set-detect-${repo}`, "Detect", detect(repo), { small: true })))
@@ -1159,7 +1212,7 @@ export default class Prs extends View {
         .gap(6)
         .items_center()
         .child(div().flex_1().text_size(11.5).text_color(t.dim).child("Runs on your PRs and review requests while Herdr is open, checked on every refresh. At most 5 runs per PR per hour."))
-        .child(button(t, "prs-wf-new", "New workflow", () => openOverlay({ mod: "prs", kind: "dialog", width: 560, height: 720, props: { mode: "workflow", repos: repos() } }), { small: true, primary: true })),
+        .child(button(t, "prs-wf-new", "New workflow", () => openOverlay({ mod: "prs", kind: "dialog", width: 560, height: 720, props: { mode: "workflow", repos: this.knownRepos() } }), { small: true, primary: true })),
     ];
     if (!workflows.length) rows.push(empty(t, "No workflows yet."));
     for (const workflow of workflows) {
@@ -1178,7 +1231,7 @@ export default class Prs extends View {
               .items_center()
               .child(badge(t, enabled ? "ON" : "OFF", enabled ? "ok" : "dim"))
               .child(div().flex_1().min_w(0).truncate().child(workflow.name))
-              .child(button(t, `prs-wf-edit-${workflow.id}`, "Edit", () => openOverlay({ mod: "prs", kind: "dialog", width: 560, height: 720, props: { mode: "workflow", id: workflow.id, repos: repos() } }), { small: true }))
+              .child(button(t, `prs-wf-edit-${workflow.id}`, "Edit", () => openOverlay({ mod: "prs", kind: "dialog", width: 560, height: 720, props: { mode: "workflow", id: workflow.id, repos: this.knownRepos() } }), { small: true }))
               .child(button(t, `prs-wf-toggle-${workflow.id}`, enabled ? "Turn off" : "Turn on", () => updateStore((state) => {
                 const target = state.workflows.find((item) => item.id === workflow.id);
                 if (target) target.enabled = !enabled;
@@ -1409,7 +1462,8 @@ export default class Prs extends View {
         .flex_wrap()
         .child(button(t, "prs-f-review", reviewRunning ? "Review running…" : findings.length ? "Review again" : "Start review", () => NAMED.agentReview(pr), { primary: !findings.length, disabled: reviewRunning }))
         .when(open.length > 0 && pr.mine, (el) => el.child(button(t, "prs-f-fix", `Fix ${open.length} in Claude`, () => act(pr, "fix", `Fix findings on #${pr.number}`, async () => {
-          await startFixSession(pr, findingsFixPrompt(pr, open));
+          const prompt = findingsFixPrompt(pr, open);
+          if ((await startFixSession(pr, prompt)) === false) return copyText(prompt, "A fix session is already open on this PR, so it's shown instead. The findings prompt is on your clipboard to paste into it.");
           return { ok: true, message: `Opened a Claude session on ${agentsWhere()}.` };
         }), { primary: true })))
         .when(open.length > 0, (el) => el.child(button(t, "prs-f-post", "Post to PR", () => act(pr, "post", `Post findings to #${pr.number}`, () => commentOnPr(pr, findingsMarkdown(open)))))),

@@ -52,7 +52,7 @@
               },
               "min": 140,
               "content": {
-                "mod": "gh-inbox"
+                "mod": "prs"
               }
             }
           ]
