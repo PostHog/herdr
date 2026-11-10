@@ -20,13 +20,14 @@ export const tone = (t, name) => t[TONES[name] ?? name] ?? (name === "run" ? t.a
 export const TEXT = { title: 12.5, meta: 11, chip: 11, section: 10.5 };
 
 export function button(t, id, label, onClick, options = {}) {
-  const { primary = false, danger = false, small = false, disabled = false } = options;
+  const { primary = false, danger = false, small = false, disabled = false, icon = null, tooltip = null } = options;
   const bg = primary ? t.solid : t.raised;
   const fg = primary ? t.solid_foreground : danger ? tone(t, "bad") : t.foreground;
   return h_flex()
     .id(id)
     .h(small ? 22 : 30)
     .px(small ? 8 : 12)
+    .gap(5)
     .flex_none()
     .items_center()
     .rounded(small ? 6 : 8)
@@ -35,11 +36,13 @@ export function button(t, id, label, onClick, options = {}) {
     .bg(bg)
     .text_size(small ? TEXT.chip : 12.5)
     .text_color(fg)
+    .when(Boolean(tooltip), (el) => el.tooltip(tooltip))
     .when(disabled, (el) => el.opacity(0.45))
     .when(!disabled, (el) => el.cursor_pointer().hover((s) => s.opacity(0.85)).on_click((event, cx) => {
       cx.stop_propagation();
       onClick(event, cx);
     }))
+    .when(Boolean(icon), (el) => el.child(svg(`mods/prs/icons/${icon}.svg`).size(small ? 12 : 14).flex_none().text_color(fg)))
     .child(label);
 }
 

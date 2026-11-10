@@ -20,9 +20,11 @@ export const SIDEBAR_TABS = [
   { id: "reviews", label: "Review", icon: "eye" },
 ];
 
-function tinyButton(t, id, label, onClick, primary = false) {
-  return button(t, id, label, onClick, { small: true, primary });
+function tinyButton(t, id, label, onClick, primary = false, extra = {}) {
+  return button(t, id, label, onClick, { small: true, primary, ...extra });
 }
+
+const VISUAL_ICONS = { storybook: "book", playwright: "drama" };
 
 export function stat(t, iconName, text, toneName = "dim") {
   return h_flex().gap(3).flex_none().items_center().child(icon(t, iconName, toneName, 11)).child(div().text_size(TEXT.meta).text_color(tone(t, toneName)).child(text));
@@ -75,7 +77,7 @@ export function priorityBadge(t, pr) {
 export function rowButtons(view, t, pr, { scope, next, entry, group }) {
   const buttons = [];
   if (scope !== "mine" || !next) return buttons;
-  for (const ask of visualAsks(pr)) buttons.push(tinyButton(t, `prs-b-vis-${pr.number}-${ask.type}`, `Approve ${ask.type}`, () => view.act("openUrl", { ...pr, url: ask.url }), true));
+  for (const ask of visualAsks(pr)) buttons.push(tinyButton(t, `prs-b-vis-${pr.number}-${ask.type}`, "Approve", () => view.act("openUrl", { ...pr, url: ask.url }), true, { icon: VISUAL_ICONS[ask.type] ?? "eye", tooltip: `Approve ${ask.type} changes: ${ask.summary}` }));
   if (next.ready && (!group || group.members.length === 1) && !entry) buttons.push(iconButton(t, `prs-b-merge-${pr.number}`, "merged", "Merge…", () => view.act("merge", pr), "ok"));
   if (next.requeue) buttons.push(iconButton(t, `prs-b-again-${pr.number}`, "merged", "Merge again…", () => view.act("merge", pr), "ok"));
   if (fixable(pr)) buttons.push(iconButton(t, `prs-b-fix-${pr.number}`, "wrench", "Fix with Claude", () => view.act("fix", pr)));
@@ -185,7 +187,7 @@ export function stackHeader(view, t, group) {
     .child(icon(t, "stack", "merged", 12))
     .child(div().flex_1().min_w(0).truncate().text_size(TEXT.meta).text_color(t.muted).child(`Stack of ${group.members.length} · ${top.headRef}`))
     .child(div().flex_none().text_size(TEXT.meta).text_color(queued ? t.accent : all ? tone(t, "ok") : t.dim).child(queued ? queued.state : `${ready}/${group.members.length} ready`))
-    .when(all && !queued && top.mine, (el) => el.child(tinyButton(t, `prs-stack-merge-${group.id}`, "Merge stack", () => view.act("merge", top), true)));
+    .when(all && !queued && top.mine, (el) => el.child(iconButton(t, `prs-stack-merge-${group.id}`, "merged", "Merge stack…", () => view.act("merge", top), "ok")));
 }
 
 export function sidebarMine(view, t) {

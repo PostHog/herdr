@@ -1005,7 +1005,7 @@ export default class Prs extends View {
             .items_center()
             .child(statusLine(this, t, pr, { buttons: false }))
             .child(div().flex_1())
-            .child(button(t, `prs-merge-${pr.number}`, isTrunkPr(pr) || usesTrunk(pr) ? "Send to queue" : "Merge", () => choose("merge", pr), { small: true, primary: true })),
+            .child(iconButton(t, `prs-merge-${pr.number}`, "merged", isTrunkPr(pr) || usesTrunk(pr) ? "Send to queue…" : "Merge…", () => choose("merge", pr), "ok")),
         ]));
       }
     }
