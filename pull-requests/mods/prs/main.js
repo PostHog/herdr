@@ -82,7 +82,14 @@ const REVIEW_SORTS = {
 const agentsWhere = () => machineLabel(config().runner?.machine || null);
 const repos = () => (config().repos?.length ? config().repos : ["PostHog/posthog"]);
 const refreshSoon = () => setShared("prs.refresh", Date.now());
-const cleanBody = (body) => (body ?? "").replace(/<!--[\s\S]*?-->/g, "").trim();
+function cleanBody(body) {
+  let text = body ?? "";
+  for (let start = text.indexOf("<!--"); start !== -1; start = text.indexOf("<!--")) {
+    const end = text.indexOf("-->", start + 4);
+    text = text.slice(0, start) + (end === -1 ? "" : text.slice(end + 3));
+  }
+  return text.trim();
+}
 const samePr = (a, b) => a.repo === b.repo && a.number === b.number;
 
 function claudeOn(pr) {
