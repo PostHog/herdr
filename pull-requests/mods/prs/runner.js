@@ -1,4 +1,4 @@
-import { exec, run, machines, spaces, readTextFile, appHome } from "herdr";
+import { exec, run, machines, spaces, panes, readTextFile, appHome } from "herdr";
 import { config } from "./config.js";
 
 const PATH_PRELUDE = 'export PATH="$HOME/.local/bin:$PATH";';
@@ -74,9 +74,28 @@ export async function asset(name) {
   return assets.get(name) ?? "";
 }
 
-export async function launchTab(name, argv, machine = runnerMachine()) {
-  const folder = await homeOf(machine);
-  const space = spaces().find((candidate) => (candidate.machine ?? null) === machine);
+const within = (path, root) => Boolean(path) && (path === root || path.startsWith(`${root}/`));
+
+function liveFolder(space) {
+  const tabs = new Set(space.tabs.map((tab) => tab.id));
+  return panes().find((pane) => tabs.has(pane.tab) && pane.cwd)?.cwd || space.folder;
+}
+
+function repoSpace(machine, belongs) {
+  const onMachine = spaces().filter((space) => (space.machine ?? null) === machine);
+  const inRepo = (space) => belongs(space.folder) || belongs(liveFolder(space));
+  return onMachine.find((space) => space.active && inRepo(space)) ?? onMachine.find(inRepo);
+}
+
+async function exists(path, machine) {
+  return (await runOn(machine, '[ -d "$1" ]', [path])).code === 0;
+}
+
+export async function launchTab(name, argv, machine = runnerMachine(), { checkout = null, treePrefix = null } = {}) {
+  const cloned = checkout && (await exists(checkout, machine));
+  const folder = cloned ? checkout : await homeOf(machine);
+  const belongs = (path) => within(path, checkout) || Boolean(treePrefix && path?.startsWith(treePrefix));
+  const space = cloned ? repoSpace(machine, belongs) : spaces().find((candidate) => (candidate.machine ?? null) === machine);
   if (space) run("tab.new", { name, space: space.id, folder, argv });
   else run("space.new", { tab: name, machine: machine ?? "", folder, argv });
 }
@@ -108,9 +127,11 @@ exec claude "$@"`;
 export async function launchClaudeOnPr(pr, claudeArgs, tabName) {
   const machine = runnerMachine();
   const home = await homeOf(machine);
-  const tree = `${home}/.herdr/worktrees/prs/${pr.repo.replace("/", "-")}-${pr.number}`;
+  const treePrefix = `${home}/.herdr/worktrees/prs/${pr.repo.replace("/", "-")}-`;
+  const tree = `${treePrefix}${pr.number}`;
   const checkout = await checkoutFor(pr.repo, machine);
-  await launchTab(tabName, ["bash", "-lc", `${PATH_PRELUDE} ${PR_WORKTREE_SCRIPT}`, "prs", checkout, pr.repo, String(pr.number), tree, ...claudeArgs], machine);
+  const argv = ["bash", "-lc", `${PATH_PRELUDE} ${PR_WORKTREE_SCRIPT}`, "prs", checkout, pr.repo, String(pr.number), tree, ...claudeArgs];
+  await launchTab(tabName, argv, machine, { checkout, treePrefix });
   return machine;
 }
 
