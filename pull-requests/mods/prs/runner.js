@@ -74,7 +74,15 @@ export async function asset(name) {
   return assets.get(name) ?? "";
 }
 
-const within = (path, root) => Boolean(path) && (path === root || path.startsWith(`${root}/`));
+const trimSlash = (path) => path.replace(/(.)\/+$/, "$1");
+
+function within(path, root) {
+  if (!path || !root) return false;
+  const [inner, outer] = [trimSlash(path), trimSlash(root)];
+  return inner === outer || inner.startsWith(outer === "/" ? "/" : `${outer}/`);
+}
+
+const inPrTree = (path, prefix) => Boolean(path && prefix) && path.startsWith(prefix) && /^\d+(\/|$)/.test(path.slice(prefix.length));
 
 function liveFolder(space) {
   const tabs = new Set(space.tabs.map((tab) => tab.id));
@@ -94,7 +102,7 @@ async function exists(path, machine) {
 export async function launchTab(name, argv, machine = runnerMachine(), { checkout = null, treePrefix = null } = {}) {
   const cloned = checkout && (await exists(checkout, machine));
   const folder = cloned ? checkout : await homeOf(machine);
-  const belongs = (path) => within(path, checkout) || Boolean(treePrefix && path?.startsWith(treePrefix));
+  const belongs = (path) => within(path, checkout) || inPrTree(path, treePrefix);
   const space = cloned ? repoSpace(machine, belongs) : spaces().find((candidate) => (candidate.machine ?? null) === machine);
   if (space) run("tab.new", { name, space: space.id, folder, argv });
   else run("space.new", { tab: name, machine: machine ?? "", folder, argv });
