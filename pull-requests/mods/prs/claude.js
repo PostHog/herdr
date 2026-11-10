@@ -1,9 +1,33 @@
-import { run, spaces, agents, panes, exec, shared, knownAgents, notify } from "herdr";
+import { run, spaces, agents, panes, exec, shared, setShared, knownAgents, notify } from "herdr";
 import { config } from "./config.js";
 
 export const CLAUDE_ICON = "icons/claude.svg";
 
 const DEFAULT_BRANCHES = new Set(["main", "master"]);
+const LAUNCH_TTL_MS = 30000;
+
+function setLaunching(key, at) {
+  const launching = { ...(shared("prs.launching") ?? {}) };
+  if (at) launching[key] = at;
+  else delete launching[key];
+  setShared("prs.launching", launching);
+}
+
+export function showIfOpen(...names) {
+  const open = findTab(...names);
+  if (open) showTab(open);
+  return Boolean(open);
+}
+
+export async function launchOnce(key, start) {
+  if (Date.now() - ((shared("prs.launching") ?? {})[key] ?? 0) < LAUNCH_TTL_MS) return false;
+  setLaunching(key, Date.now());
+  try {
+    return await start();
+  } finally {
+    setLaunching(key, null);
+  }
+}
 
 export const prRef = (pr) => (pr.repo === config().trunk?.repo ? `#${pr.number}` : `${pr.repo}#${pr.number}`);
 
@@ -20,20 +44,23 @@ export function findTab(...names) {
   return null;
 }
 
-export async function openClaude(pr, context = {}) {
+export function openClaude(pr, context = {}) {
   const name = `PR ${prRef(pr)}`;
-  const open = findTab(name, `fix ${prRef(pr)}`, `review ${prRef(pr)}`);
-  if (open) return showTab(open);
-  const checkouts = await branchSpaces(pr);
-  const agent = agents().find((candidate) => checkouts.some((space) => space.id === candidate.space));
-  if (agent) return showTab({ space: agent.space, tab: agent.tab });
-  const space = checkouts[0] ?? spaces().find((candidate) => candidate.active);
-  try {
-    const claude = await claudeArgv(space?.machine);
-    run("tab.new", { name, space: space?.id, argv: [...claude, "--name", name, "--append-system-prompt", systemPrompt(pr, context)] });
-  } catch (error) {
-    notify({ title: "Couldn't start Claude Code", body: String(error?.message ?? error), level: "error" });
-  }
+  const showOpen = () => showIfOpen(name, `fix ${prRef(pr)}`, `review ${prRef(pr)}`);
+  return launchOnce(`claude ${prRef(pr)}`, async () => {
+    if (showOpen()) return;
+    const checkouts = await branchSpaces(pr);
+    const agent = agents().find((candidate) => checkouts.some((space) => space.id === candidate.space));
+    if (agent) return showTab({ space: agent.space, tab: agent.tab });
+    const space = checkouts[0] ?? spaces().find((candidate) => candidate.active);
+    try {
+      const claude = await claudeArgv(space?.machine);
+      if (showOpen()) return;
+      run("tab.new", { name, space: space?.id, argv: [...claude, "--name", name, "--append-system-prompt", systemPrompt(pr, context)] });
+    } catch (error) {
+      notify({ title: "Couldn't start Claude Code", body: String(error?.message ?? error), level: "error" });
+    }
+  });
 }
 
 async function branchSpaces(pr) {
