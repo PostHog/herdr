@@ -43,9 +43,9 @@ const DETAIL_QUERY = `query($owner: String!, $name: String!, $number: Int!, $aft
   repository(owner: $owner, name: $name) { pullRequest(number: $number) {
     body
     files(first: 100) { nodes { path additions deletions } }
-    reviews(last: 30) { nodes { author { login } state body submittedAt url } }
+    reviews(last: 30) { nodes { id author { login } state body submittedAt url } }
     reviewThreads(first: 100) { nodes { id isResolved isOutdated path line
-      comments(first: 20) { nodes { id author { login __typename } body createdAt url } } } }
+      comments(first: 20) { nodes { id author { login __typename } body createdAt url pullRequestReview { id } } } } }
     commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100, after: $after) {
       pageInfo { hasNextPage endCursor }
       nodes { __typename
@@ -519,6 +519,7 @@ export async function fetchDetail(pr) {
       isOutdated: thread.isOutdated,
       path: thread.path,
       line: thread.line,
+      reviewId: thread.comments?.nodes?.[0]?.pullRequestReview?.id ?? null,
       comments: (thread.comments?.nodes ?? []).map((comment) => ({ id: comment.id, author: comment.author?.login ?? "ghost", isBot: comment.author?.__typename === "Bot", body: comment.body, createdAt: comment.createdAt, url: comment.url })),
     })),
     checks: checks.map((check) => ({ ...check, bucket: bucket(check.state) })).sort((a, b) => ["failed", "running", "passed"].indexOf(a.bucket) - ["failed", "running", "passed"].indexOf(b.bucket) || a.name.localeCompare(b.name)),
