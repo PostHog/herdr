@@ -1,5 +1,7 @@
 # GitHub and Trunk
 
+Retired: this is part of `pull-requests` now, and `./install.sh` moves you there. It stays here only so copies of `install.sh` from before the move don't drop it.
+
 Herdr's main layout plus a sidebar panel for your PRs, the merge queue and your reviews.
 The panel sits under the agents list: your open PRs grouped into stacks, the Trunk merge queue, and the PRs waiting on your review, each as a tab you can drag into any order.
 Rows say what happens next for each PR, and show a button only when something waits on you.

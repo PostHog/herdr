@@ -12,6 +12,7 @@ export function blocker(pr) {
   const ask = visualAsks(pr)[0];
   if (ask) return { icon: "eye", tone: "warn", label: `Visuals: ${ask.summary}`, url: ask.url };
   if (pr.checks.failed) return { icon: "fail", tone: "bad", label: `${plural(pr.checks.failed, "check")} failing` };
+  if (pr.stackDepth) return { icon: "stack", tone: "warn", label: pr.stackDepth.checked ? "Stack too deep" : "Stack depth not checked", url: pr.stackDepth.url, tip: pr.stackDepth.detail || "Open the stack depth check" };
   if (pr.reviewDecision === "CHANGES_REQUESTED") return { icon: "changes", tone: "bad", label: "Changes requested" };
   if (pr.checks.inProgress) return { icon: "spinner", spin: true, tone: "run", label: `CI ${pr.checks.passed}/${pr.checks.total}` };
   if (pr.reviewDecision === "REVIEW_REQUIRED") return { icon: "waiting", tone: "warn", label: "Needs review" };
@@ -73,6 +74,12 @@ export function step(pr, entry, trunk) {
   if (pr.mergeState === "BEHIND") return { icon: "waiting", tone: "warn", label: "Behind base" };
   if (!readyToMerge(pr)) return { icon: "waiting", tone: "warn", label: "Not mergeable yet" };
   return { icon: "check", tone: "ok", label: "Ready to merge", ready: true };
+}
+
+export function withoutDraftStacks(prs) {
+  const root = (pr) => `${pr.repo}#${pr.stackRoot ?? pr.number}`;
+  const live = new Set(prs.filter((pr) => !pr.isDraft).map(root));
+  return prs.filter((pr) => live.has(root(pr)));
 }
 
 export function stackGroups(prs, newestFirst = true) {

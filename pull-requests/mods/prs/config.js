@@ -2,7 +2,7 @@ import { appHome, readTextFile, writeTextFile, setShared } from "herdr";
 
 export const DEFAULT_CONFIG = {
   version: 1,
-  repos: ["PostHog/posthog"],
+  repos: ["PostHog/posthog", "PostHog/*"],
   runner: { machine: null },
   checkouts: {},
   trunk: { repo: "PostHog/posthog", machine: null },

@@ -1,10 +1,11 @@
-import { div, svg } from "gpui-kit";
+import { div, svg, image } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { run } from "herdr";
 import { comparePriority } from "./github.js";
 import { LISTING_CAP } from "./trunk.js";
 import { step, queueFor, stackGroups, layerWaitingOn, visualAsks, fixable } from "./steps.js";
-import { ago, tone, button, badge, TEXT } from "./ui.js";
+import { CLAUDE_ICON } from "./claude.js";
+import { ago, tone, button, iconButton, badge, TEXT } from "./ui.js";
 
 const ICON = (name) => `mods/prs/icons/${name}.svg`;
 
@@ -19,9 +20,11 @@ export const SIDEBAR_TABS = [
   { id: "reviews", label: "Review", icon: "eye" },
 ];
 
-function tinyButton(t, id, label, onClick, primary = false) {
-  return button(t, id, label, onClick, { small: true, primary });
+function tinyButton(t, id, label, onClick, primary = false, extra = {}) {
+  return button(t, id, label, onClick, { small: true, primary, ...extra });
 }
+
+const VISUAL_ICONS = { storybook: "book", playwright: "drama" };
 
 export function stat(t, iconName, text, toneName = "dim") {
   return h_flex().gap(3).flex_none().items_center().child(icon(t, iconName, toneName, 11)).child(div().text_size(TEXT.meta).text_color(tone(t, toneName)).child(text));
@@ -74,10 +77,10 @@ export function priorityBadge(t, pr) {
 export function rowButtons(view, t, pr, { scope, next, entry, group }) {
   const buttons = [];
   if (scope !== "mine" || !next) return buttons;
-  for (const ask of visualAsks(pr)) buttons.push(tinyButton(t, `prs-b-vis-${pr.number}-${ask.type}`, `Approve ${ask.type}`, () => view.act("openUrl", { ...pr, url: ask.url }), true));
-  if (next.ready && (!group || group.members.length === 1) && !entry) buttons.push(tinyButton(t, `prs-b-merge-${pr.number}`, "Merge", () => view.act("merge", pr), true));
-  if (next.requeue) buttons.push(tinyButton(t, `prs-b-again-${pr.number}`, "Merge again", () => view.act("merge", pr), true));
-  if (fixable(pr)) buttons.push(tinyButton(t, `prs-b-fix-${pr.number}`, "Fix", () => view.act("fix", pr)));
+  for (const ask of visualAsks(pr)) buttons.push(tinyButton(t, `prs-b-vis-${pr.number}-${ask.type}`, "Approve", () => view.act("openUrl", { ...pr, url: ask.url }), true, { icon: VISUAL_ICONS[ask.type] ?? "eye", tooltip: `Approve ${ask.type} changes: ${ask.summary}` }));
+  if (next.ready && (!group || group.members.length === 1) && !entry) buttons.push(iconButton(t, `prs-b-merge-${pr.number}`, "merged", "Merge…", () => view.act("merge", pr), "ok"));
+  if (next.requeue) buttons.push(iconButton(t, `prs-b-again-${pr.number}`, "merged", "Merge again…", () => view.act("merge", pr), "ok"));
+  if (fixable(pr)) buttons.push(iconButton(t, `prs-b-fix-${pr.number}`, "wrench", "Fix with Claude", () => view.act("fix", pr)));
   return buttons;
 }
 
@@ -114,10 +117,32 @@ export function progressLine(view, t, pr, group) {
     .child(div().text_size(TEXT.section).text_color(t.dim).child(`${run.checks.passed + run.checks.failed}/${run.checks.total} checks · started ${ago(new Date(next.since ?? run.started).toISOString())}`));
 }
 
+function hoverIcon(t, id, glyph, tip, onClick) {
+  return div().id(id).p(2).rounded(4).flex_none().cursor_pointer().text_color(t.dim)
+    .hover((el) => el.bg(t.raised).text_color(t.foreground))
+    .tooltip(tip)
+    .on_click((_e, cx) => {
+      cx.stop_propagation();
+      onClick();
+    })
+    .child(glyph);
+}
+
+function linkIcons(view, t, id, pr) {
+  return h_flex()
+    .flex_none()
+    .gap(2)
+    .items_center()
+    .child(hoverIcon(t, `${id}-claude`, image(CLAUDE_ICON).size(13), "Claude Code on this PR", () => view.act("claude", pr)))
+    .child(hoverIcon(t, `${id}-copy`, svg(ICON("copy")).size(13), "Copy as Markdown link", () => view.act("copyLink", pr)))
+    .child(hoverIcon(t, `${id}-open`, svg(ICON("external")).size(13), "Open on GitHub", () => view.act("open", pr)));
+}
+
 function prRow(view, t, pr, { depth = 0, group = null, scope = "mine" } = {}) {
   const progress = scope === "mine" ? progressLine(view, t, pr, group) : null;
+  const id = `prs-sb-${scope}-${pr.repo}-${pr.number}`;
   return v_flex()
-    .id(`prs-sb-${scope}-${pr.repo}-${pr.number}`)
+    .id(id)
     .pl(8 + depth * 12)
     .pr(8)
     .py(5)
@@ -125,6 +150,7 @@ function prRow(view, t, pr, { depth = 0, group = null, scope = "mine" } = {}) {
     .rounded(7)
     .cursor_pointer()
     .hover((el) => el.bg(t.hover))
+    .on_hover((on, cx) => view.hover(id, on, cx))
     .on_click(() => view.act("details", pr))
     .on_mouse_down("right", (_e, cx) => {
       cx.stop_propagation();
@@ -137,7 +163,8 @@ function prRow(view, t, pr, { depth = 0, group = null, scope = "mine" } = {}) {
         .child(prIcon(view, t, pr, { scope, group }))
         .child(div().flex_none().text_size(TEXT.meta).text_color(t.dim).child(`#${pr.number}`))
         .child(div().flex_1().min_w(0).truncate().text_size(TEXT.title).child(pr.title))
-        .when(view.isBusy(pr), (el) => el.child(icon(t, "spinner", "dim", 11, true))),
+        .when(view.isBusy(pr), (el) => el.child(icon(t, "spinner", "dim", 11, true)))
+        .when(view.hovered === id, (el) => el.child(linkIcons(view, t, id, pr))),
     )
     .child(div().pl(19).child(statusLine(view, t, pr, { scope, group })))
     .when(Boolean(progress), (el) => el.child(div().pl(19).child(progress)));
@@ -160,13 +187,16 @@ export function stackHeader(view, t, group) {
     .child(icon(t, "stack", "merged", 12))
     .child(div().flex_1().min_w(0).truncate().text_size(TEXT.meta).text_color(t.muted).child(`Stack of ${group.members.length} · ${top.headRef}`))
     .child(div().flex_none().text_size(TEXT.meta).text_color(queued ? t.accent : all ? tone(t, "ok") : t.dim).child(queued ? queued.state : `${ready}/${group.members.length} ready`))
-    .when(all && !queued && top.mine, (el) => el.child(tinyButton(t, `prs-stack-merge-${group.id}`, "Merge stack", () => view.act("merge", top), true)));
+    .when(all && !queued && top.mine, (el) => el.child(iconButton(t, `prs-stack-merge-${group.id}`, "merged", "Merge stack…", () => view.act("merge", top), "ok")));
 }
 
 export function sidebarMine(view, t) {
   if (!view.mine) return [view.placeholder(t, view.mineError, "Loading your PRs…")];
-  const prs = view.applyCommon(view.mine.prs);
-  if (!prs.length) return [view.placeholder(t, null, "No open PRs in your repos.")];
+  const prs = view.applyCommon(view.withDraftsApplied(view.mine.prs));
+  if (!prs.length) {
+    const drafts = view.hiddenDrafts();
+    return [view.placeholder(t, null, drafts ? `No open PRs besides ${drafts} hidden draft${drafts === 1 ? "" : "s"}.` : "No open PRs in your repos.")];
+  }
   const byRepo = new Map();
   for (const group of stackGroups(prs)) byRepo.set(group.repo, [...(byRepo.get(group.repo) ?? []), group]);
   const repoOrder = [...byRepo.keys()].sort((a, b) => view.repoIndex(a) - view.repoIndex(b));
@@ -217,8 +247,9 @@ export function sidebarQueue(view, t) {
   const row = (item, index, numbered) => {
     const [iconName, toneName] = STATE_ICON[item.state] ?? ["pr", "muted"];
     const pr = view.findPr(trunk.repo, item.number, item.title);
+    const id = `prs-q-${item.state}-${item.number}`;
     return h_flex()
-      .id(`prs-q-${item.state}-${item.number}`)
+      .id(id)
       .px(8)
       .py(4)
       .gap(6)
@@ -226,6 +257,7 @@ export function sidebarQueue(view, t) {
       .rounded(7)
       .cursor_pointer()
       .hover((el) => el.bg(t.hover))
+      .on_hover((on, cx) => view.hover(id, on, cx))
       .on_click(() => view.act("details", pr))
       .on_mouse_down("right", (_e, cx) => {
         cx.stop_propagation();
@@ -234,7 +266,8 @@ export function sidebarQueue(view, t) {
       .child(icon(t, iconName, toneName, 12))
       .when(numbered, (el) => el.child(div().w(18).flex_none().text_size(10.5).text_color(t.dim).child(String(index + 1))))
       .child(div().flex_none().text_size(11).text_color(t.dim).child(`#${item.number}`))
-      .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(mine.has(item.number) ? t.foreground : t.muted).child(item.title));
+      .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(mine.has(item.number) ? t.foreground : t.muted).child(item.title))
+      .when(view.hovered === id, (el) => el.child(linkIcons(view, t, id, pr)));
   };
   if (yours.length) {
     rows.push(foldHeader(view, t, "queue:yours", "Yours", yours.length));
@@ -295,8 +328,19 @@ export function sidebarHeader(view, t, counts) {
       }),
     )
     .child(div().flex_1())
+    .when(view.sidebarTab === "mine", (el) => el.child(draftsButton(view, t)))
     .child(h_flex().id("prs-sb-refresh").p(4).rounded(5).cursor_pointer().hover((el) => el.bg(t.hover)).on_click((_e, cx) => view.refreshAll(cx)).child(icon(t, "refresh", failing ? "warn" : "dim", 12, view.loading())))
     .child(h_flex().id("prs-sb-page").px(5).h(20).items_center().rounded(5).cursor_pointer().hover((el) => el.bg(t.hover)).on_click(() => view.openPage()).child(div().text_size(11).text_color(t.dim).child("⤢")));
+}
+
+function draftsButton(view, t) {
+  const hidden = view.hiddenDrafts();
+  const tip = view.hideDrafts
+    ? `${hidden} draft${hidden === 1 ? "" : "s"} hidden. Drafts in a stack with a ready-for-review layer stay. Click to show all.`
+    : "Click to hide drafts. Drafts in a stack with a ready-for-review layer stay.";
+  return h_flex().id("prs-sb-drafts").p(4).rounded(5).cursor_pointer().hover((el) => el.bg(t.hover)).tooltip(tip)
+    .on_click((_e, cx) => view.toggleDrafts(cx))
+    .child(icon(t, "pr-draft", view.hideDrafts ? "accent" : "dim", 12));
 }
 
 export function sidebarRail(view, t, counts) {
