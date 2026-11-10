@@ -95,12 +95,12 @@ else
 fi
 exec claude "$@"`;
 
-export async function launchClaudeOnPr(pr, prompt, tabName) {
+export async function launchClaudeOnPr(pr, claudeArgs, tabName) {
   const machine = runnerMachine();
   const home = await homeOf(machine);
   const tree = `${home}/.herdr/worktrees/prs/${pr.repo.replace("/", "-")}-${pr.number}`;
   const checkout = await checkoutFor(pr.repo, machine);
-  await launchTab(tabName, ["bash", "-lc", `${PATH_PRELUDE} ${PR_WORKTREE_SCRIPT}`, "prs", checkout, pr.repo, String(pr.number), tree, prompt], machine);
+  await launchTab(tabName, ["bash", "-lc", `${PATH_PRELUDE} ${PR_WORKTREE_SCRIPT}`, "prs", checkout, pr.repo, String(pr.number), tree, ...claudeArgs], machine);
   return machine;
 }
 

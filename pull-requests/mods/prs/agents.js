@@ -71,7 +71,7 @@ export async function startFixSession(pr, prompt, label = "fix") {
   return launchOnce(tabName, async () => {
     await loadConfig();
     if (showIfOpen(tabName)) return false;
-    const machine = await launchClaudeOnPr(pr, prompt, tabName);
+    const machine = await launchClaudeOnPr(pr, [prompt], tabName);
     await updateStore((state) => {
       const id = newId();
       state.runs[id] = { id, kind: label, interactive: true, machine, repo: pr.repo, number: pr.number, title: pr.title, startedAt: new Date().toISOString(), status: "interactive", tabName };
