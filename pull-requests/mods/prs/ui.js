@@ -43,7 +43,7 @@ export function button(t, id, label, onClick, options = {}) {
     .child(label);
 }
 
-export function iconButton(t, id, iconName, label, onClick) {
+export function iconButton(t, id, iconName, label, onClick, toneName = "muted") {
   return h_flex()
     .id(id)
     .w(26)
@@ -60,7 +60,7 @@ export function iconButton(t, id, iconName, label, onClick) {
       cx.stop_propagation();
       onClick(event, cx);
     })
-    .child(svg(`mods/prs/icons/${iconName}.svg`).size(14).text_color(t.muted));
+    .child(svg(`mods/prs/icons/${iconName}.svg`).size(14).text_color(tone(t, toneName)));
 }
 
 export function textIconButton(t, id, iconName, label, onClick) {

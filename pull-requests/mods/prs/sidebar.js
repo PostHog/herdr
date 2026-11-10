@@ -5,7 +5,7 @@ import { comparePriority } from "./github.js";
 import { LISTING_CAP } from "./trunk.js";
 import { step, queueFor, stackGroups, layerWaitingOn, visualAsks, fixable } from "./steps.js";
 import { CLAUDE_ICON } from "./claude.js";
-import { ago, tone, button, badge, TEXT } from "./ui.js";
+import { ago, tone, button, iconButton, badge, TEXT } from "./ui.js";
 
 const ICON = (name) => `mods/prs/icons/${name}.svg`;
 
@@ -76,9 +76,9 @@ export function rowButtons(view, t, pr, { scope, next, entry, group }) {
   const buttons = [];
   if (scope !== "mine" || !next) return buttons;
   for (const ask of visualAsks(pr)) buttons.push(tinyButton(t, `prs-b-vis-${pr.number}-${ask.type}`, `Approve ${ask.type}`, () => view.act("openUrl", { ...pr, url: ask.url }), true));
-  if (next.ready && (!group || group.members.length === 1) && !entry) buttons.push(tinyButton(t, `prs-b-merge-${pr.number}`, "Merge", () => view.act("merge", pr), true));
-  if (next.requeue) buttons.push(tinyButton(t, `prs-b-again-${pr.number}`, "Merge again", () => view.act("merge", pr), true));
-  if (fixable(pr)) buttons.push(tinyButton(t, `prs-b-fix-${pr.number}`, "Fix", () => view.act("fix", pr)));
+  if (next.ready && (!group || group.members.length === 1) && !entry) buttons.push(iconButton(t, `prs-b-merge-${pr.number}`, "merged", "Merge…", () => view.act("merge", pr), "ok"));
+  if (next.requeue) buttons.push(iconButton(t, `prs-b-again-${pr.number}`, "merged", "Merge again…", () => view.act("merge", pr), "ok"));
+  if (fixable(pr)) buttons.push(iconButton(t, `prs-b-fix-${pr.number}`, "wrench", "Fix with Claude", () => view.act("fix", pr)));
   return buttons;
 }
 
