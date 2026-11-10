@@ -82,6 +82,7 @@ const REVIEW_SORTS = {
 const agentsWhere = () => machineLabel(config().runner?.machine || null);
 const repos = () => (config().repos?.length ? config().repos : ["PostHog/posthog"]);
 const refreshSoon = () => setShared("prs.refresh", Date.now());
+const cleanBody = (body) => (body ?? "").replace(/<!--[\s\S]*?-->/g, "").trim();
 const samePr = (a, b) => a.repo === b.repo && a.number === b.number;
 
 function claudeOn(pr) {
@@ -1390,51 +1391,90 @@ export default class Prs extends View {
   }
 
   reviewsTab(t, pr) {
-    const threads = [...this.detail.threads].sort((a, b) => Number(a.isResolved) - Number(b.isResolved));
-    const rows = [];
-    const reviews = this.detail.reviews.filter((review) => review.state !== "COMMENTED" || review.body);
-    if (reviews.length) rows.push(section(t, "Reviews"));
-    for (const [index, review] of reviews.entries()) {
-      rows.push(
+    const threads = this.detail.threads;
+    const reviewIds = new Set(this.detail.reviews.map((review) => review.id));
+    const threadsOf = (reviewId) => threads.filter((thread) => thread.reviewId === reviewId).sort((a, b) => Number(a.isResolved) - Number(b.isResolved));
+    const entries = [
+      ...this.detail.reviews
+        .map((review) => ({ at: review.submittedAt, review, threads: threadsOf(review.id) }))
+        .filter(({ review, threads: own }) => review.state !== "COMMENTED" || cleanBody(review.body) || own.length),
+      ...threads.filter((thread) => !reviewIds.has(thread.reviewId)).map((thread) => ({ at: thread.comments[0]?.createdAt, threads: [thread] })),
+    ].sort((a, b) => Date.parse(b.at ?? 0) - Date.parse(a.at ?? 0));
+    const open = threads.filter((thread) => !thread.isResolved).length;
+    if (!entries.length) return [empty(t, "No reviews or comments yet.")];
+    return [
+      section(t, `Conversation · ${open ? `${open} open` : "no open"} thread${open === 1 ? "" : "s"}`),
+      ...entries.map((entry, index) => (entry.review ? this.reviewCard(t, pr, entry.review, entry.threads, index) : this.threadCard(t, pr, entry.threads[0]))),
+    ];
+  }
+
+  reviewCard(t, pr, review, threads, index) {
+    const body = cleanBody(review.body);
+    return v_flex()
+      .id(`prs-rv-${index}`)
+      .p(10)
+      .gap(8)
+      .rounded(8)
+      .border_1()
+      .border_color(t.border)
+      .child(
+        h_flex()
+          .gap(6)
+          .items_center()
+          .child(div().font_semibold().child(`@${review.author?.login ?? "ghost"}`))
+          .child(badge(t, review.state.replace(/_/g, " "), review.state === "APPROVED" ? "ok" : review.state === "CHANGES_REQUESTED" ? "bad" : "dim"))
+          .when(threads.length > 0, (el) => el.child(div().text_size(11).text_color(t.dim).child(`${threads.length} comment${threads.length === 1 ? "" : "s"}`)))
+          .child(div().flex_1())
+          .child(div().text_size(11).text_color(t.dim).child(ago(review.submittedAt)))
+          .when(Boolean(review.url), (el) => el.child(button(t, `prs-rv-open-${index}`, "Open", () => openUrl(review.url), { small: true }))),
+      )
+      .when(Boolean(body), (el) => el.child(div().text_size(12).text_color(t.muted).child(body.slice(0, 600))))
+      .children(threads.map((thread) => this.threadCard(t, pr, thread)));
+  }
+
+  threadCard(t, pr, thread) {
+    this.expandedThreads ??= new Set();
+    const expanded = !thread.isResolved || this.expandedThreads.has(thread.id);
+    const first = thread.comments[0];
+    const toggle = (_e, cx) => {
+      if (this.expandedThreads.has(thread.id)) this.expandedThreads.delete(thread.id);
+      else this.expandedThreads.add(thread.id);
+      cx.notify();
+    };
+    const comments = expanded ? thread.comments.slice(0, 6) : [];
+    return v_flex()
+      .id(`prs-thread-${thread.id}`)
+      .p(10)
+      .gap(6)
+      .rounded(8)
+      .border_1()
+      .border_color(thread.isResolved ? t.border : tone(t, "warn"))
+      .when(thread.isResolved, (el) => el.bg(t.raised))
+      .child(
+        h_flex()
+          .id(`prs-thread-head-${thread.id}`)
+          .gap(6)
+          .items_center()
+          .when(thread.isResolved, (el) => el.cursor_pointer().on_click(toggle))
+          .child(badge(t, thread.isResolved ? "RESOLVED" : "OPEN", thread.isResolved ? "ok" : "warn"))
+          .when(thread.isOutdated, (el) => el.child(badge(t, "OUTDATED", "dim")))
+          .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(thread.isResolved ? t.dim : t.muted).child(`${thread.path}${thread.line ? `:${thread.line}` : ""}`))
+          .when(!expanded, (el) => el.child(div().text_size(11).text_color(t.dim).child(`${thread.comments.length} comment${thread.comments.length === 1 ? "" : "s"} · Show`)))
+          .when(expanded && thread.isResolved, (el) => el.child(div().text_size(11).text_color(t.dim).child("Hide")))
+          .when(Boolean(first?.url), (el) => el.child(button(t, `prs-thread-open-${thread.id}`, "Open", () => openUrl(first.url), { small: true })))
+          .when(!thread.isResolved, (el) => el.child(button(t, `prs-thread-resolve-${thread.id}`, "Resolve", (_e, cx) => act(pr, "resolve", "Resolve thread", async () => {
+            const result = await resolveThread(thread.id);
+            this.loadDetail(cx);
+            return result;
+          }), { small: true }))),
+      )
+      .children(comments.map((comment, index) =>
         v_flex()
-          .id(`prs-rv-${index}`)
-          .p(10)
-          .gap(4)
-          .rounded(8)
-          .border_1()
-          .border_color(t.border)
-          .child(h_flex().gap(6).items_center().child(div().font_semibold().child(`@${review.author?.login ?? "ghost"}`)).child(badge(t, review.state.replace(/_/g, " "), review.state === "APPROVED" ? "ok" : review.state === "CHANGES_REQUESTED" ? "bad" : "dim")).child(div().flex_1()).child(div().text_size(11).text_color(t.dim).child(ago(review.submittedAt))))
-          .when(Boolean(review.body), (el) => el.child(div().text_size(12).text_color(t.muted).child(review.body.slice(0, 600)))),
-      );
-    }
-    rows.push(section(t, `Threads (${threads.filter((thread) => !thread.isResolved).length} open)`));
-    for (const thread of threads) {
-      const first = thread.comments[0];
-      rows.push(
-        v_flex()
-          .id(`prs-thread-${thread.id}`)
-          .p(10)
-          .gap(4)
-          .rounded(8)
-          .border_1()
-          .border_color(t.border)
-          .when(thread.isResolved, (el) => el.opacity(0.55))
-          .child(
-            h_flex()
-              .gap(6)
-              .items_center()
-              .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.dim).child(`${thread.path}${thread.line ? `:${thread.line}` : ""}${thread.isOutdated ? " · outdated" : ""}`))
-              .when(Boolean(first?.url), (el) => el.child(button(t, `prs-thread-open-${thread.id}`, "Open", () => openUrl(first.url), { small: true })))
-              .when(!thread.isResolved, (el) => el.child(button(t, `prs-thread-resolve-${thread.id}`, "Resolve", (_e, cx) => act(pr, "resolve", "Resolve thread", async () => {
-                const result = await resolveThread(thread.id);
-                this.loadDetail(cx);
-                return result;
-              }), { small: true }))),
-          )
-          .children(thread.comments.slice(0, 4).map((comment, index) => div().id(`prs-tc-${thread.id}-${index}`).text_size(12).text_color(t.muted).child(`@${comment.author}${comment.isBot ? " (bot)" : ""}: ${comment.body.replace(/\s+/g, " ").slice(0, 400)}`))),
-      );
-    }
-    return rows;
+          .id(`prs-tc-${thread.id}-${index}`)
+          .gap(2)
+          .child(h_flex().gap(6).text_size(11).text_color(t.dim).child(div().font_semibold().text_color(t.foreground).child(`@${comment.author}${comment.isBot ? " (bot)" : ""}`)).child(ago(comment.createdAt)))
+          .child(div().text_size(12).text_color(t.muted).child(cleanBody(comment.body).slice(0, 600))),
+      ));
   }
 
   filesTab(t, pr) {
