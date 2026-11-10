@@ -5,7 +5,7 @@ Each top-level folder with a `RECIPE.md` is one piece, apart from retired ones (
 
 | Piece | What it is |
 | --- | --- |
-| [`pull-requests`](pull-requests/RECIPE.md) | A PR panel for Herdr's sidebar: your PRs, the Trunk merge queue and your reviews. Two layouts: `github-and-trunk` has just the panel, and `Pull-Requests` adds a full-page PR workspace (`cmd-shift-g`) with review ranking, workflows, and agent fixes and reviews on this computer or a Herdr machine. It also ships `flat-spaces`, a spaces list that doesn't fold worktree spaces under their repo, for layouts that opt into it. |
+| [`pull-requests`](pull-requests/RECIPE.md) | A PR panel for Herdr's sidebar: your PRs, the Trunk merge queue and your reviews. Two layouts: `github-and-trunk` has just the panel, and `Pull-Requests` adds a full-page PR workspace (`cmd-shift-g`) with review ranking, workflows, and agent fixes and reviews on this computer or a Herdr machine. Both use `flat-spaces`, a spaces list that doesn't fold worktree spaces under their repo. |
 
 `github-and-trunk` used to be its own piece. It's part of `pull-requests` now, and `./install.sh` moves you over if you had it enabled. Its old folder stays for a while so older copies of `install.sh` keep working; `./install.sh` never lists or offers it.
 
