@@ -1,5 +1,6 @@
 import { run, spaces, agents, panes, exec, shared, setShared, knownAgents, notify } from "herdr";
-import { config } from "./config.js";
+import { config, loadConfig } from "./config.js";
+import { launchClaudeOnPr } from "./runner.js";
 
 export const CLAUDE_ICON = "icons/claude.svg";
 
@@ -52,11 +53,17 @@ export function openClaude(pr, context = {}) {
     const checkouts = await branchSpaces(pr);
     const agent = agents().find((candidate) => checkouts.some((space) => space.id === candidate.space));
     if (agent) return showTab({ space: agent.space, tab: agent.tab });
-    const space = checkouts[0] ?? spaces().find((candidate) => candidate.active);
+    const claudeArgs = ["--name", name, "--append-system-prompt", systemPrompt(pr, context)];
     try {
-      const claude = await claudeArgv(space?.machine);
+      if (checkouts[0]) {
+        const claude = await claudeArgv(checkouts[0].machine);
+        if (showOpen()) return;
+        run("tab.new", { name, space: checkouts[0].id, argv: [...claude, ...claudeArgs] });
+        return;
+      }
+      await loadConfig();
       if (showOpen()) return;
-      run("tab.new", { name, space: space?.id, argv: [...claude, "--name", name, "--append-system-prompt", systemPrompt(pr, context)] });
+      await launchClaudeOnPr(pr, claudeArgs, name);
     } catch (error) {
       notify({ title: "Couldn't start Claude Code", body: String(error?.message ?? error), level: "error" });
     }

@@ -83,24 +83,34 @@ export async function launchTab(name, argv, machine = runnerMachine()) {
 
 const PR_WORKTREE_SCRIPT = `set -e
 checkout="$1"; repo="$2"; number="$3"; tree="$4"; shift 4
+give_up() { echo "$1"; read -r -p "Press Enter to close. " _ || true; exit 1; }
+discard() { cd "$checkout"; git worktree remove --force "$tree" || true; git worktree prune; }
+marker() { printf '%s/herdr-pr-checked-out' "$(git -C "$tree" rev-parse --absolute-git-dir)"; }
 [ -d "$checkout/.git" ] || [ -f "$checkout/.git" ] || gh repo clone "$repo" "$checkout" -- --filter=blob:none
+if [ -d "$tree" ] && [ ! -f "$(marker)" ] && ! git -C "$tree" symbolic-ref -q HEAD >/dev/null && [ -z "$(git -C "$tree" status --porcelain)" ]; then
+  discard
+fi
 if [ ! -d "$tree" ]; then
   git -C "$checkout" fetch -q origin
   git -C "$checkout" worktree add -q --detach "$tree" "origin/HEAD"
   cd "$tree"
-  gh pr checkout "$number" -R "$repo" || gh pr checkout "$number" -R "$repo" --detach
+  gh pr checkout "$number" -R "$repo" || gh pr checkout "$number" -R "$repo" --detach || {
+    discard
+    give_up "Couldn't check out PR #$number, so its worktree was removed. Try again once GitHub is reachable."
+  }
 else
   cd "$tree"
   gh pr checkout "$number" -R "$repo" || echo "Kept the worktree as it was: its branch has local work that doesn't fast-forward to the PR head."
 fi
+touch "$(marker)"
 exec claude "$@"`;
 
-export async function launchClaudeOnPr(pr, prompt, tabName) {
+export async function launchClaudeOnPr(pr, claudeArgs, tabName) {
   const machine = runnerMachine();
   const home = await homeOf(machine);
   const tree = `${home}/.herdr/worktrees/prs/${pr.repo.replace("/", "-")}-${pr.number}`;
   const checkout = await checkoutFor(pr.repo, machine);
-  await launchTab(tabName, ["bash", "-lc", `${PATH_PRELUDE} ${PR_WORKTREE_SCRIPT}`, "prs", checkout, pr.repo, String(pr.number), tree, prompt], machine);
+  await launchTab(tabName, ["bash", "-lc", `${PATH_PRELUDE} ${PR_WORKTREE_SCRIPT}`, "prs", checkout, pr.repo, String(pr.number), tree, ...claudeArgs], machine);
   return machine;
 }
 
