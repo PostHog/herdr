@@ -1404,7 +1404,7 @@ export default class Prs extends View {
     if (!entries.length) return [empty(t, "No reviews or comments yet.")];
     return [
       section(t, `Conversation · ${open ? `${open} open` : "no open"} thread${open === 1 ? "" : "s"}`),
-      ...entries.map((entry, index) => (entry.review ? this.reviewCard(t, pr, entry.review, entry.threads, index) : this.threadCard(t, pr, entry.threads[0]))),
+      ...entries.map((entry, index) => (entry.review ? this.reviewCard(t, pr, entry.review, entry.threads, index) : this.threadCard(t, pr, entry.threads[0], { standalone: true }))),
     ];
   }
 
@@ -1432,13 +1432,12 @@ export default class Prs extends View {
       .children(threads.map((thread) => this.threadCard(t, pr, thread)));
   }
 
-  threadCard(t, pr, thread) {
-    this.expandedThreads ??= new Set();
-    const expanded = !thread.isResolved || this.expandedThreads.has(thread.id);
-    const first = thread.comments[0];
+  threadCard(t, pr, thread, { standalone = false } = {}) {
+    this.toggledThreads ??= new Set();
+    const expanded = thread.isResolved === this.toggledThreads.has(thread.id);
     const toggle = (_e, cx) => {
-      if (this.expandedThreads.has(thread.id)) this.expandedThreads.delete(thread.id);
-      else this.expandedThreads.add(thread.id);
+      if (this.toggledThreads.has(thread.id)) this.toggledThreads.delete(thread.id);
+      else this.toggledThreads.add(thread.id);
       cx.notify();
     };
     const comments = expanded ? thread.comments.slice(0, 6) : [];
@@ -1455,13 +1454,14 @@ export default class Prs extends View {
           .id(`prs-thread-head-${thread.id}`)
           .gap(6)
           .items_center()
-          .when(thread.isResolved, (el) => el.cursor_pointer().on_click(toggle))
+          .cursor_pointer()
+          .on_click(toggle)
           .child(badge(t, thread.isResolved ? "RESOLVED" : "OPEN", thread.isResolved ? "ok" : "warn"))
           .when(thread.isOutdated, (el) => el.child(badge(t, "OUTDATED", "dim")))
           .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(thread.isResolved ? t.dim : t.muted).child(`${thread.path}${thread.line ? `:${thread.line}` : ""}`))
           .when(!expanded, (el) => el.child(div().text_size(11).text_color(t.dim).child(`${thread.comments.length} comment${thread.comments.length === 1 ? "" : "s"} · Show`)))
-          .when(expanded && thread.isResolved, (el) => el.child(div().text_size(11).text_color(t.dim).child("Hide")))
-          .when(Boolean(first?.url), (el) => el.child(button(t, `prs-thread-open-${thread.id}`, "Open", () => openUrl(first.url), { small: true })))
+          .when(expanded, (el) => el.child(div().text_size(11).text_color(t.dim).child("Hide")))
+          .when(standalone && Boolean(thread.comments[0]?.url), (el) => el.child(button(t, `prs-thread-open-${thread.id}`, "Open", () => openUrl(thread.comments[0].url), { small: true })))
           .when(!thread.isResolved, (el) => el.child(button(t, `prs-thread-resolve-${thread.id}`, "Resolve", (_e, cx) => act(pr, "resolve", "Resolve thread", async () => {
             const result = await resolveThread(thread.id);
             this.loadDetail(cx);
