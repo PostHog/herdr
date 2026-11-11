@@ -3,9 +3,8 @@ export const DEFAULT_SERVICES = [
   { name: "Trunk", url: "https://status.trunk.io" },
   { name: "Depot", url: "https://status.depot.dev" },
   { name: "Docker", url: "https://www.dockerstatus.com" },
-  { name: "npm", url: "https://status.npmjs.org" },
-  { name: "PyPI", url: "https://status.python.org" },
   { name: "Claude", url: "https://status.claude.com" },
+  { name: "OpenAI", url: "https://status.openai.com" },
 ];
 
 const INDICATOR_LEVEL = { none: "ok", minor: "warn", major: "bad", critical: "bad", maintenance: "info" };
@@ -68,7 +67,7 @@ export function queueService(trunk) {
   if (!listing) return { name: "Merge queue", url: null, level: "unknown", description: trunk.error ?? "The merge queue isn't available.", incidents: [], components: [], maintenance: [] };
   const running = listing.running === "Running";
   return {
-    name: `Merge queue · ${trunk.repo}`,
+    name: "Merge queue",
     url: null,
     level: running ? "ok" : "warn",
     description: running ? `Running on ${listing.branch}` : `${listing.running} on ${listing.branch}`,
@@ -85,7 +84,7 @@ export function statusOverview(services) {
   const unknown = services.filter((service) => service.level === "unknown").length;
   const level = troubled[0]?.level ?? "ok";
   const title = troubled.length
-    ? `${troubled.map((service) => service.name.split(" · ")[0]).join(", ")} ${troubled.length === 1 ? "has" : "have"} an incident`
+    ? `${troubled.map((service) => service.name).join(", ")} ${troubled.length === 1 ? "has" : "have"} an incident`
     : unknown
       ? `No incidents, but ${unknown} status page${unknown === 1 ? "" : "s"} couldn't be read`
       : "All systems operational";

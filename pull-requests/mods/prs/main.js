@@ -1053,49 +1053,53 @@ export default class Prs extends View {
     if (!this.serviceStatus) return [empty(t, "Reading the status pages…")];
     const overview = statusOverview(services);
     const levelColor = (level) => (level === "unknown" ? t.dim : tone(t, level));
-    const detail = (id, text, color, url) =>
-      div()
-        .id(id)
-        .pl(18)
-        .text_size(12)
-        .text_color(color)
-        .when(Boolean(url), (el) => el.cursor_pointer().hover((s) => s.text_color(t.foreground)).on_click((_e, cx) => {
-          cx.stop_propagation();
-          openUrl(url);
-        }))
-        .child(text);
+    const tile = (service, index) => {
+      const troubled = service.level === "warn" || service.level === "bad";
+      return v_flex()
+        .id(`prs-status-${index}`)
+        .w(264)
+        .flex_none()
+        .p(12)
+        .gap(6)
+        .rounded(10)
+        .border_1()
+        .border_color(troubled ? levelColor(service.level) : t.border)
+        .bg(t.surface)
+        .when(Boolean(service.url), (el) => el.cursor_pointer().hover((s) => s.bg(t.hover)).on_click(() => openUrl(service.url)))
+        .child(
+          h_flex()
+            .gap(8)
+            .items_center()
+            .child(div().w(8).h(8).rounded(4).flex_none().bg(levelColor(service.level)))
+            .child(div().flex_1().min_w(0).truncate().text_size(13).font_semibold().child(service.name))
+            .when(Boolean(service.url), (el) => el.child(svg("mods/prs/icons/external.svg").size(12).flex_none().text_color(t.dim))),
+        )
+        .child(div().text_size(12).text_color(troubled ? levelColor(service.level) : t.muted).child(service.description))
+        .children(service.incidents.slice(0, 2).map((incident, at) =>
+          div()
+            .id(`prs-status-${index}-i${at}`)
+            .text_size(11.5)
+            .text_color(t.foreground)
+            .cursor_pointer()
+            .hover((s) => s.text_color(t.muted))
+            .on_click((_e, cx) => {
+              cx.stop_propagation();
+              openUrl(incident.url);
+            })
+            .child(`${incident.name}${incident.since ? ` · ${ago(incident.since)}` : ""}`),
+        ));
+    };
     return [
       h_flex()
         .px(16)
         .pt(14)
-        .pb(10)
+        .pb(12)
         .gap(8)
         .items_center()
         .when(overview.troubled.length > 0, (el) => el.child(svg("mods/prs/icons/alert.svg").size(15).flex_none().text_color(tone(t, overview.level))))
         .child(div().flex_1().text_size(14).font_semibold().text_color(overview.troubled.length ? tone(t, overview.level) : t.foreground).child(overview.title))
         .child(div().flex_none().text_size(11.5).text_color(t.dim).child(`Checked ${ago(new Date(this.serviceStatus.at).toISOString())}`)),
-      ...overview.sorted.map((service, index) =>
-        v_flex()
-          .id(`prs-status-${index}`)
-          .px(16)
-          .py(10)
-          .gap(5)
-          .border_b_1()
-          .border_color(t.border)
-          .when(Boolean(service.url), (el) => el.cursor_pointer().hover((s) => s.bg(t.hover)).on_click(() => openUrl(service.url)))
-          .child(
-            h_flex()
-              .gap(10)
-              .items_center()
-              .child(div().w(8).h(8).rounded(4).flex_none().bg(levelColor(service.level)))
-              .child(div().w(220).flex_none().truncate().text_size(13).font_semibold().child(service.name))
-              .child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(service.level === "ok" ? t.muted : levelColor(service.level)).child(service.description))
-              .when(Boolean(service.url), (el) => el.child(svg("mods/prs/icons/external.svg").size(13).flex_none().text_color(t.dim))),
-          )
-          .children(service.incidents.map((incident, at) => detail(`prs-status-${index}-i${at}`, `${incident.name}${incident.status ? ` · ${incident.status}` : ""}${incident.since ? ` · ${ago(incident.since)}` : ""}`, t.foreground, incident.url)))
-          .children(service.components.slice(0, 6).map((component, at) => detail(`prs-status-${index}-c${at}`, `${component.name}: ${component.status}`, t.muted, null)))
-          .children(service.maintenance.map((item, at) => detail(`prs-status-${index}-m${at}`, `Maintenance: ${item.name}`, t.muted, item.url))),
-      ),
+      h_flex().px(16).gap(10).flex_wrap().items_start().children(overview.sorted.map(tile)),
     ];
   }
 

@@ -13,7 +13,7 @@ My PRs splits into what needs you and what's waiting on others. Each row has a f
 
 ## Status
 
-The Status page shows whether GitHub, Trunk, Depot, Docker and the other services the work depends on are up. An incident puts a warning on the nav item and in the sidebar's top bar. This is a design mockup with a made-up incident.
+The Status page shows whether GitHub, Trunk, Depot, Docker, Claude and OpenAI are up. An incident puts a warning on the nav item and in the sidebar's top bar. This is a design mockup with a made-up incident.
 
 ![Status page](screenshots/status.png)
 
