@@ -11,6 +11,8 @@ const DIM_AFTER = 3600000;
 const PREFS = "claude-usage.prefs";
 const SEEN = "claude-usage.seen";
 const ACCOUNT = "claude-usage.account";
+const AUTH_WATCH = "claude-usage.authWatch";
+const WATCH_FOR = 120000;
 const DEFAULTS = { warn: 80, urgent: 95, sound: true };
 const PLANS = { pro: "Claude Pro", max: "Claude Max", team: "Claude Team", enterprise: "Claude Enterprise", ultra: "Claude Ultra" };
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -104,7 +106,7 @@ export default class ClaudeUsage extends View {
     this.busy.refresh = true;
     cx.spawn(async (cx) => {
       try {
-        const unsure = this.authError || (this.auth && (this.auth.loggedIn === false || this.auth.missing));
+        const unsure = this.authError || Date.now() < (shared(AUTH_WATCH) ?? 0) || (this.auth && (this.auth.loggedIn === false || this.auth.missing));
         if (first || Date.now() - this.authAt > (unsure ? REFRESH_EVERY : AUTH_EVERY)) {
           const a = await auth();
           this.authAt = Date.now();
@@ -126,7 +128,7 @@ export default class ClaudeUsage extends View {
         }
         this.data = await limits();
         this.remember();
-        if (!this.overlay) this.alert();
+        if (!this.overlay && this.state().kind === "ok") this.alert();
         if (first && this.overlay) this.refreshSessions(cx);
         this.failed = null;
       } catch (e) {
@@ -251,6 +253,7 @@ export default class ClaudeUsage extends View {
     if (local) run("tab.new", { name, space: local.id, argv });
     else run("space.new", { name, argv, machine: "" });
     this.authAt = 0;
+    setShared(AUTH_WATCH, Date.now() + WATCH_FOR);
     if (this.overlay) closeOverlay(this.overlay);
   }
 
