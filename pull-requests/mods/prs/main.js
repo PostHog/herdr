@@ -11,7 +11,7 @@ import { forgetCheckouts, checkoutFor } from "./runner.js";
 import { loadTrunk, dequeue, resetTrunk } from "./trunk.js";
 import { fetchServices, queueService, statusOverview } from "./status.js";
 import { sidebarHeader, sidebarMine, sidebarReviews, sidebarRail, statusLine, prIcon, progressLine, stackHeader, gatesFor, splitByNeed, isQuiet, rowButtons, nextFor } from "./sidebar.js";
-import { visualAsks, stackGroups, withoutDraftStacks, step, queueFor } from "./steps.js";
+import { visualAsks, stackGroups, withoutDraftStacks, step, queueFor, withTrunkQueue } from "./steps.js";
 import { openClaude, CLAUDE_ICON } from "./claude.js";
 import { ago, button, iconButton, glyphButton, textIconButton, chip, badge, section, empty, field, menuItem, SPINNER, tone, TEXT, tint, avatar, countPill, codePill, gateStrip, titleText } from "./ui.js";
 import { readiness, groupChecks, rowMatches, tallyChecks, tallyText, tallyLabel, worstBucket, mergeStateNote, changeShape, parseMarkdown } from "./sheet.js";
@@ -30,7 +30,8 @@ const QUICK_ACTIONS_WIDTH = SUGGESTED_WIDTH + 144;
 const UPDATED_WIDTH = 64;
 const CONTENT_MAX_WIDTH = 1280;
 const GATE_WIDTH = 64;
-const STATUS_WIDTH = GATE_WIDTH * 5 + 12;
+const NAV_WIDTH = 230;
+const statusWidth = (gate) => gate * 5 + 12;
 const GATE_HEADERS = ["CHECKS", "REVIEW", "THREADS", "CONFLICTS", "QUEUE"];
 const ICON = (name) => `mods/prs/icons/${name}.svg`;
 const GATE_ICONS = { ok: "tick", bad: "x", warn: "loader", run: "loader", info: "loader", merged: "merged", idle: "circle" };
@@ -401,7 +402,7 @@ export default class Prs extends View {
     this.loadingServices = true;
     cx.spawn(async (cx) => {
       try {
-        this.serviceStatus = await fetchServices(config().status?.services);
+        this.serviceStatus = await fetchServices(config().status?.services, (ms) => cx.sleep(ms));
         setShared("prs.cache.services", this.serviceStatus);
       } catch {}
       this.loadingServices = false;
@@ -759,6 +760,7 @@ export default class Prs extends View {
         .child(svg("mods/prs/icons/terminal.svg").size(14).flex_none().text_color(t.muted))
         .child(div().flex_1().text_size(13).child(props()?.overlay ? "Close" : "Back to terminals"))
         .when(!props()?.overlay, (el) => el.child(div().text_size(11).text_color(t.dim).child("⌘⇧G"))));
+    const columnsFit = this.wideLayout();
     const columns = this.page === "mine" || this.page === "reviews"
       ? h_flex()
           .px(20)
@@ -770,9 +772,11 @@ export default class Prs extends View {
           .font_semibold()
           .text_color(t.dim)
           .child(div().flex_1().child("TITLE"))
-          .child(h_flex().w(STATUS_WIDTH).flex_none().gap(3).children(GATE_HEADERS.map((label) => div().w(GATE_WIDTH).flex_none().text_size(10).child(label))))
-          .child(div().w(UPDATED_WIDTH).flex_none().child("UPDATED"))
-          .child(div().w(QUICK_ACTIONS_WIDTH).flex_none())
+          .child(columnsFit.gate === GATE_WIDTH
+            ? h_flex().w(statusWidth(columnsFit.gate)).flex_none().gap(3).children(GATE_HEADERS.map((label) => div().w(columnsFit.gate).flex_none().text_size(10).child(label)))
+            : div().w(statusWidth(columnsFit.gate)).flex_none().child("READINESS"))
+          .when(columnsFit.updated, (el) => el.child(div().w(UPDATED_WIDTH).flex_none().child("UPDATED")))
+          .child(div().w(columnsFit.actions).flex_none())
       : null;
     const body = this.page === "mine" ? this.wideMineRows(t) : this.page === "reviews" ? this.wideReviewRows(t) : this.pageBody(t);
     return h_flex()
@@ -815,7 +819,15 @@ export default class Prs extends View {
       ));
   }
 
+  wideLayout() {
+    const content = Math.min(CONTENT_MAX_WIDTH, (this.width || CONTENT_MAX_WIDTH + NAV_WIDTH) - NAV_WIDTH);
+    if (content >= 1100) return { gate: GATE_WIDTH, updated: true, quick: true, actions: QUICK_ACTIONS_WIDTH };
+    if (content >= 880) return { gate: 48, updated: true, quick: true, actions: QUICK_ACTIONS_WIDTH };
+    return { gate: 40, updated: false, quick: false, actions: SUGGESTED_WIDTH };
+  }
+
   quickActions(t, pr, scope, leading = [], shown = true) {
+    const columnsFit = this.wideLayout();
     const entries = [
       ...(scope === "reviews" ? [["reviewInClaude", "terminal", "Review in Claude"]] : []),
       ["agentReview", "bot", "Agent review (headless)"],
@@ -823,13 +835,13 @@ export default class Prs extends View {
       ["open", "external", "Open on GitHub"],
     ];
     return h_flex()
-      .w(QUICK_ACTIONS_WIDTH)
+      .w(columnsFit.actions)
       .flex_none()
       .gap(2)
       .items_center()
       .child(h_flex().w(SUGGESTED_WIDTH).flex_none().gap(4).justify_end().items_center().children(leading))
-      .child(div().w(4).flex_none())
-      .when(shown, (el) => el
+      .when(columnsFit.quick, (el) => el.child(div().w(4).flex_none()))
+      .when(shown && columnsFit.quick, (el) => el
         .child(glyphButton(t, `prs-q-${scope}-${pr.number}-claude`, image(CLAUDE_ICON).size(14), "Claude Code on this PR", () => choose("claude", pr)))
         .children(entries.map(([name, iconName, label]) => iconButton(t, `prs-q-${scope}-${pr.number}-${name}`, iconName, label, () => choose(name, pr)))));
   }
@@ -854,7 +866,7 @@ export default class Prs extends View {
       })
       .child(v_flex().flex_1().min_w(0).gap(4).children(left))
       .child(middle)
-      .child(div().w(UPDATED_WIDTH).flex_none().text_size(12).text_color(t.dim).child(right))
+      .when(this.wideLayout().updated, (el) => el.child(div().w(UPDATED_WIDTH).flex_none().text_size(12).text_color(t.dim).child(right)))
       .child(this.quickActions(t, pr, scope, leading, this.hovered === id));
   }
 
@@ -864,6 +876,7 @@ export default class Prs extends View {
     if (!prs.length) return [empty(t, "No PRs match.")];
     const rows = [];
     const groups = stackGroups(prs, this.sortNewest);
+    const columnsFit = this.wideLayout();
     const primaryRepo = [...new Set(prs.map((pr) => pr.repo))].sort((a, b) => this.repoIndex(a) - this.repoIndex(b))[0];
     for (const part of splitByNeed(this, groups)) {
       rows.push(div().px(2).child(section(t, `${part.label} · ${part.groups.reduce((sum, group) => sum + group.members.length, 0)}`)));
@@ -881,7 +894,7 @@ export default class Prs extends View {
               h_flex().gap(6).items_center().child(prIcon(this, t, pr, { group })).child(div().flex_1().min_w(0).child(this.titleLine(t, pr, isQuiet(this, part, pr, group)))),
               div().pl(19).min_w(0).truncate().text_size(TEXT.meta).text_color(t.dim).child(meta),
             ],
-            v_flex().w(STATUS_WIDTH).flex_none().gap(5).child(statusLine(this, t, pr, { group, buttons: false })).child(gateStrip(t, id, gatesFor(this, pr, group), { segment: GATE_WIDTH, height: 4 })).when(Boolean(progress), (el) => el.child(progress)),
+            v_flex().w(statusWidth(columnsFit.gate)).flex_none().gap(5).child(statusLine(this, t, pr, { group, buttons: false })).child(gateStrip(t, id, gatesFor(this, pr, group), { segment: columnsFit.gate, height: 4 })).when(Boolean(progress), (el) => el.child(progress)),
             ago(pr.updatedAt),
             rowButtons(this, t, pr, { scope: "mine", next, entry, group }),
           ));
@@ -894,6 +907,7 @@ export default class Prs extends View {
   wideReviewRows(t) {
     if (!this.reviews) return [empty(t, this.reviewsError ? `GitHub: ${this.reviewsError}` : "Loading review requests…")];
     const { visible, hidden } = this.reviewsVisible();
+    const columnsFit = this.wideLayout();
     const row = (pr) => {
       const via = pr.via.direct ? "you" : pr.via.teams[0] ? `@${pr.via.teams[0]}` : "";
       const id = `prs-wr-${pr.repo}-${pr.number}`;
@@ -902,7 +916,7 @@ export default class Prs extends View {
           h_flex().gap(6).items_center().child(prIcon(this, t, pr, { scope: "reviews" })).child(div().flex_1().min_w(0).child(this.titleLine(t, pr))),
           div().pl(19).truncate().text_size(TEXT.meta).text_color(t.dim).child(`${pr.repo}#${pr.number}${via ? ` · via ${via}` : ""}`),
         ],
-        v_flex().w(STATUS_WIDTH).flex_none().gap(5).child(statusLine(this, t, pr, { scope: "reviews", buttons: false })).child(gateStrip(t, id, gatesFor(this, pr, null, "reviews"), { segment: GATE_WIDTH, height: 4 })),
+        v_flex().w(statusWidth(columnsFit.gate)).flex_none().gap(5).child(statusLine(this, t, pr, { scope: "reviews", buttons: false })).child(gateStrip(t, id, gatesFor(this, pr, null, "reviews"), { segment: columnsFit.gate, height: 4 })),
         ago(pr.updatedAt),
       );
     };
@@ -1343,9 +1357,17 @@ export default class Prs extends View {
     });
   }
 
+  trunkEntryFor(pr) {
+    const trunk = shared("prs.cache.trunk") ?? this.trunk;
+    const mine = (shared("prs.cache.mine") ?? this.mine)?.prs ?? [];
+    const same = (member) => member.pr.repo === pr.repo && member.pr.number === pr.number;
+    const group = stackGroups(mine).find((candidate) => candidate.members.some(same)) ?? null;
+    return queueFor(group?.members.find(same)?.pr ?? pr, group, trunk);
+  }
+
   renderSheet(t) {
     const p = props();
-    const pr = { ...p.pr, watching: store().watched.includes(prKey(p.pr.repo, p.pr.number)) };
+    const pr = withTrunkQueue({ ...p.pr, watching: store().watched.includes(prKey(p.pr.repo, p.pr.number)) }, this.trunkEntryFor(p.pr));
     const findings = store().findings[prKey(pr.repo, pr.number)] ?? [];
     const state = readiness(pr, this.detail, { queueBased: mergesThroughQueue(pr) });
     return this.escapable("prs-sheet", v_flex())
@@ -1517,9 +1539,11 @@ export default class Prs extends View {
     const primary = state.verdict.primary;
     const ordered = [...actions.filter(([id]) => id === primary), ...actions.filter(([id]) => id !== primary)];
     return h_flex()
-      .h(54)
+      .min_h(54)
       .flex_none()
+      .flex_wrap()
       .px(16)
+      .py(11)
       .gap(8)
       .items_center()
       .bg(t.surface)

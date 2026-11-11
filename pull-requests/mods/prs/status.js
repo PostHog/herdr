@@ -57,8 +57,15 @@ async function fetchService(service) {
   }
 }
 
-export async function fetchServices(services = DEFAULT_SERVICES) {
-  return { at: Date.now(), services: await Promise.all(services.map(fetchService)) };
+const TIMEOUT_MS = 10000;
+
+function withTimeout(service, sleep) {
+  if (!sleep) return fetchService(service);
+  return Promise.race([fetchService(service), sleep(TIMEOUT_MS).then(() => unreachable(service, "timed out"))]);
+}
+
+export async function fetchServices(services = DEFAULT_SERVICES, sleep = null) {
+  return { at: Date.now(), services: await Promise.all(services.map((service) => withTimeout(service, sleep))) };
 }
 
 export function queueService(trunk) {

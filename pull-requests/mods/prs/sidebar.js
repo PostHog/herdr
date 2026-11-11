@@ -77,7 +77,7 @@ export function gatesFor(view, pr, group, scope = "mine") {
 export function needsYou(view, pr, group) {
   if (!pr.mine) return false;
   const { next, entry } = nextFor(view, pr, group);
-  return pr.isDraft || visualAsks(pr).length > 0 || Boolean(next.requeue) || fixable(pr) || Boolean(next.ready && !entry);
+  return pr.isDraft || visualAsks(pr).length > 0 || Boolean(next.requeue) || fixable(pr) || Boolean(next.behind) || Boolean(next.ready && !entry);
 }
 
 const QUEUE_DONE = ["Merged", "Failed", "Cancelled"];
@@ -111,6 +111,7 @@ export function rowButtons(view, t, pr, { scope, next, entry, group, plain = fal
   if (pr.isDraft && pr.mine) buttons.push(actionButton(t, `prs-b-ready-${pr.number}`, "pr", "Mark ready for review", () => view.act("markReady", pr), "ok", { plain }));
   if (next.ready && (!group || group.members.length === 1) && !entry) buttons.push(actionButton(t, `prs-b-merge-${pr.number}`, "merged", mergesThroughQueue(pr) ? "Send to queue…" : "Merge…", () => view.act("merge", pr), "ok", { plain }));
   if (next.requeue) buttons.push(actionButton(t, `prs-b-again-${pr.number}`, "merged", mergesThroughQueue(pr) ? "Send to queue again…" : "Merge again…", () => view.act("merge", pr), "ok", { plain }));
+  if (next.behind && pr.mine) buttons.push(actionButton(t, `prs-b-update-${pr.number}`, "refresh", "Update branch", () => view.act("updateBranch", pr), "info", { plain }));
   if (fixable(pr)) buttons.push(actionButton(t, `prs-b-fix-${pr.number}`, "wrench", "Fix with Claude", () => view.act("fix", pr), "merged", { plain }));
   return buttons;
 }
