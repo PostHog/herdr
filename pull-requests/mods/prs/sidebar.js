@@ -106,14 +106,15 @@ export function rowButtons(view, t, pr, { scope, next, entry, group, plain = fal
   return buttons;
 }
 
-export function statusLine(view, t, pr, { scope = "mine", group = null, buttons = true } = {}) {
+export function statusLine(view, t, pr, { scope = "mine", group = null, buttons = true, number = null } = {}) {
   const { next, entry } = scope === "mine" ? nextFor(view, pr, group) : { next: null, entry: null };
-  const ci = pr.checks.total && next?.icon !== "spinner" ? stat(t, pr.checks.failed ? "fail" : "check", `${pr.checks.passed}/${pr.checks.total}`, pr.checks.failed ? "bad" : "dim") : null;
+  const ci = pr.checks.failed ? stat(t, "fail", `${pr.checks.passed}/${pr.checks.total}`, "bad") : null;
   const priority = scope !== "mine" ? priorityBadge(t, pr) : null;
   return h_flex()
     .gap(7)
     .items_center()
     .flex_wrap()
+    .when(Boolean(number), (el) => el.child(div().flex_none().text_size(TEXT.meta).text_color(t.dim).child(number)))
     .when(Boolean(next), (el) => el.child(div().flex_none().text_size(TEXT.chip).text_color(tone(t, next.tone)).child(next.label)))
     .when(Boolean(priority), (el) => el.child(priority))
     .when(scope !== "mine", (el) => el.child(div().flex_none().text_size(TEXT.meta).text_color(t.dim).child(`@${pr.author} · ${ago(pr.createdAt)}`)))
@@ -183,13 +184,12 @@ function prRow(view, t, pr, { depth = 0, group = null, scope = "mine", quiet = f
         .gap(6)
         .items_center()
         .child(prIcon(view, t, pr, { scope, group }))
-        .child(div().flex_none().text_size(TEXT.meta).text_color(t.dim).child(`${showRepo ? pr.repo.split("/")[1] : ""}#${pr.number}`))
         .child(titleText(t, pr.title, { quiet }))
         .when(view.isBusy(pr), (el) => el.child(icon(t, "spinner", "dim", 11, true)))
         .when(view.hovered === id, (el) => el.child(linkIcons(view, t, id, pr))),
     )
     .child(div().pl(19).child(gateStrip(t, id, gatesFor(view, pr, group, scope))))
-    .child(div().pl(19).child(statusLine(view, t, pr, { scope, group })))
+    .child(div().pl(19).child(statusLine(view, t, pr, { scope, group, number: `${showRepo ? pr.repo.split("/")[1] : ""}#${pr.number}` })))
     .when(Boolean(progress), (el) => el.child(div().pl(19).child(progress)));
 }
 
