@@ -19,7 +19,7 @@ The panel sits under the agents list. In the `Pull-Requests` layout, `cmd-shift-
   - **Testing progress:** while Trunk tests a PR, a thin bar shows checks done out of the total, and the time since the test started.
   - **Queue** lists Trunk's queue in folding sections: Yours, Testing, Merging, Waiting (numbered), Not ready, Failing, Failed, and Recently merged (folded at first). Counts at Trunk's 10-item cap read "10+".
   - **Review** lists PRs waiting on your review under "Requested from you" and "Your teams" (folded at first), each sorted by priority with one reason label ("Unblocks others 3", "Last approval", "Quick (14 lines)", "Waited 36h", …). PRs you hid fold into "Hidden".
-- **The full page:** a 230 px nav (My PRs, Review requests, Merge queue, Code review, Tasks, Workflows, Settings, and "Back to terminals ⌘⇧G" at the bottom), then the page's title, search, filter chips and a table.
+- **The full page:** a 230 px nav (My PRs, Review requests, Merge queue, Code review, Workflows, Settings, and "Back to terminals ⌘⇧G" at the bottom), then the page's title, search, filter chips and a table.
   - **Tables:** My PRs and Review requests have Title, Status (or Requested) and Updated columns, plus Review/Copy/Open buttons on every row. They use the sidebar's icons, chips, stack headers and progress bars.
   - **Filter chips:** repo, Hide drafts, Needs attention, Needs review, Ready to merge, Watching, newest/oldest, requested via (direct or a team), Priority, saved filters, "+ Filter", "+ Add PR" and Copy list.
 - **The detail sheet:** an 880×760 dialog with Overview, Findings, Checks, Reviews and Files.

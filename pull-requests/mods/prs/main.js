@@ -1,6 +1,6 @@
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
-import { theme, props, openOverlay, closeOverlay, shared, setShared, run, spaces, machines, notify, layout, nextCommand, focused } from "herdr";
+import { theme, props, openOverlay, closeOverlay, shared, setShared, run, machines, notify, layout, nextCommand, focused } from "herdr";
 import { loadStore, store, updateStore, prKey, newId } from "./store.js";
 import { fetchMyPrs, fetchReviews, fetchDetail, statusPill, needsAttention, needsReview, readyToMerge, orderWithStacks, comparePriority, isOrgWide, ownerOf } from "./github.js";
 import { mergePr, markReady, updateBranch, rerunFailed, approvePr, commentOnPr, resolveThread, openUrl, copyText, markdownLink, toggleWatch, toggleHidden, report, usesTrunk, isTrunkPr } from "./actions.js";
@@ -61,7 +61,6 @@ const PAGES = [
   { id: "reviews", label: "Reviews" },
   { id: "queue", label: "Queue" },
   { id: "code", label: "Code review" },
-  { id: "tasks", label: "Tasks" },
   { id: "workflows", label: "Workflows" },
   { id: "settings", label: "Settings" },
 ];
@@ -633,7 +632,6 @@ export default class Prs extends View {
       mine: this.mine ? this.mine.prs.length - this.hiddenDrafts() : undefined,
       reviews: this.reviews?.filter((pr) => !this.isHidden(pr)).length,
       code: Object.values(store().runs).filter((run) => run.kind === "review" && run.status === "running").length || null,
-      tasks: Object.values(store().runs).filter((run) => run.status === "running").length || null,
       queue: this.trunk?.listing ? this.trunk.listing.items.filter((item) => item.state !== "Merged" && (this.mine?.prs ?? []).some((pr) => isTrunkPr(pr) && pr.number === item.number)).length || null : null,
     };
   }
@@ -671,7 +669,7 @@ export default class Prs extends View {
   renderWide(t) {
     const counts = this.counts();
     const loading = this.loadingMine || this.loadingReviews;
-    const title = { mine: "My PRs", reviews: "Review requests", queue: "Merge queue", code: "Code review", tasks: "Tasks", workflows: "Workflows", settings: "Settings" }[this.page];
+    const title = { mine: "My PRs", reviews: "Review requests", queue: "Merge queue", code: "Code review", workflows: "Workflows", settings: "Settings" }[this.page];
     const nav = v_flex()
       .w(230)
       .flex_none()
@@ -971,8 +969,6 @@ export default class Prs extends View {
         return this.queueRows(t);
       case "code":
         return this.codeRows(t);
-      case "tasks":
-        return this.taskRows(t);
       case "workflows":
         return this.workflowRows(t);
       case "settings":
@@ -1059,39 +1055,6 @@ export default class Prs extends View {
         .on_click(() => openOverlay({ mod: "prs", kind: "dialog", width: 760, height: 700, props: { mode: "sheet", pr, tab: "findings" } }))
         .child(h_flex().gap(6).items_center().child(this.runBadge(t, run)).child(div().flex_1().min_w(0).truncate().child(run.title)))
         .child(div().truncate().text_size(11).text_color(t.dim).child(`${run.repo}#${run.number} · started ${ago(run.startedAt)}${run.status === "done" ? ` · ${open} open${dismissed ? `, ${dismissed} dismissed` : ""}` : ""}${run.summary && run.status === "failed" ? ` · ${run.summary}` : ""}`));
-    });
-  }
-
-  taskRows(t) {
-    const runs = Object.values(store().runs).sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt)).slice(0, 40);
-    if (!runs.length) return [empty(t, "No agent tasks yet.")];
-    const allTabs = spaces().flatMap((space) => space.tabs.map((tab) => ({ ...tab, space: space.id, machine: space.machine ?? null })));
-    return runs.map((task) => {
-      const tab = task.interactive ? allTabs.find((candidate) => candidate.name === task.tabName && candidate.machine === (task.machine ?? null)) : null;
-      const status = task.interactive ? (tab ? tab.status ?? "idle" : "closed") : task.status;
-      const label = { review: "Agent review", fix: "Fix session", "claude-review": "Review session" }[task.kind] ?? task.kind;
-      return v_flex()
-        .id(`prs-task-${task.id}`)
-        .px(8)
-        .py(7)
-        .gap(4)
-        .rounded(8)
-        .cursor_pointer()
-        .hover((el) => el.bg(t.hover))
-        .on_click(() => {
-          if (tab) run("tab.select", { id: tab.id });
-          else if (task.terminal && task.status === "running") run("terminal.peek", { terminal: task.terminal });
-          else NAMED.details(this.findPr(task.repo, task.number));
-        })
-        .child(
-          h_flex()
-            .gap(6)
-            .items_center()
-            .child(badge(t, status.toUpperCase(), { running: "run", working: "run", blocked: "warn", done: "ok", failed: "bad", closed: "dim", idle: "muted" }[status] ?? "muted"))
-            .child(div().flex_1().min_w(0).truncate().child(`${label} · #${task.number}`))
-            .child(div().text_size(11).text_color(t.dim).child(ago(task.startedAt))),
-        )
-        .child(div().truncate().text_size(11).text_color(t.dim).child(task.summary || task.title));
     });
   }
 
