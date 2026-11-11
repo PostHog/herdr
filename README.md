@@ -26,7 +26,7 @@ herdr-app do layout.switch '{"name":"github-and-trunk"}'   # just the panel
 
 The `pull-requests` piece needs the [GitHub CLI](https://cli.github.com) logged in (`gh auth login`).
 For the merge queue it also needs Trunk: a `PostHog/posthog` checkout, and `trunk` on your PATH or from that checkout's flox environment, after `trunk login`.
-Without Trunk, the rest of the panel works and the Queue tab says what's missing.
+Without Trunk, the rest of the panel works and the Merge queue page says what's missing.
 
 Agent fixes and reviews also need `claude` on the machine they run on. Settings, on the full page, sets the repos (`owner/*` covers a whole org), where agents and Trunk run, and each repo's checkout. In `github-and-trunk`, the panel's `⤢` opens the full page as a dialog. Merge `pull-requests/keys.json` (`cmd-shift-g`) into yours by hand.
 

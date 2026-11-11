@@ -18,7 +18,6 @@ export function icon(t, name, toneName, size = 13, spin = false) {
 
 export const SIDEBAR_TABS = [
   { id: "mine", label: "Mine", icon: "pr" },
-  { id: "queue", label: "Queue", icon: "queue" },
   { id: "reviews", label: "Review", icon: "eye" },
 ];
 
@@ -222,7 +221,7 @@ export function sidebarMine(view, t) {
   }
   const groups = stackGroups(prs).sort((a, b) => view.repoIndex(a.repo) - view.repoIndex(b.repo));
   const primaryRepo = groups[0].repo;
-  const rows = [];
+  const rows = [queueLine(view, t)].filter(Boolean);
   for (const part of splitByNeed(view, groups)) {
     const foldId = `mine:${part.id}`;
     rows.push(foldHeader(view, t, foldId, part.label, part.groups.reduce((sum, group) => sum + group.members.length, 0)));
@@ -248,9 +247,43 @@ const QUEUE_SECTIONS = [
   { id: "merged", label: "Recently merged", states: ["Merged"] },
 ];
 
+const FAILING_STATES = ["Pending Failure", "Failed"];
+
 const STATE_ICON = { Testing: ["testing", "run"], "Tests Passed": ["rocket", "ok"], Pending: ["hourglass", "accent"], "Not Ready": ["paused", "warn"], "Pending Failure": ["fail", "bad"], Failed: ["fail", "bad"], Cancelled: ["ban", "dim"], Merged: ["merged", "merged"] };
 
-export function sidebarQueue(view, t) {
+export function queueHealth(view) {
+  const listing = view.trunk?.listing;
+  if (!listing) return null;
+  const mine = new Set((view.mine?.prs ?? []).filter((pr) => pr.repo === view.trunk.repo).map((pr) => pr.number));
+  const live = listing.items.filter((item) => item.state !== "Merged");
+  const yours = live.filter((item) => mine.has(item.number));
+  const running = listing.running === "Running";
+  const firstOfYours = live.findIndex((item) => mine.has(item.number));
+  const blocker = firstOfYours > 0 ? live.slice(0, firstOfYours).find((item) => FAILING_STATES.includes(item.state)) : null;
+  if (!yours.length && running) return null;
+  const parts = [running ? "Trunk running" : `Trunk ${String(listing.running).toLowerCase()}`];
+  if (yours.length) parts.push(`${yours.length} of yours queued`);
+  if (blocker) parts.push(`#${blocker.number} failing ahead`);
+  return { label: parts.join(" · "), tone: !running || blocker ? "warn" : "dim" };
+}
+
+export function queueLine(view, t) {
+  const health = queueHealth(view);
+  if (!health) return null;
+  return h_flex()
+    .id("prs-sb-queue-line")
+    .px(8)
+    .pt(6)
+    .gap(6)
+    .items_center()
+    .cursor_pointer()
+    .tooltip("Open the merge queue")
+    .on_click(() => view.openPage("queue"))
+    .child(icon(t, "queue", health.tone, 12))
+    .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(tone(t, health.tone)).child(health.label));
+}
+
+export function queuePage(view, t, yourReady = []) {
   const trunk = view.trunk;
   if (!trunk) return [view.placeholder(t, null, "Reading the Trunk merge queue…")];
   if (!trunk.listing) return [view.placeholder(t, trunk.error, "The merge queue isn't available.")];
@@ -297,13 +330,34 @@ export function sidebarQueue(view, t) {
     rows.push(foldHeader(view, t, "queue:yours", "Yours", yours.length));
     if (!view.folded.has("queue:yours")) rows.push(...yours.map((item, index) => row(item, index, false)));
   }
-  for (const section of QUEUE_SECTIONS) {
-    const list = items.filter((item) => section.states.includes(item.state));
-    if (!list.length) continue;
-    rows.push(foldHeader(view, t, `queue:${section.id}`, section.label, list.length >= LISTING_CAP ? `${LISTING_CAP}+` : list.length));
-    if (!view.folded.has(`queue:${section.id}`)) rows.push(...list.map((item, index) => row(item, index, section.numbered)));
+  rows.push(...yourReady);
+  const others = items.filter((item) => !mine.has(item.number));
+  if (others.length) {
+    const open = view.folded.has("queue:others-open");
+    rows.push(
+      h_flex()
+        .id("prs-queue-others")
+        .px(6)
+        .pt(12)
+        .pb(3)
+        .gap(4)
+        .items_center()
+        .cursor_pointer()
+        .on_click((_e, cx) => view.toggleFold("queue:others-open", cx))
+        .child(icon(t, open ? "chevron-down" : "chevron-right", "dim", 11))
+        .child(div().text_size(10.5).font_semibold().text_color(t.dim).child("EVERYONE ELSE"))
+        .child(div().text_size(10.5).text_color(t.dim).child(others.length >= LISTING_CAP ? `${LISTING_CAP}+` : String(others.length))),
+    );
+    if (open) {
+      for (const section of QUEUE_SECTIONS) {
+        const list = others.filter((item) => section.states.includes(item.state));
+        if (!list.length) continue;
+        rows.push(foldHeader(view, t, `queue:${section.id}`, section.label, list.length));
+        if (!view.folded.has(`queue:${section.id}`)) rows.push(...list.map((item, index) => row(item, index, section.numbered)));
+      }
+    }
   }
-  if (rows.length === 1) rows.push(view.placeholder(t, null, "The queue is empty."));
+  if (!items.length && !yourReady.length) rows.push(view.placeholder(t, null, "The queue is empty."));
   return rows;
 }
 

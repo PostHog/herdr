@@ -9,7 +9,7 @@ import { processSnapshot, TRIGGERS, ACTION_KINDS } from "./automation.js";
 import { loadConfig, config, updateConfig, configPath, machineLabel } from "./config.js";
 import { forgetCheckouts, checkoutFor } from "./runner.js";
 import { loadTrunk, dequeue, resetTrunk } from "./trunk.js";
-import { sidebarHeader, sidebarMine, sidebarQueue, sidebarReviews, sidebarRail, statusLine, prIcon, progressLine, stackHeader, gatesFor, splitByNeed, needsYou, rowButtons, nextFor } from "./sidebar.js";
+import { sidebarHeader, sidebarMine, queuePage, sidebarReviews, sidebarRail, statusLine, prIcon, progressLine, stackHeader, gatesFor, splitByNeed, needsYou, rowButtons, nextFor } from "./sidebar.js";
 import { visualAsks, stackGroups, withoutDraftStacks, step, queueFor } from "./steps.js";
 import { openClaude, CLAUDE_ICON } from "./claude.js";
 import { ago, button, iconButton, glyphButton, textIconButton, chip, badge, section, empty, field, menuItem, SPINNER, tone, TEXT, tint, avatar, countPill, codePill, gateStrip, titleText } from "./ui.js";
@@ -255,7 +255,7 @@ export default class Prs extends View {
     const requested = shared("prs.page.request");
     if (requested && Date.now() - requested.at < 15000) this.page = requested.page;
     if (!PAGES.some((page) => page.id === this.page)) this.page = "mine";
-    this.sidebarTab = localStorage.getItem("sidebarTab") ?? "mine";
+    this.sidebarTab = localStorage.getItem("sidebarTab") === "reviews" ? "reviews" : "mine";
     this.folded = new Set(JSON.parse(localStorage.getItem("folded") ?? '["review:teams","queue:merged"]'));
     this.trunk = shared("prs.cache.trunk") ?? null;
     this.mineFailures = 0;
@@ -515,7 +515,7 @@ export default class Prs extends View {
   }
 
   openPage(page) {
-    setShared("prs.page.request", { page: page ?? (this.sidebarTab === "queue" ? "queue" : this.sidebarTab), at: Date.now() });
+    setShared("prs.page.request", { page: page ?? this.sidebarTab, at: Date.now() });
     if (hasPage()) showView(PAGE_NODE);
     else openOverlay(PAGE_DIALOG);
   }
@@ -671,7 +671,7 @@ export default class Prs extends View {
     if (props()?.page || this.width >= 900) return sized(this.renderWide(t));
     const counts = this.counts();
     if (this.width > 0 && this.width < 160) return sized(v_flex().id("prs-root")).size_full().bg(t.chrome).child(sidebarRail(this, t, counts));
-    const body = this.sidebarTab === "queue" ? sidebarQueue(this, t) : this.sidebarTab === "reviews" ? sidebarReviews(this, t) : sidebarMine(this, t);
+    const body = this.sidebarTab === "reviews" ? sidebarReviews(this, t) : sidebarMine(this, t);
     const error = this.sidebarTab === "mine" ? (this.mine && this.mineError) : this.sidebarTab === "reviews" ? (this.reviews && this.reviewsError) : null;
     return sized(v_flex())
       .id("prs-root")
@@ -1035,7 +1035,7 @@ export default class Prs extends View {
   }
 
   queueRows(t) {
-    const rows = sidebarQueue(this, t);
+    const rows = [];
     const ready = (this.mine?.prs ?? []).filter((pr) => !pr.queue?.active && !(isTrunkPr(pr) && this.trunk?.items?.[pr.number]) && readyToMerge(pr) && pr.mine);
     if (ready.length) {
       rows.push(section(t, "Ready to merge"));
@@ -1051,7 +1051,7 @@ export default class Prs extends View {
         ]));
       }
     }
-    return rows;
+    return queuePage(this, t, rows);
   }
 
   findPr(repo, number, title) {
