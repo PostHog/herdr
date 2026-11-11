@@ -1342,7 +1342,7 @@ export default class Prs extends View {
   }
 
   checkRow(t, check, index) {
-    const color = { failed: tone(t, "bad"), running: tone(t, "run"), passed: tone(t, "ok") }[check.bucket];
+    const color = { failed: tone(t, "bad"), running: tone(t, "run"), passed: tone(t, "ok"), cancelled: t.dim }[check.bucket];
     return h_flex()
       .id(`prs-check-${index}`)
       .gap(8)
