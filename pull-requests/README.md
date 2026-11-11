@@ -5,7 +5,7 @@ A PR panel for Herdr's sidebar and a full-page PR workspace: your PRs, the Trunk
 
 ## PR rows
 
-My PRs splits into what needs you, what's in the merge queue and what's waiting on others. Each row has a five-part readiness strip (Checks, Review, Threads, Conflicts, Queue) and shows an action icon only when something is yours to do. These are design mockups.
+My PRs splits into what needs you, what's enqueued and what's waiting on others. Each row has a five-part readiness strip (Checks, Review, Threads, Conflicts, Queue) and shows an action icon only when something is yours to do. These are design mockups.
 
 ![My PRs on the full page](screenshots/rows-page.png)
 

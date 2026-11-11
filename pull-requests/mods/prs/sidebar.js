@@ -92,7 +92,7 @@ export function splitByNeed(view, groups) {
   const queued = groups.filter((group) => !needs.includes(group) && group.members.some((member) => inQueue(view, member.pr, group)));
   return [
     { id: "needs", label: "Needs you", groups: needs },
-    { id: "queue", label: "In the merge queue", groups: queued },
+    { id: "queue", label: "Enqueued", groups: queued },
     { id: "waiting", label: "Waiting on others", groups: groups.filter((group) => !needs.includes(group) && !queued.includes(group)) },
   ].filter((part) => part.groups.length);
 }
