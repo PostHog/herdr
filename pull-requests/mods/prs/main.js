@@ -89,6 +89,7 @@ function cleanBody(body) {
   }
   return text.trim();
 }
+const keepFocus = (_e, cx) => cx.stop_propagation();
 const samePr = (a, b) => a.repo === b.repo && a.number === b.number;
 
 function claudeOn(pr) {
@@ -878,7 +879,7 @@ export default class Prs extends View {
       .border_color(t.input)
       .bg(t.background)
       .child(svg("mods/prs/icons/search.svg").size(13).flex_none().text_color(t.dim))
-      .child(div().flex_1().min_w(0).child(Input.new(this.search).h(26).px(4).bg(t.background).text_size(12).text_color(t.foreground)));
+      .child(div().flex_1().min_w(0).on_mouse_down("left", keepFocus).child(Input.new(this.search).h(26).px(4).bg(t.background).text_size(12).text_color(t.foreground)));
     return h_flex()
       .px(8)
       .pt(8)
@@ -1530,7 +1531,7 @@ export default class Prs extends View {
   }
 
   input(t, state) {
-    return Input.new(state).h(32).px(10).rounded(8).border_1().border_color(t.input).bg(t.background).text_size(12.5).text_color(t.foreground);
+    return div().on_mouse_down("left", keepFocus).child(Input.new(state).h(32).px(10).rounded(8).border_1().border_color(t.input).bg(t.background).text_size(12.5).text_color(t.foreground));
   }
 
   checkbox(t, id, label, on, onClick) {
