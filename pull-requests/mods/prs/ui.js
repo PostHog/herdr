@@ -229,3 +229,53 @@ export function menuItem(t, id, label, onClick, hint) {
     .child(div().flex_1().truncate().child(label))
     .when(Boolean(hint), (el) => el.child(div().text_size(10.5).text_color(t.dim).child(hint)));
 }
+
+const TITLE_PREFIX = /^([a-z]+(?:\([^)]*\))?!?:)\s*(.+)$/i;
+
+export function splitTitle(title) {
+  const match = TITLE_PREFIX.exec(title ?? "");
+  return match ? { prefix: match[1], subject: match[2] } : { prefix: "", subject: title ?? "" };
+}
+
+export function titleText(t, title, { quiet = false, size = TEXT.title } = {}) {
+  const { prefix, subject } = splitTitle(title);
+  return h_flex()
+    .flex_1()
+    .min_w(0)
+    .gap(4)
+    .text_size(size)
+    .when(Boolean(prefix), (el) => el.child(div().flex_none().text_color(t.dim).child(prefix)))
+    .child(div().flex_1().min_w(0).truncate().text_color(quiet ? t.muted : t.foreground).child(subject));
+}
+
+export function gateStrip(t, id, gates, { segment = null, height = 3 } = {}) {
+  return h_flex()
+    .gap(segment ? 3 : 2)
+    .children(gates.map((gate) => {
+      const bar = div().id(`${id}-gate-${gate.id}`).h(height).rounded(2).bg(gate.state === "idle" ? t.border : tone(t, gate.state)).tooltip(`${gate.label}: ${gate.sub}`);
+      return segment ? bar.w(segment).flex_none() : bar.flex_1();
+    }));
+}
+
+export function actionButton(t, id, iconName, label, onClick, toneName = "muted") {
+  return h_flex()
+    .id(id)
+    .w(26)
+    .h(22)
+    .flex_none()
+    .items_center()
+    .justify_center()
+    .rounded(6)
+    .border_1()
+    .border_color(t.border)
+    .bg(t.raised)
+    .cursor_pointer()
+    .hover((s) => s.bg(t.hover))
+    .tooltip(label)
+    .accessibility_label(label)
+    .on_click((event, cx) => {
+      cx.stop_propagation();
+      onClick(event, cx);
+    })
+    .child(svg(`mods/prs/icons/${iconName}.svg`).size(13).text_color(tone(t, toneName)));
+}

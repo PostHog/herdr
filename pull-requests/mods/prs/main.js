@@ -3,16 +3,16 @@ import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { theme, props, openOverlay, closeOverlay, shared, setShared, run, machines, notify, layout, nextCommand, focused } from "herdr";
 import { loadStore, store, updateStore, prKey, newId } from "./store.js";
 import { fetchMyPrs, fetchReviews, fetchDetail, statusPill, needsAttention, needsReview, readyToMerge, orderWithStacks, comparePriority, isOrgWide, ownerOf } from "./github.js";
-import { mergePr, markReady, updateBranch, rerunFailed, approvePr, commentOnPr, resolveThread, openUrl, copyText, markdownLink, toggleWatch, toggleHidden, report, usesTrunk, isTrunkPr } from "./actions.js";
+import { mergePr, markReady, updateBranch, rerunFailed, approvePr, commentOnPr, resolveThread, openUrl, copyText, markdownLink, toggleWatch, toggleHidden, report, usesTrunk, isTrunkPr, mergesThroughQueue } from "./actions.js";
 import { startFixSession, startReview, syncRuns, fixPrompt, findingsFixPrompt, reviewPromptForOthers, setFindingState, findingsMarkdown } from "./agents.js";
 import { processSnapshot, TRIGGERS, ACTION_KINDS } from "./automation.js";
 import { loadConfig, config, updateConfig, configPath, machineLabel } from "./config.js";
 import { forgetCheckouts, checkoutFor } from "./runner.js";
 import { loadTrunk, dequeue, resetTrunk } from "./trunk.js";
-import { sidebarHeader, sidebarMine, sidebarQueue, sidebarReviews, sidebarRail, statusLine, prIcon, progressLine, stackHeader } from "./sidebar.js";
+import { sidebarHeader, sidebarMine, sidebarQueue, sidebarReviews, sidebarRail, statusLine, prIcon, progressLine, stackHeader, gatesFor, splitByNeed, needsYou, rowButtons, nextFor } from "./sidebar.js";
 import { visualAsks, stackGroups, withoutDraftStacks, step, queueFor } from "./steps.js";
 import { openClaude, CLAUDE_ICON } from "./claude.js";
-import { ago, button, iconButton, glyphButton, textIconButton, chip, badge, section, empty, field, menuItem, SPINNER, tone, TEXT, tint, avatar, countPill, codePill } from "./ui.js";
+import { ago, button, iconButton, glyphButton, textIconButton, chip, badge, section, empty, field, menuItem, SPINNER, tone, TEXT, tint, avatar, countPill, codePill, gateStrip, titleText } from "./ui.js";
 import { readiness, groupChecks, rowMatches, tallyChecks, tallyText, tallyLabel, worstBucket, mergeStateNote, groupFiles, fileSummary, parseMarkdown } from "./sheet.js";
 
 const MINE_EVERY_MS = 90000;
@@ -23,7 +23,10 @@ const FAILURES_BEFORE_ERROR = 3;
 const VIEW_STACK = "pr-center";
 const PAGE_NODE = "prs-page";
 const WORK_NODE = "work";
-const QUICK_ACTIONS_WIDTH = 138;
+const QUICK_ACTIONS_WIDTH = 176;
+const GATE_WIDTH = 61;
+const STATUS_WIDTH = GATE_WIDTH * 5 + 12;
+const GATE_HEADERS = ["CHECKS", "REVIEW", "THREADS", "CONFLICTS", "QUEUE"];
 const ICON = (name) => `mods/prs/icons/${name}.svg`;
 const GATE_ICONS = { ok: "tick", bad: "x", warn: "loader", run: "loader", info: "loader", merged: "merged", idle: "circle" };
 const REVIEW_LOOK = {
@@ -36,7 +39,6 @@ const THREAD_LOOK = { icon: "comment", tone: "warn", word: "commented on the dif
 const BUCKET_TONES = { failed: "bad", running: "run", passed: "ok" };
 const bucketColor = (t, bucket) => (BUCKET_TONES[bucket] ? tone(t, BUCKET_TONES[bucket]) : t.dim);
 const sendsToTrunk = (pr) => isTrunkPr(pr) || usesTrunk(pr);
-const mergesThroughQueue = (pr) => sendsToTrunk(pr) || pr.queue?.provider === "github";
 
 function findNode(node, id) {
   if (node?.id === id) return node;
@@ -733,7 +735,7 @@ export default class Prs extends View {
           .font_semibold()
           .text_color(t.dim)
           .child(div().flex_1().child("TITLE"))
-          .child(div().w(300).child(this.page === "mine" ? "STATUS" : "REQUESTED"))
+          .child(h_flex().w(STATUS_WIDTH).flex_none().gap(3).children(GATE_HEADERS.map((label) => div().w(GATE_WIDTH).flex_none().child(label))))
           .child(div().w(80).child("UPDATED"))
           .child(div().w(QUICK_ACTIONS_WIDTH))
       : null;
@@ -777,7 +779,7 @@ export default class Prs extends View {
       );
   }
 
-  quickActions(t, pr, scope) {
+  quickActions(t, pr, scope, leading = []) {
     const entries = [
       ...(scope === "reviews" ? [["reviewInClaude", "terminal", "Review in Claude"]] : []),
       ["agentReview", "bot", "Agent review (headless)"],
@@ -789,11 +791,14 @@ export default class Prs extends View {
       .flex_none()
       .gap(2)
       .justify_end()
+      .items_center()
+      .children(leading)
+      .when(leading.length > 0, (el) => el.child(div().w(4)))
       .child(glyphButton(t, `prs-q-${scope}-${pr.number}-claude`, image(CLAUDE_ICON).size(14), "Claude Code on this PR", () => choose("claude", pr)))
       .children(entries.map(([name, iconName, label]) => iconButton(t, `prs-q-${scope}-${pr.number}-${name}`, iconName, label, () => choose(name, pr))));
   }
 
-  wideRow(t, id, pr, scope, depth, left, middle, right) {
+  wideRow(t, id, pr, scope, depth, left, middle, right, leading = []) {
     return h_flex()
       .id(id)
       .pl(16 + depth * 16)
@@ -813,7 +818,7 @@ export default class Prs extends View {
       .child(v_flex().flex_1().min_w(0).gap(4).children(left))
       .child(middle)
       .child(div().w(80).flex_none().text_size(12).text_color(t.dim).child(right))
-      .child(this.quickActions(t, pr, scope));
+      .child(this.quickActions(t, pr, scope, leading));
   }
 
   wideMineRows(t) {
@@ -821,20 +826,29 @@ export default class Prs extends View {
     const prs = this.mineVisible().map((row) => row.pr);
     if (!prs.length) return [empty(t, "No PRs match.")];
     const rows = [];
-    for (const group of stackGroups(prs, this.sortNewest)) {
-      const members = group.members.length > 1 ? [...group.members].reverse() : group.members;
-      if (group.members.length > 1) rows.push(div().px(8).pt(6).child(stackHeader(this, t, group)));
-      for (const member of members) {
-        const pr = member.pr;
-        const progress = progressLine(this, t, pr, group);
-        rows.push(this.wideRow(t, `prs-wm-${pr.repo}-${pr.number}`, pr, "mine", group.members.length > 1 ? 1 : 0,
-          [
-            h_flex().gap(6).items_center().child(prIcon(this, t, pr, { group })).child(div().flex_1().min_w(0).child(this.titleLine(t, pr))),
-            div().pl(19).min_w(0).truncate().text_size(TEXT.meta).text_color(t.dim).child(`${pr.repo}#${pr.number} · @${pr.author} · opened ${ago(pr.createdAt)}`),
-          ],
-          v_flex().w(300).flex_none().gap(4).child(statusLine(this, t, pr, { group })).when(Boolean(progress), (el) => el.child(progress)),
-          ago(pr.updatedAt),
-        ));
+    const groups = stackGroups(prs, this.sortNewest);
+    const primaryRepo = [...new Set(prs.map((pr) => pr.repo))].sort((a, b) => this.repoIndex(a) - this.repoIndex(b))[0];
+    for (const part of splitByNeed(this, groups)) {
+      rows.push(div().px(10).child(section(t, `${part.label} · ${part.groups.reduce((sum, group) => sum + group.members.length, 0)}`)));
+      for (const group of part.groups) {
+        const members = group.members.length > 1 ? [...group.members].reverse() : group.members;
+        if (group.members.length > 1) rows.push(div().px(8).pt(6).child(stackHeader(this, t, group)));
+        for (const member of members) {
+          const pr = member.pr;
+          const id = `prs-wm-${pr.repo}-${pr.number}`;
+          const progress = progressLine(this, t, pr, group);
+          const { next, entry } = nextFor(this, pr, group);
+          const meta = `${pr.repo === primaryRepo ? "" : pr.repo}#${pr.number}${pr.mine ? "" : ` · @${pr.author}`} · opened ${ago(pr.createdAt)}`;
+          rows.push(this.wideRow(t, id, pr, "mine", group.members.length > 1 ? 1 : 0,
+            [
+              h_flex().gap(6).items_center().child(prIcon(this, t, pr, { group })).child(div().flex_1().min_w(0).child(this.titleLine(t, pr, !needsYou(this, pr, group)))),
+              div().pl(19).min_w(0).truncate().text_size(TEXT.meta).text_color(t.dim).child(meta),
+            ],
+            v_flex().w(STATUS_WIDTH).flex_none().gap(5).child(statusLine(this, t, pr, { group, buttons: false })).child(gateStrip(t, id, gatesFor(this, pr, group), { segment: GATE_WIDTH, height: 4 })).when(Boolean(progress), (el) => el.child(progress)),
+            ago(pr.updatedAt),
+            rowButtons(this, t, pr, { scope: "mine", next, entry, group }),
+          ));
+        }
       }
     }
     return rows;
@@ -845,12 +859,13 @@ export default class Prs extends View {
     const { visible, hidden } = this.reviewsVisible();
     const row = (pr) => {
       const via = pr.via.direct ? "you" : pr.via.teams[0] ? `@${pr.via.teams[0]}` : "";
-      return this.wideRow(t, `prs-wr-${pr.repo}-${pr.number}`, pr, "reviews", 0,
+      const id = `prs-wr-${pr.repo}-${pr.number}`;
+      return this.wideRow(t, id, pr, "reviews", 0,
         [
           h_flex().gap(6).items_center().child(prIcon(this, t, pr, { scope: "reviews" })).child(div().flex_1().min_w(0).child(this.titleLine(t, pr))),
           div().pl(19).truncate().text_size(TEXT.meta).text_color(t.dim).child(`${pr.repo}#${pr.number}${via ? ` · via ${via}` : ""}`),
         ],
-        div().w(300).flex_none().child(statusLine(this, t, pr, { scope: "reviews", buttons: false })),
+        v_flex().w(STATUS_WIDTH).flex_none().gap(5).child(statusLine(this, t, pr, { scope: "reviews", buttons: false })).child(gateStrip(t, id, gatesFor(this, pr, null, "reviews"), { segment: GATE_WIDTH, height: 4 })),
         ago(pr.updatedAt),
       );
     };
@@ -1011,11 +1026,11 @@ export default class Prs extends View {
       .children(children);
   }
 
-  titleLine(t, pr) {
+  titleLine(t, pr, quiet = false) {
     return h_flex()
       .gap(6)
       .items_center()
-      .child(div().flex_1().min_w(0).truncate().text_size(TEXT.title).child(pr.title))
+      .child(titleText(t, pr.title, { quiet }))
       .when(isBusy(pr), (el) => el.child(svg(SPINNER).size(11).spin(900).text_color(t.dim)));
   }
 

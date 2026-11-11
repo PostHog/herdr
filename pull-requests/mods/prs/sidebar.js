@@ -5,7 +5,9 @@ import { comparePriority } from "./github.js";
 import { LISTING_CAP } from "./trunk.js";
 import { step, queueFor, stackGroups, layerWaitingOn, visualAsks, fixable } from "./steps.js";
 import { CLAUDE_ICON } from "./claude.js";
-import { ago, tone, button, iconButton, badge, TEXT } from "./ui.js";
+import { ago, tone, button, actionButton, badge, gateStrip, titleText, TEXT } from "./ui.js";
+import { readiness } from "./sheet.js";
+import { mergesThroughQueue } from "./actions.js";
 
 const ICON = (name) => `mods/prs/icons/${name}.svg`;
 
@@ -69,6 +71,28 @@ export function nextFor(view, pr, group) {
   return { next, entry };
 }
 
+export function gatesFor(view, pr, group, scope = "mine") {
+  const { gates } = readiness(pr, null, { queueBased: mergesThroughQueue(pr) });
+  if (scope !== "mine") return gates;
+  const { next, entry } = nextFor(view, pr, group);
+  if (!entry) return gates;
+  return gates.map((gate) => (gate.id === "queue" ? { ...gate, state: next.tone === "dim" ? "warn" : next.tone, sub: next.label } : gate));
+}
+
+export function needsYou(view, pr, group) {
+  if (!pr.mine) return false;
+  const { next, entry } = nextFor(view, pr, group);
+  return pr.isDraft || visualAsks(pr).length > 0 || Boolean(next.requeue) || fixable(pr) || Boolean(next.ready && !entry);
+}
+
+export function splitByNeed(view, groups) {
+  const needs = groups.filter((group) => group.members.some((member) => needsYou(view, member.pr, group)));
+  return [
+    { id: "needs", label: "Needs you", groups: needs },
+    { id: "waiting", label: "Waiting on others", groups: groups.filter((group) => !needs.includes(group)) },
+  ].filter((part) => part.groups.length);
+}
+
 export function priorityBadge(t, pr) {
   const chip = pr.priority?.chip;
   return chip ? badge(t, chip.label, chip.points > 0 ? "ok" : "dim") : null;
@@ -78,10 +102,10 @@ export function rowButtons(view, t, pr, { scope, next, entry, group }) {
   const buttons = [];
   if (scope !== "mine" || !next) return buttons;
   for (const ask of visualAsks(pr)) buttons.push(tinyButton(t, `prs-b-vis-${pr.number}-${ask.type}`, "Approve", () => view.act("openUrl", { ...pr, url: ask.url }), true, { icon: VISUAL_ICONS[ask.type] ?? "eye", tooltip: `Approve ${ask.type} changes: ${ask.summary}` }));
-  if (pr.isDraft && pr.mine) buttons.push(iconButton(t, `prs-b-ready-${pr.number}`, "pr", "Mark ready for review", () => view.act("markReady", pr), "ok"));
-  if (next.ready && (!group || group.members.length === 1) && !entry) buttons.push(iconButton(t, `prs-b-merge-${pr.number}`, "merged", "Merge…", () => view.act("merge", pr), "ok"));
-  if (next.requeue) buttons.push(iconButton(t, `prs-b-again-${pr.number}`, "merged", "Merge again…", () => view.act("merge", pr), "ok"));
-  if (fixable(pr)) buttons.push(iconButton(t, `prs-b-fix-${pr.number}`, "wrench", "Fix with Claude", () => view.act("fix", pr)));
+  if (pr.isDraft && pr.mine) buttons.push(actionButton(t, `prs-b-ready-${pr.number}`, "pr", "Mark ready for review", () => view.act("markReady", pr), "ok"));
+  if (next.ready && (!group || group.members.length === 1) && !entry) buttons.push(actionButton(t, `prs-b-merge-${pr.number}`, "merged", mergesThroughQueue(pr) ? "Send to queue…" : "Merge…", () => view.act("merge", pr), "ok"));
+  if (next.requeue) buttons.push(actionButton(t, `prs-b-again-${pr.number}`, "merged", mergesThroughQueue(pr) ? "Send to queue again…" : "Merge again…", () => view.act("merge", pr), "ok"));
+  if (fixable(pr)) buttons.push(actionButton(t, `prs-b-fix-${pr.number}`, "wrench", "Fix with Claude", () => view.act("fix", pr), "merged"));
   return buttons;
 }
 
@@ -139,7 +163,7 @@ function linkIcons(view, t, id, pr) {
     .child(hoverIcon(t, `${id}-open`, svg(ICON("external")).size(13), "Open on GitHub", () => view.act("open", pr)));
 }
 
-function prRow(view, t, pr, { depth = 0, group = null, scope = "mine" } = {}) {
+function prRow(view, t, pr, { depth = 0, group = null, scope = "mine", quiet = false, showRepo = false } = {}) {
   const progress = scope === "mine" ? progressLine(view, t, pr, group) : null;
   const id = `prs-sb-${scope}-${pr.repo}-${pr.number}`;
   return v_flex()
@@ -162,11 +186,12 @@ function prRow(view, t, pr, { depth = 0, group = null, scope = "mine" } = {}) {
         .gap(6)
         .items_center()
         .child(prIcon(view, t, pr, { scope, group }))
-        .child(div().flex_none().text_size(TEXT.meta).text_color(t.dim).child(`#${pr.number}`))
-        .child(div().flex_1().min_w(0).truncate().text_size(TEXT.title).child(pr.title))
+        .child(div().flex_none().text_size(TEXT.meta).text_color(t.dim).child(`${showRepo ? pr.repo.split("/")[1] : ""}#${pr.number}`))
+        .child(titleText(t, pr.title, { quiet }))
         .when(view.isBusy(pr), (el) => el.child(icon(t, "spinner", "dim", 11, true)))
         .when(view.hovered === id, (el) => el.child(linkIcons(view, t, id, pr))),
     )
+    .child(div().pl(19).child(gateStrip(t, id, gatesFor(view, pr, group, scope))))
     .child(div().pl(19).child(statusLine(view, t, pr, { scope, group })))
     .when(Boolean(progress), (el) => el.child(div().pl(19).child(progress)));
 }
@@ -188,7 +213,7 @@ export function stackHeader(view, t, group) {
     .child(icon(t, "stack", "merged", 12))
     .child(div().flex_1().min_w(0).truncate().text_size(TEXT.meta).text_color(t.muted).child(`Stack of ${group.members.length} · ${top.headRef}`))
     .child(div().flex_none().text_size(TEXT.meta).text_color(queued ? t.accent : all ? tone(t, "ok") : t.dim).child(queued ? queued.state : `${ready}/${group.members.length} ready`))
-    .when(all && !queued && top.mine, (el) => el.child(iconButton(t, `prs-stack-merge-${group.id}`, "merged", "Merge stack…", () => view.act("merge", top), "ok")));
+    .when(all && !queued && top.mine, (el) => el.child(actionButton(t, `prs-stack-merge-${group.id}`, "merged", "Merge stack…", () => view.act("merge", top), "ok")));
 }
 
 export function sidebarMine(view, t) {
@@ -198,18 +223,19 @@ export function sidebarMine(view, t) {
     const drafts = view.hiddenDrafts();
     return [view.placeholder(t, null, drafts ? `No open PRs besides ${drafts} hidden draft${drafts === 1 ? "" : "s"}.` : "No open PRs in your repos.")];
   }
-  const byRepo = new Map();
-  for (const group of stackGroups(prs)) byRepo.set(group.repo, [...(byRepo.get(group.repo) ?? []), group]);
-  const repoOrder = [...byRepo.keys()].sort((a, b) => view.repoIndex(a) - view.repoIndex(b));
+  const groups = stackGroups(prs).sort((a, b) => view.repoIndex(a.repo) - view.repoIndex(b.repo));
+  const primaryRepo = groups[0].repo;
   const rows = [];
-  for (const [index, repo] of repoOrder.entries()) {
-    if (index > 0) rows.push(foldHeader(view, t, `repo:${repo}`, repo.split("/")[1], byRepo.get(repo).reduce((sum, group) => sum + group.members.length, 0)));
-    if (view.folded.has(`repo:${repo}`)) continue;
-    for (const group of byRepo.get(repo)) {
+  for (const part of splitByNeed(view, groups)) {
+    const foldId = `mine:${part.id}`;
+    rows.push(foldHeader(view, t, foldId, part.label, part.groups.reduce((sum, group) => sum + group.members.length, 0)));
+    if (view.folded.has(foldId)) continue;
+    for (const group of part.groups) {
+      const showRepo = group.repo !== primaryRepo;
       if (group.members.length > 1) {
         rows.push(stackHeader(view, t, group));
-        for (const member of [...group.members].reverse()) rows.push(prRow(view, t, member.pr, { depth: 1, group }));
-      } else rows.push(prRow(view, t, group.members[0].pr, { group }));
+        for (const member of [...group.members].reverse()) rows.push(prRow(view, t, member.pr, { depth: 1, group, quiet: !needsYou(view, member.pr, group), showRepo }));
+      } else rows.push(prRow(view, t, group.members[0].pr, { group, quiet: part.id === "waiting", showRepo }));
     }
   }
   return rows;
