@@ -209,10 +209,6 @@ export function statusPill(pr) {
   return { label: "Ready", tone: "ok" };
 }
 
-export function needsAttention(pr) {
-  return pr.mergeable === "CONFLICTING" || pr.mergeState === "DIRTY" || pr.reviewDecision === "CHANGES_REQUESTED" || (pr.checks.failed > 0 && pr.mergeState !== "UNSTABLE") || pr.mergeState === "BEHIND" || Boolean(pr.stackDepth);
-}
-
 export function needsReview(pr) {
   return !pr.isDraft && pr.reviewDecision === "REVIEW_REQUIRED";
 }
@@ -287,28 +283,6 @@ function attachStacks(prs) {
   for (const pr of prs) sizes.set(`${pr.repo}#${pr.stackRoot}`, (sizes.get(`${pr.repo}#${pr.stackRoot}`) ?? 0) + 1);
   for (const pr of prs) pr.stackSize = sizes.get(`${pr.repo}#${pr.stackRoot}`);
   return prs;
-}
-
-export function orderWithStacks(prs, newestFirst) {
-  const direction = newestFirst ? -1 : 1;
-  const byCreated = (a, b) => direction * (Date.parse(a.createdAt) - Date.parse(b.createdAt));
-  const children = new Map();
-  const visible = new Set(prs.map((pr) => `${pr.repo}#${pr.number}`));
-  const roots = [];
-  for (const pr of prs) {
-    const parentKey = pr.parent ? `${pr.repo}#${pr.parent}` : null;
-    if (parentKey && visible.has(parentKey)) {
-      if (!children.has(parentKey)) children.set(parentKey, []);
-      children.get(parentKey).push(pr);
-    } else roots.push(pr);
-  }
-  const out = [];
-  const visit = (pr, depth) => {
-    out.push({ pr, depth });
-    for (const child of (children.get(`${pr.repo}#${pr.number}`) ?? []).sort(byCreated)) visit(child, depth + 1);
-  };
-  for (const root of roots.sort(byCreated)) visit(root, 0);
-  return out;
 }
 
 export const isOrgWide = (repo) => repo.endsWith("/*");

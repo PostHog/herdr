@@ -2,7 +2,7 @@ import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { theme, props, openOverlay, closeOverlay, shared, setShared, run, machines, notify, layout, nextCommand, focused } from "herdr";
 import { loadStore, store, updateStore, prKey, newId } from "./store.js";
-import { fetchMyPrs, fetchReviews, fetchDetail, statusPill, needsAttention, needsReview, readyToMerge, orderWithStacks, comparePriority, isOrgWide, ownerOf } from "./github.js";
+import { fetchMyPrs, fetchReviews, fetchDetail, statusPill, needsReview, readyToMerge, comparePriority, isOrgWide, ownerOf } from "./github.js";
 import { mergePr, markReady, updateBranch, rerunFailed, approvePr, commentOnPr, resolveThread, openUrl, copyText, markdownLink, toggleWatch, toggleHidden, report, usesTrunk, isTrunkPr, mergesThroughQueue } from "./actions.js";
 import { startFixSession, startReview, syncRuns, fixPrompt, findingsFixPrompt, reviewPromptForOthers, setFindingState, findingsMarkdown } from "./agents.js";
 import { processSnapshot, TRIGGERS, ACTION_KINDS } from "./automation.js";
@@ -10,7 +10,7 @@ import { loadConfig, config, updateConfig, configPath, machineLabel } from "./co
 import { forgetCheckouts, checkoutFor } from "./runner.js";
 import { loadTrunk, dequeue, resetTrunk } from "./trunk.js";
 import { fetchServices, queueService, statusOverview } from "./status.js";
-import { sidebarHeader, sidebarMine, sidebarReviews, sidebarRail, statusLine, prIcon, progressLine, stackHeader, gatesFor, splitByNeed, isQuiet, rowButtons, nextFor } from "./sidebar.js";
+import { sidebarHeader, sidebarMine, sidebarReviews, sidebarRail, statusLine, prIcon, progressLine, stackHeader, gatesFor, splitByNeed, isQuiet, rowButtons, nextFor, needsYou, workRank } from "./sidebar.js";
 import { visualAsks, stackGroups, withoutDraftStacks, step, queueFor, withTrunkQueue } from "./steps.js";
 import { openClaude, CLAUDE_ICON } from "./claude.js";
 import { ago, button, iconButton, glyphButton, textIconButton, chip, badge, section, empty, field, menuItem, SPINNER, tone, TEXT, tint, avatar, countPill, codePill, gateStrip, titleText } from "./ui.js";
@@ -27,9 +27,8 @@ const PAGE_NODE = "prs-page";
 const WORK_NODE = "work";
 const SUGGESTED_WIDTH = 88;
 const QUICK_ACTIONS_WIDTH = SUGGESTED_WIDTH + 144;
-const UPDATED_WIDTH = 64;
 const CONTENT_MAX_WIDTH = 1280;
-const GATE_WIDTH = 64;
+const GATE_WIDTH = 72;
 const NAV_WIDTH = 230;
 const statusWidth = (gate) => gate * 5 + 12;
 const GATE_HEADERS = ["CHECKS", "REVIEW", "THREADS", "CONFLICTS", "QUEUE"];
@@ -88,11 +87,17 @@ const PAGES = [
 ];
 
 const MINE_CHIPS = [
-  { id: "attention", label: "Needs attention", test: needsAttention },
+  { id: "attention", label: "Needs you", test: (pr, needs) => needs.has(prKey(pr.repo, pr.number)) },
   { id: "review", label: "Needs review", test: needsReview },
   { id: "ready", label: "Ready to merge", test: readyToMerge },
-  { id: "watching", label: "Watching", test: (pr) => pr.watching },
+  { id: "watching", label: "Watching", test: (pr) => pr.watching, hideWhenEmpty: true },
 ];
+
+const MINE_SORTS = {
+  newest: { label: "↓ Newest", next: "oldest" },
+  oldest: { label: "↑ Oldest", next: "priority" },
+  priority: { label: "✦ Priority", next: "newest" },
+};
 
 const REVIEW_SORTS = {
   priority: { label: "✦ Priority", next: "newest", compare: comparePriority },
@@ -269,7 +274,7 @@ export default class Prs extends View {
     this.reviewsFailures = 0;
     this.seen = null;
     this.seenConfig = shared("prs.config") ?? null;
-    this.sortNewest = localStorage.getItem("sort") !== "oldest";
+    this.mineSort = MINE_SORTS[localStorage.getItem("sort")] ? localStorage.getItem("sort") : "newest";
     this.reviewSort = REVIEW_SORTS[localStorage.getItem("reviewSort")] ? localStorage.getItem("reviewSort") : "priority";
     this.chips = new Set();
     this.hideDrafts = localStorage.getItem("hideDrafts") === "true";
@@ -775,7 +780,6 @@ export default class Prs extends View {
           .child(columnsFit.gate === GATE_WIDTH
             ? h_flex().w(statusWidth(columnsFit.gate)).flex_none().gap(3).children(GATE_HEADERS.map((label) => div().w(columnsFit.gate).flex_none().text_size(10).child(label)))
             : div().w(statusWidth(columnsFit.gate)).flex_none().child("READINESS"))
-          .when(columnsFit.updated, (el) => el.child(div().w(UPDATED_WIDTH).flex_none().child("UPDATED")))
           .child(div().w(columnsFit.actions).flex_none())
       : null;
     const body = this.page === "mine" ? this.wideMineRows(t) : this.page === "reviews" ? this.wideReviewRows(t) : this.pageBody(t);
@@ -797,7 +801,7 @@ export default class Prs extends View {
       .child(v_flex().flex_1().min_w(0).h_full().child(
         v_flex()
           .w_full()
-          .max_w(CONTENT_MAX_WIDTH)
+          .when(!columns, (el) => el.max_w(CONTENT_MAX_WIDTH))
           .h_full()
           .child(
             h_flex()
@@ -820,10 +824,10 @@ export default class Prs extends View {
   }
 
   wideLayout() {
-    const content = Math.min(CONTENT_MAX_WIDTH, (this.width || CONTENT_MAX_WIDTH + NAV_WIDTH) - NAV_WIDTH);
-    if (content >= 1100) return { gate: GATE_WIDTH, updated: true, quick: true, actions: QUICK_ACTIONS_WIDTH };
-    if (content >= 880) return { gate: 48, updated: true, quick: true, actions: QUICK_ACTIONS_WIDTH };
-    return { gate: 40, updated: false, quick: false, actions: SUGGESTED_WIDTH };
+    const content = (this.width || CONTENT_MAX_WIDTH + NAV_WIDTH) - NAV_WIDTH;
+    if (content >= 1100) return { gate: GATE_WIDTH, quick: true, actions: QUICK_ACTIONS_WIDTH };
+    if (content >= 880) return { gate: 48, quick: true, actions: QUICK_ACTIONS_WIDTH };
+    return { gate: 40, quick: false, actions: SUGGESTED_WIDTH };
   }
 
   quickActions(t, pr, scope, leading = [], shown = true) {
@@ -838,15 +842,16 @@ export default class Prs extends View {
       .w(columnsFit.actions)
       .flex_none()
       .gap(2)
+      .justify_end()
       .items_center()
-      .child(h_flex().w(SUGGESTED_WIDTH).flex_none().gap(4).justify_end().items_center().children(leading))
-      .when(columnsFit.quick, (el) => el.child(div().w(4).flex_none()))
       .when(shown && columnsFit.quick, (el) => el
         .child(glyphButton(t, `prs-q-${scope}-${pr.number}-claude`, image(CLAUDE_ICON).size(14), "Claude Code on this PR", () => choose("claude", pr)))
-        .children(entries.map(([name, iconName, label]) => iconButton(t, `prs-q-${scope}-${pr.number}-${name}`, iconName, label, () => choose(name, pr)))));
+        .children(entries.map(([name, iconName, label]) => iconButton(t, `prs-q-${scope}-${pr.number}-${name}`, iconName, label, () => choose(name, pr))))
+        .child(div().w(6).flex_none()))
+      .child(h_flex().flex_none().gap(4).items_center().children(leading));
   }
 
-  wideRow(t, id, pr, scope, depth, left, middle, right, leading = []) {
+  wideRow(t, id, pr, scope, depth, left, middle, leading = []) {
     return h_flex()
       .id(id)
       .pl(8 + depth * 16)
@@ -866,7 +871,6 @@ export default class Prs extends View {
       })
       .child(v_flex().flex_1().min_w(0).gap(4).children(left))
       .child(middle)
-      .when(this.wideLayout().updated, (el) => el.child(div().w(UPDATED_WIDTH).flex_none().text_size(12).text_color(t.dim).child(right)))
       .child(this.quickActions(t, pr, scope, leading, this.hovered === id));
   }
 
@@ -875,7 +879,7 @@ export default class Prs extends View {
     const prs = this.mineVisible().map((row) => row.pr);
     if (!prs.length) return [empty(t, "No PRs match.")];
     const rows = [];
-    const groups = stackGroups(prs, this.sortNewest);
+    const groups = this.mineGroups(prs);
     const columnsFit = this.wideLayout();
     const primaryRepo = [...new Set(prs.map((pr) => pr.repo))].sort((a, b) => this.repoIndex(a) - this.repoIndex(b))[0];
     for (const part of splitByNeed(this, groups)) {
@@ -888,14 +892,13 @@ export default class Prs extends View {
           const id = `prs-wm-${pr.repo}-${pr.number}`;
           const progress = progressLine(this, t, pr, group);
           const { next, entry } = nextFor(this, pr, group);
-          const meta = `${pr.repo === primaryRepo ? "" : pr.repo}#${pr.number}${pr.mine ? "" : ` · @${pr.author}`} · opened ${ago(pr.createdAt)}`;
+          const meta = `${pr.repo === primaryRepo ? "" : pr.repo}#${pr.number}${pr.mine ? "" : ` · @${pr.author}`} · opened ${ago(pr.createdAt)} · updated ${ago(pr.updatedAt)}`;
           rows.push(this.wideRow(t, id, pr, "mine", group.members.length > 1 ? 1 : 0,
             [
               h_flex().gap(6).items_center().child(prIcon(this, t, pr, { group })).child(div().flex_1().min_w(0).child(this.titleLine(t, pr, isQuiet(this, part, pr, group)))),
               div().pl(19).min_w(0).truncate().text_size(TEXT.meta).text_color(t.dim).child(meta),
             ],
             v_flex().w(statusWidth(columnsFit.gate)).flex_none().gap(5).child(statusLine(this, t, pr, { group, buttons: false })).child(gateStrip(t, id, gatesFor(this, pr, group), { segment: columnsFit.gate, height: 4 })).when(Boolean(progress), (el) => el.child(progress)),
-            ago(pr.updatedAt),
             rowButtons(this, t, pr, { scope: "mine", next, entry, group }),
           ));
         }
@@ -914,10 +917,9 @@ export default class Prs extends View {
       return this.wideRow(t, id, pr, "reviews", 0,
         [
           h_flex().gap(6).items_center().child(prIcon(this, t, pr, { scope: "reviews" })).child(div().flex_1().min_w(0).child(this.titleLine(t, pr))),
-          div().pl(19).truncate().text_size(TEXT.meta).text_color(t.dim).child(`${pr.repo}#${pr.number}${via ? ` · via ${via}` : ""}`),
+          div().pl(19).truncate().text_size(TEXT.meta).text_color(t.dim).child(`${pr.repo}#${pr.number}${via ? ` · via ${via}` : ""} · updated ${ago(pr.updatedAt)}`),
         ],
         v_flex().w(statusWidth(columnsFit.gate)).flex_none().gap(5).child(statusLine(this, t, pr, { scope: "reviews", buttons: false })).child(gateStrip(t, id, gatesFor(this, pr, null, "reviews"), { segment: columnsFit.gate, height: 4 })),
-        ago(pr.updatedAt),
       );
     };
     const rows = visible.length ? visible.map(row) : [empty(t, "No PRs waiting on your review.")];
@@ -972,25 +974,31 @@ export default class Prs extends View {
           .min_w(0)
           .gap(4)
           .flex_wrap()
-          .child(chip(t, "prs-repo", `${repoLabel} ▾`, Boolean(this.repoFilter), () => this.pick("prs.pick.repo", [{ label: "All repos", value: null }, ...this.knownRepos().map((repo) => ({ label: repo, value: repo }))], this.repoFilter)))
-          .when(scope === "mine", (el) => el.children(MINE_CHIPS.map((item) => chip(t, `prs-chip-${item.id}`, item.label, this.chips.has(item.id), (_e, cx) => {
-            if (this.chips.has(item.id)) this.chips.delete(item.id);
-            else this.chips.add(item.id);
-            cx.notify();
-          }, this.mine ? this.mine.prs.filter(item.test).length || null : null))))
-          .when(scope === "mine", (el) => el.child(chip(t, "prs-drafts", "Hide drafts", this.hideDrafts, (_e, cx) => this.toggleDrafts(cx), this.hideDrafts ? this.hiddenDrafts() || null : null)))
-          .when(scope === "mine", (el) => el.child(chip(t, "prs-sort", this.sortNewest ? "↓ Newest" : "↑ Oldest", false, (_e, cx) => {
-            this.sortNewest = !this.sortNewest;
-            localStorage.setItem("sort", this.sortNewest ? "newest" : "oldest");
+          .when(scope === "mine", (el) => el.child(chip(t, "prs-sort", MINE_SORTS[this.mineSort].label, this.mineSort === "priority", (_e, cx) => {
+            this.mineSort = MINE_SORTS[this.mineSort].next;
+            localStorage.setItem("sort", this.mineSort);
             cx.notify();
           })))
-          .when(scope === "reviews", (el) => el
-            .child(chip(t, "prs-via", `${this.viaLabel()} ▾`, Boolean(this.viaFilter), () => this.pick("prs.pick.via", this.viaOptions(), this.viaFilter)))
-            .child(chip(t, "prs-rsort", REVIEW_SORTS[this.reviewSort].label, this.reviewSort === "priority", (_e, cx) => {
-              this.reviewSort = REVIEW_SORTS[this.reviewSort].next;
-              localStorage.setItem("reviewSort", this.reviewSort);
-              cx.notify();
-            })))
+          .when(scope === "reviews", (el) => el.child(chip(t, "prs-rsort", REVIEW_SORTS[this.reviewSort].label, this.reviewSort === "priority", (_e, cx) => {
+            this.reviewSort = REVIEW_SORTS[this.reviewSort].next;
+            localStorage.setItem("reviewSort", this.reviewSort);
+            cx.notify();
+          })))
+          .child(chip(t, "prs-repo", `${repoLabel} ▾`, Boolean(this.repoFilter), () => this.pick("prs.pick.repo", [{ label: "All repos", value: null }, ...this.knownRepos().map((repo) => ({ label: repo, value: repo }))], this.repoFilter)))
+          .when(scope === "mine", (el) => {
+            const needs = this.needsYouKeys();
+            return el.children(MINE_CHIPS.flatMap((item) => {
+              const count = this.mine ? this.mine.prs.filter((pr) => item.test(pr, needs)).length : 0;
+              if (item.hideWhenEmpty && !count && !this.chips.has(item.id)) return [];
+              return [chip(t, `prs-chip-${item.id}`, item.label, this.chips.has(item.id), (_e, cx) => {
+                if (this.chips.has(item.id)) this.chips.delete(item.id);
+                else this.chips.add(item.id);
+                cx.notify();
+              }, count || null)];
+            }));
+          })
+          .when(scope === "mine", (el) => el.child(chip(t, "prs-drafts", "Hide drafts", this.hideDrafts, (_e, cx) => this.toggleDrafts(cx), this.hideDrafts ? this.hiddenDrafts() || null : null)))
+          .when(scope === "reviews", (el) => el.child(chip(t, "prs-via", `${this.viaLabel()} ▾`, Boolean(this.viaFilter), () => this.pick("prs.pick.via", this.viaOptions(), this.viaFilter))))
           .children(filters.map((filter) => chip(t, `prs-filter-${filter.id}`, filter.name, this.savedFilter === filter.id, (_e, cx) => {
             this.savedFilter = this.savedFilter === filter.id ? null : filter.id;
             cx.notify();
@@ -1031,8 +1039,21 @@ export default class Prs extends View {
   }
 
   mineVisible() {
-    const prs = this.applyCommon(this.withDraftsApplied(this.mine?.prs ?? [])).filter((pr) => MINE_CHIPS.every((item) => !this.chips.has(item.id) || item.test(pr)));
-    return orderWithStacks(prs, this.sortNewest);
+    const needs = this.needsYouKeys();
+    const prs = this.applyCommon(this.withDraftsApplied(this.mine?.prs ?? [])).filter((pr) => MINE_CHIPS.every((item) => !this.chips.has(item.id) || item.test(pr, needs)));
+    return this.mineGroups(prs).flatMap((group) => group.members);
+  }
+
+  needsYouKeys() {
+    const groups = stackGroups(this.mine?.prs ?? []).filter((group) => group.members.some((member) => needsYou(this, member.pr, group)));
+    return new Set(groups.flatMap((group) => group.members.map((member) => prKey(member.pr.repo, member.pr.number))));
+  }
+
+  mineGroups(prs) {
+    const groups = stackGroups(prs, this.mineSort !== "oldest");
+    if (this.mineSort !== "priority") return groups;
+    const rank = new Map(groups.map((group) => [group, Math.max(...group.members.map((member) => workRank(this, member.pr, group)))]));
+    return groups.sort((a, b) => rank.get(b) - rank.get(a) || b.updated - a.updated);
   }
 
   reviewsVisible() {
