@@ -3,13 +3,11 @@
 Herdr's main layout with a pull request panel, and optionally a full-page PR workspace.
 The panel sits under the agents list. In the `Pull-Requests` layout, `cmd-shift-g` swaps the terminals for the full page and back; the `github-and-trunk` layout has just the panel. One mod (`prs`) draws both, and runs agent fixes and reviews on this computer or any Herdr machine.
 
-![Pull Requests](preview.png)
-
 ## What you see
 
 - **The layouts:**
   - **`Pull-Requests`:** Herdr's `main` layout with a 372 px sidebar. The sidebar stacks spaces, agents and the PR panel at weights 0.8, 1.18 and 1.22.
-  - **`github-and-trunk`:** the same sidebar, and Herdr's `main` work area unchanged, with no full page. It was its own piece with its own mod (`gh-inbox`) and now runs `prs`. Without the page in the layout, `⤢` and rail clicks open the full page as a 1180×800 dialog (its "Back to terminals" reads "Close"), notifications don't open anything, and `cmd-shift-g` does nothing.
+  - **`github-and-trunk`:** the same sidebar, and Herdr's `main` work area unchanged, with no full page. Without the page in the layout, `⤢` and rail clicks open the full page as a 1180×800 dialog (its "Back to terminals" reads "Close"), notifications don't open anything, and `cmd-shift-g` does nothing.
 - **`flat-spaces`, the spaces list both layouts use:** Herdr's spaces list without the worktree nesting. Every space keeps its own row and avatar, even when its first terminal is in a git worktree, so tabs and panes in one space can each sit in their own worktree. The repo and branch still show after the name. Both layouts here use it; set a layout's `spaces` block back to `{ "mod": "spaces" }` for Herdr's nested list.
 - **The work area:** a stack (`pr-center`) with two children. `work` is Herdr's tabs, panes, Files/Changes panel and status bar, unchanged. `prs-page` is the full PR page. Only one shows at a time; the other keeps running.
 - **The sidebar panel:** tabs **Mine**, **Queue** and **Review**, each with a count, then on Mine a draft icon that hides drafts (colored while they're hidden), a refresh icon (yellow after a failed refresh) and `⤢` to open the full page. Narrower than 160 px it draws a rail of tab icons with counts.
@@ -70,7 +68,7 @@ The panel sits under the agents list. In the `Pull-Requests` layout, `cmd-shift-
   - `config.js` and `store.js` keep the person's settings in `~/.config/herdr-app/data/prs-config.json`, and watched PRs, filters, workflows, runs and findings in `data/prs-state.json`.
 - **Shipped mods it uses:** `toast` through `notify()`. Its menus and dialogs are its own overlays.
 - **Programs:** `gh` (logged in), `git`, `hc`, `claude` on the agent machine, and `trunk` on the Trunk machine (PATH or the checkout's flox environment).
-- **Lineage:** the Trunk parsing, visual review detection, next-step rules, notifications, icons, hidden drafts, the stack depth check and Claude Code on a PR come from `gh-inbox`, the mod of the `github-and-trunk` piece before it moved here. The review priority rules follow Talyn's review ranking. The review prompts follow pr-keeper's lenses and judge.
+- **Lineage:** the Trunk parsing, visual review detection, next-step rules, notifications, icons, hidden drafts, the stack depth check and Claude Code on a PR come from `gh-inbox`, the mod this piece replaced. The review priority rules follow Talyn's review ranking. The review prompts follow pr-keeper's lenses and judge.
 
 ## Watch out
 
