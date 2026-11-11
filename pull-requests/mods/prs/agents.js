@@ -53,7 +53,7 @@ Rules:
 - Never pass --no-verify or bypass hooks, never force-push, and never skip, disable or loosen a test to make it pass.
 - Use conventional commit messages. Don't amend or rebase commits already on the remote.
 - Never merge, enqueue or approve the PR.
-- If the branch has no open PR, show me what you plan to push before you push. If it has one, push without asking.
+- If the branch has no open PR, show me your plan before you push; otherwise, push without asking.
 - Ask before replying on GitHub.`;
 }
 
