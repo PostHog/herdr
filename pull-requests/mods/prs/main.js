@@ -407,12 +407,25 @@ export default class Prs extends View {
     this.loadingServices = true;
     cx.spawn(async (cx) => {
       try {
+        const previous = this.serviceStatus;
         this.serviceStatus = await fetchServices(config().status?.services, (ms) => cx.sleep(ms));
         setShared("prs.cache.services", this.serviceStatus);
+        this.announceOutages(previous?.services ?? []);
       } catch {}
       this.loadingServices = false;
       cx.notify();
     });
+  }
+
+  announceOutages(previous) {
+    if (config().notifications === false) return;
+    const wasDown = new Set(previous.filter((service) => service.level === "bad").map((service) => service.name));
+    const action = hasPage() ? { action: { name: "layout.select", args: { stack: VIEW_STACK, child: PAGE_NODE } } } : {};
+    for (const service of this.serviceStatus.services) {
+      if (service.level !== "bad" || wasDown.has(service.name)) continue;
+      const incident = service.incidents[0]?.name;
+      notify({ title: `${service.name} major outage`, body: incident ?? service.description, level: "error", timeout: 12000, ...action });
+    }
   }
 
   allServices() {
@@ -798,7 +811,7 @@ export default class Prs extends View {
           cx.stop_propagation();
         }))
       .child(nav)
-      .child(v_flex().flex_1().min_w(0).h_full().child(
+      .child(v_flex().flex_1().min_w(0).h_full().when(!columns, (el) => el.items_center()).child(
         v_flex()
           .w_full()
           .when(!columns, (el) => el.max_w(CONTENT_MAX_WIDTH))
