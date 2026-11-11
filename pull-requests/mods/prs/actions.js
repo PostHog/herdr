@@ -22,6 +22,10 @@ export async function mergePr(pr) {
   return gh(["pr", "merge", String(pr.number), "-R", pr.repo, "--squash", "--match-head-commit", pr.headSha]);
 }
 
+export function markReady(pr) {
+  return gh(["pr", "ready", String(pr.number), "-R", pr.repo]);
+}
+
 export function updateBranch(pr) {
   return gh(["pr", "update-branch", String(pr.number), "-R", pr.repo]);
 }

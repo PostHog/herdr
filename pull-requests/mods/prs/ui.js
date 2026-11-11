@@ -47,6 +47,10 @@ export function button(t, id, label, onClick, options = {}) {
 }
 
 export function iconButton(t, id, iconName, label, onClick, toneName = "muted") {
+  return glyphButton(t, id, svg(`mods/prs/icons/${iconName}.svg`).size(14).text_color(tone(t, toneName)), label, onClick);
+}
+
+export function glyphButton(t, id, glyph, label, onClick) {
   return h_flex()
     .id(id)
     .w(26)
@@ -63,7 +67,7 @@ export function iconButton(t, id, iconName, label, onClick, toneName = "muted") 
       cx.stop_propagation();
       onClick(event, cx);
     })
-    .child(svg(`mods/prs/icons/${iconName}.svg`).size(14).text_color(tone(t, toneName)));
+    .child(glyph);
 }
 
 export function textIconButton(t, id, iconName, label, onClick) {
