@@ -10,7 +10,7 @@ import { loadConfig, config, updateConfig, configPath, machineLabel } from "./co
 import { forgetCheckouts, checkoutFor } from "./runner.js";
 import { loadTrunk, dequeue, resetTrunk } from "./trunk.js";
 import { fetchServices, queueService, statusOverview } from "./status.js";
-import { sidebarHeader, sidebarMine, sidebarReviews, sidebarRail, statusLine, prIcon, progressLine, stackHeader, gatesFor, splitByNeed, needsYou, rowButtons, nextFor } from "./sidebar.js";
+import { sidebarHeader, sidebarMine, sidebarReviews, sidebarRail, statusLine, prIcon, progressLine, stackHeader, gatesFor, splitByNeed, isQuiet, rowButtons, nextFor } from "./sidebar.js";
 import { visualAsks, stackGroups, withoutDraftStacks, step, queueFor } from "./steps.js";
 import { openClaude, CLAUDE_ICON } from "./claude.js";
 import { ago, button, iconButton, glyphButton, textIconButton, chip, badge, section, empty, field, menuItem, SPINNER, tone, TEXT, tint, avatar, countPill, codePill, gateStrip, titleText } from "./ui.js";
@@ -878,7 +878,7 @@ export default class Prs extends View {
           const meta = `${pr.repo === primaryRepo ? "" : pr.repo}#${pr.number}${pr.mine ? "" : ` · @${pr.author}`} · opened ${ago(pr.createdAt)}`;
           rows.push(this.wideRow(t, id, pr, "mine", group.members.length > 1 ? 1 : 0,
             [
-              h_flex().gap(6).items_center().child(prIcon(this, t, pr, { group })).child(div().flex_1().min_w(0).child(this.titleLine(t, pr, !needsYou(this, pr, group)))),
+              h_flex().gap(6).items_center().child(prIcon(this, t, pr, { group })).child(div().flex_1().min_w(0).child(this.titleLine(t, pr, isQuiet(this, part, pr, group)))),
               div().pl(19).min_w(0).truncate().text_size(TEXT.meta).text_color(t.dim).child(meta),
             ],
             v_flex().w(STATUS_WIDTH).flex_none().gap(5).child(statusLine(this, t, pr, { group, buttons: false })).child(gateStrip(t, id, gatesFor(this, pr, group), { segment: GATE_WIDTH, height: 4 })).when(Boolean(progress), (el) => el.child(progress)),

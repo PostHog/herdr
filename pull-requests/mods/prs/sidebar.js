@@ -80,13 +80,24 @@ export function needsYou(view, pr, group) {
   return pr.isDraft || visualAsks(pr).length > 0 || Boolean(next.requeue) || fixable(pr) || Boolean(next.ready && !entry);
 }
 
+const QUEUE_DONE = ["Merged", "Failed", "Cancelled"];
+
+export function inQueue(view, pr, group) {
+  const { entry } = nextFor(view, pr, group);
+  return entry ? !QUEUE_DONE.includes(entry.state) : Boolean(pr.queue?.active);
+}
+
 export function splitByNeed(view, groups) {
   const needs = groups.filter((group) => group.members.some((member) => needsYou(view, member.pr, group)));
+  const queued = groups.filter((group) => !needs.includes(group) && group.members.some((member) => inQueue(view, member.pr, group)));
   return [
     { id: "needs", label: "Needs you", groups: needs },
-    { id: "waiting", label: "Waiting on others", groups: groups.filter((group) => !needs.includes(group)) },
+    { id: "queue", label: "In the merge queue", groups: queued },
+    { id: "waiting", label: "Waiting on others", groups: groups.filter((group) => !needs.includes(group) && !queued.includes(group)) },
   ].filter((part) => part.groups.length);
 }
+
+export const isQuiet = (view, part, pr, group) => part.id === "waiting" || (part.id === "needs" && !needsYou(view, pr, group));
 
 export function priorityBadge(t, pr) {
   const chip = pr.priority?.chip;
@@ -230,8 +241,8 @@ export function sidebarMine(view, t) {
       const showRepo = group.repo !== primaryRepo;
       if (group.members.length > 1) {
         rows.push(stackHeader(view, t, group));
-        for (const member of [...group.members].reverse()) rows.push(prRow(view, t, member.pr, { depth: 1, group, quiet: !needsYou(view, member.pr, group), showRepo }));
-      } else rows.push(prRow(view, t, group.members[0].pr, { group, quiet: part.id === "waiting", showRepo }));
+        for (const member of [...group.members].reverse()) rows.push(prRow(view, t, member.pr, { depth: 1, group, quiet: isQuiet(view, part, member.pr, group), showRepo }));
+      } else rows.push(prRow(view, t, group.members[0].pr, { group, quiet: isQuiet(view, part, group.members[0].pr, group), showRepo }));
     }
   }
   return rows;
