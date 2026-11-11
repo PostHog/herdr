@@ -36,6 +36,15 @@ export function queueFor(pr, group, trunk) {
   return null;
 }
 
+const TRUNK_QUEUE_STATE = { Testing: "testing", "Tests Passed": "tests_passed", Pending: "pending", "Not Ready": "not_ready", "Pending Failure": "pending_failure", Failed: "failed", Cancelled: "cancelled", Merged: "merged" };
+const TRUNK_QUEUE_DONE = ["failed", "cancelled", "merged"];
+
+export function withTrunkQueue(pr, entry) {
+  const state = entry ? TRUNK_QUEUE_STATE[entry.state] : null;
+  if (!state) return pr;
+  return { ...pr, queue: { provider: "trunk", state, position: null, active: !TRUNK_QUEUE_DONE.includes(state) } };
+}
+
 export function step(pr, entry, trunk) {
   if (entry) {
     const via = entry.via ? ` via #${entry.via}` : "";
@@ -71,7 +80,7 @@ export function step(pr, entry, trunk) {
   const why = blocker(pr);
   if (why) return why;
   if (pr.queue?.active) return { icon: "queue", tone: "accent", label: "In merge queue" };
-  if (pr.mergeState === "BEHIND") return { icon: "waiting", tone: "warn", label: "Behind base" };
+  if (pr.mergeState === "BEHIND") return { icon: "waiting", tone: "warn", label: "Behind base", behind: true };
   if (!readyToMerge(pr)) return { icon: "waiting", tone: "warn", label: "Not mergeable yet" };
   return { icon: "check", tone: "ok", label: "Ready to merge", ready: true };
 }

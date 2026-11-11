@@ -2,10 +2,11 @@ import { div, svg, image } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { run } from "herdr";
 import { comparePriority } from "./github.js";
-import { LISTING_CAP } from "./trunk.js";
 import { step, queueFor, stackGroups, layerWaitingOn, visualAsks, fixable } from "./steps.js";
 import { CLAUDE_ICON } from "./claude.js";
-import { ago, tone, button, iconButton, badge, TEXT } from "./ui.js";
+import { ago, tone, actionButton, badge, gateStrip, titleText, TEXT } from "./ui.js";
+import { readiness } from "./sheet.js";
+import { mergesThroughQueue } from "./actions.js";
 
 const ICON = (name) => `mods/prs/icons/${name}.svg`;
 
@@ -16,15 +17,11 @@ export function icon(t, name, toneName, size = 13, spin = false) {
 
 export const SIDEBAR_TABS = [
   { id: "mine", label: "Mine", icon: "pr" },
-  { id: "queue", label: "Queue", icon: "queue" },
   { id: "reviews", label: "Review", icon: "eye" },
 ];
 
-function tinyButton(t, id, label, onClick, primary = false, extra = {}) {
-  return button(t, id, label, onClick, { small: true, primary, ...extra });
-}
-
 const VISUAL_ICONS = { storybook: "book", playwright: "drama" };
+const VISUAL_COLORS = { storybook: "#FF4785" };
 
 export function stat(t, iconName, text, toneName = "dim") {
   return h_flex().gap(3).flex_none().items_center().child(icon(t, iconName, toneName, 11)).child(div().text_size(TEXT.meta).text_color(tone(t, toneName)).child(text));
@@ -69,30 +66,65 @@ export function nextFor(view, pr, group) {
   return { next, entry };
 }
 
+export function gatesFor(view, pr, group, scope = "mine") {
+  const { gates } = readiness(pr, null, { queueBased: mergesThroughQueue(pr) });
+  if (scope !== "mine") return gates;
+  const { next, entry } = nextFor(view, pr, group);
+  if (!entry) return gates;
+  return gates.map((gate) => (gate.id === "queue" ? { ...gate, state: next.tone === "dim" ? "warn" : next.tone, sub: next.label } : gate));
+}
+
+export function needsYou(view, pr, group) {
+  if (!pr.mine) return false;
+  const { next, entry } = nextFor(view, pr, group);
+  return pr.isDraft || visualAsks(pr).length > 0 || Boolean(next.requeue) || fixable(pr) || Boolean(next.behind) || Boolean(next.ready && !entry);
+}
+
+const QUEUE_DONE = ["Merged", "Failed", "Cancelled"];
+
+export function inQueue(view, pr, group) {
+  const { entry } = nextFor(view, pr, group);
+  return entry ? !QUEUE_DONE.includes(entry.state) : Boolean(pr.queue?.active);
+}
+
+export function splitByNeed(view, groups) {
+  const needs = groups.filter((group) => group.members.some((member) => needsYou(view, member.pr, group)));
+  const queued = groups.filter((group) => !needs.includes(group) && group.members.some((member) => inQueue(view, member.pr, group)));
+  return [
+    { id: "needs", label: "Needs you", groups: needs },
+    { id: "queue", label: "Enqueued", groups: queued },
+    { id: "waiting", label: "Waiting on others", groups: groups.filter((group) => !needs.includes(group) && !queued.includes(group)) },
+  ].filter((part) => part.groups.length);
+}
+
+export const isQuiet = (view, part, pr, group) => part.id === "waiting" || (part.id === "needs" && !needsYou(view, pr, group));
+
 export function priorityBadge(t, pr) {
   const chip = pr.priority?.chip;
   return chip ? badge(t, chip.label, chip.points > 0 ? "ok" : "dim") : null;
 }
 
-export function rowButtons(view, t, pr, { scope, next, entry, group }) {
+export function rowButtons(view, t, pr, { scope, next, entry, group, plain = false }) {
   const buttons = [];
   if (scope !== "mine" || !next) return buttons;
-  for (const ask of visualAsks(pr)) buttons.push(tinyButton(t, `prs-b-vis-${pr.number}-${ask.type}`, "Approve", () => view.act("openUrl", { ...pr, url: ask.url }), true, { icon: VISUAL_ICONS[ask.type] ?? "eye", tooltip: `Approve ${ask.type} changes: ${ask.summary}` }));
-  if (pr.isDraft && pr.mine) buttons.push(iconButton(t, `prs-b-ready-${pr.number}`, "pr", "Mark ready for review", () => view.act("markReady", pr), "ok"));
-  if (next.ready && (!group || group.members.length === 1) && !entry) buttons.push(iconButton(t, `prs-b-merge-${pr.number}`, "merged", "Merge…", () => view.act("merge", pr), "ok"));
-  if (next.requeue) buttons.push(iconButton(t, `prs-b-again-${pr.number}`, "merged", "Merge again…", () => view.act("merge", pr), "ok"));
-  if (fixable(pr)) buttons.push(iconButton(t, `prs-b-fix-${pr.number}`, "wrench", "Fix with Claude", () => view.act("fix", pr)));
+  for (const ask of visualAsks(pr)) buttons.push(actionButton(t, `prs-b-vis-${pr.number}-${ask.type}`, VISUAL_ICONS[ask.type] ?? "eye", `Approve ${ask.type} changes: ${ask.summary}`, () => view.act("openUrl", { ...pr, url: ask.url }), "warn", { plain, color: VISUAL_COLORS[ask.type] ?? null }));
+  if (pr.isDraft && pr.mine) buttons.push(actionButton(t, `prs-b-ready-${pr.number}`, "pr", "Mark ready for review", () => view.act("markReady", pr), "ok", { plain }));
+  if (next.ready && (!group || group.members.length === 1) && !entry) buttons.push(actionButton(t, `prs-b-merge-${pr.number}`, "merged", mergesThroughQueue(pr) ? "Send to queue…" : "Merge…", () => view.act("merge", pr), "ok", { plain }));
+  if (next.requeue) buttons.push(actionButton(t, `prs-b-again-${pr.number}`, "merged", mergesThroughQueue(pr) ? "Send to queue again…" : "Merge again…", () => view.act("merge", pr), "ok", { plain }));
+  if (next.behind && pr.mine) buttons.push(actionButton(t, `prs-b-update-${pr.number}`, "refresh", "Update branch", () => view.act("updateBranch", pr), "info", { plain }));
+  if (fixable(pr)) buttons.push(actionButton(t, `prs-b-fix-${pr.number}`, "wrench", "Fix with Claude", () => view.act("fix", pr), "merged", { plain }));
   return buttons;
 }
 
-export function statusLine(view, t, pr, { scope = "mine", group = null, buttons = true } = {}) {
+export function statusLine(view, t, pr, { scope = "mine", group = null, buttons = true, number = null } = {}) {
   const { next, entry } = scope === "mine" ? nextFor(view, pr, group) : { next: null, entry: null };
-  const ci = pr.checks.total && next?.icon !== "spinner" ? stat(t, pr.checks.failed ? "fail" : "check", `${pr.checks.passed}/${pr.checks.total}`, pr.checks.failed ? "bad" : "dim") : null;
+  const ci = pr.checks.failed ? stat(t, "fail", `${pr.checks.passed}/${pr.checks.total}`, "bad") : null;
   const priority = scope !== "mine" ? priorityBadge(t, pr) : null;
   return h_flex()
     .gap(7)
     .items_center()
     .flex_wrap()
+    .when(Boolean(number), (el) => el.child(div().flex_none().text_size(TEXT.meta).text_color(t.dim).child(number)))
     .when(Boolean(next), (el) => el.child(div().flex_none().text_size(TEXT.chip).text_color(tone(t, next.tone)).child(next.label)))
     .when(Boolean(priority), (el) => el.child(priority))
     .when(scope !== "mine", (el) => el.child(div().flex_none().text_size(TEXT.meta).text_color(t.dim).child(`@${pr.author} · ${ago(pr.createdAt)}`)))
@@ -100,7 +132,7 @@ export function statusLine(view, t, pr, { scope = "mine", group = null, buttons 
     .when(pr.approvals > 0, (el) => el.child(stat(t, "approved", String(pr.approvals), "ok")))
     .when(pr.threads.total > 0, (el) => el.child(stat(t, "comment", String(pr.threads.total), "warn")))
     .when(Boolean(pr.watching && !pr.mine), (el) => el.child(stat(t, "eye", "watching", "info")))
-    .when(buttons, (el) => el.children(rowButtons(view, t, pr, { scope, next, entry, group })));
+    .when(buttons, (el) => el.child(div().flex_1()).children(rowButtons(view, t, pr, { scope, next, entry, group, plain: true })));
 }
 
 export function prIcon(view, t, pr, { scope = "mine", group = null } = {}) {
@@ -139,7 +171,7 @@ function linkIcons(view, t, id, pr) {
     .child(hoverIcon(t, `${id}-open`, svg(ICON("external")).size(13), "Open on GitHub", () => view.act("open", pr)));
 }
 
-function prRow(view, t, pr, { depth = 0, group = null, scope = "mine" } = {}) {
+function prRow(view, t, pr, { depth = 0, group = null, scope = "mine", quiet = false, showRepo = false } = {}) {
   const progress = scope === "mine" ? progressLine(view, t, pr, group) : null;
   const id = `prs-sb-${scope}-${pr.repo}-${pr.number}`;
   return v_flex()
@@ -162,12 +194,12 @@ function prRow(view, t, pr, { depth = 0, group = null, scope = "mine" } = {}) {
         .gap(6)
         .items_center()
         .child(prIcon(view, t, pr, { scope, group }))
-        .child(div().flex_none().text_size(TEXT.meta).text_color(t.dim).child(`#${pr.number}`))
-        .child(div().flex_1().min_w(0).truncate().text_size(TEXT.title).child(pr.title))
+        .child(titleText(t, pr.title, { quiet }))
         .when(view.isBusy(pr), (el) => el.child(icon(t, "spinner", "dim", 11, true)))
         .when(view.hovered === id, (el) => el.child(linkIcons(view, t, id, pr))),
     )
-    .child(div().pl(19).child(statusLine(view, t, pr, { scope, group })))
+    .child(div().pl(19).child(gateStrip(t, id, gatesFor(view, pr, group, scope))))
+    .child(div().pl(19).child(statusLine(view, t, pr, { scope, group, number: `${showRepo ? pr.repo.split("/")[1] : ""}#${pr.number}` })))
     .when(Boolean(progress), (el) => el.child(div().pl(19).child(progress)));
 }
 
@@ -186,9 +218,10 @@ export function stackHeader(view, t, group) {
     .gap(6)
     .items_center()
     .child(icon(t, "stack", "merged", 12))
-    .child(div().flex_1().min_w(0).truncate().text_size(TEXT.meta).text_color(t.muted).child(`Stack of ${group.members.length} · ${top.headRef}`))
+    .child(div().min_w(0).truncate().text_size(TEXT.meta).text_color(t.muted).child(`Stack of ${group.members.length} · ${top.headRef}`))
     .child(div().flex_none().text_size(TEXT.meta).text_color(queued ? t.accent : all ? tone(t, "ok") : t.dim).child(queued ? queued.state : `${ready}/${group.members.length} ready`))
-    .when(all && !queued && top.mine, (el) => el.child(iconButton(t, `prs-stack-merge-${group.id}`, "merged", "Merge stack…", () => view.act("merge", top), "ok")));
+    .child(div().flex_1())
+    .when(all && !queued && top.mine, (el) => el.child(actionButton(t, `prs-stack-merge-${group.id}`, "merged", "Merge stack…", () => view.act("merge", top), "ok", { plain: true })));
 }
 
 export function sidebarMine(view, t) {
@@ -198,89 +231,21 @@ export function sidebarMine(view, t) {
     const drafts = view.hiddenDrafts();
     return [view.placeholder(t, null, drafts ? `No open PRs besides ${drafts} hidden draft${drafts === 1 ? "" : "s"}.` : "No open PRs in your repos.")];
   }
-  const byRepo = new Map();
-  for (const group of stackGroups(prs)) byRepo.set(group.repo, [...(byRepo.get(group.repo) ?? []), group]);
-  const repoOrder = [...byRepo.keys()].sort((a, b) => view.repoIndex(a) - view.repoIndex(b));
+  const groups = stackGroups(prs).sort((a, b) => view.repoIndex(a.repo) - view.repoIndex(b.repo));
+  const primaryRepo = groups[0].repo;
   const rows = [];
-  for (const [index, repo] of repoOrder.entries()) {
-    if (index > 0) rows.push(foldHeader(view, t, `repo:${repo}`, repo.split("/")[1], byRepo.get(repo).reduce((sum, group) => sum + group.members.length, 0)));
-    if (view.folded.has(`repo:${repo}`)) continue;
-    for (const group of byRepo.get(repo)) {
+  for (const part of splitByNeed(view, groups)) {
+    const foldId = `mine:${part.id}`;
+    rows.push(foldHeader(view, t, foldId, part.label, part.groups.reduce((sum, group) => sum + group.members.length, 0)));
+    if (view.folded.has(foldId)) continue;
+    for (const group of part.groups) {
+      const showRepo = group.repo !== primaryRepo;
       if (group.members.length > 1) {
         rows.push(stackHeader(view, t, group));
-        for (const member of [...group.members].reverse()) rows.push(prRow(view, t, member.pr, { depth: 1, group }));
-      } else rows.push(prRow(view, t, group.members[0].pr, { group }));
+        for (const member of [...group.members].reverse()) rows.push(prRow(view, t, member.pr, { depth: 1, group, quiet: isQuiet(view, part, member.pr, group), showRepo }));
+      } else rows.push(prRow(view, t, group.members[0].pr, { group, quiet: isQuiet(view, part, group.members[0].pr, group), showRepo }));
     }
   }
-  return rows;
-}
-
-const QUEUE_SECTIONS = [
-  { id: "testing", label: "Testing", states: ["Testing"] },
-  { id: "merging", label: "Merging", states: ["Tests Passed"] },
-  { id: "waiting", label: "Waiting", states: ["Pending"], numbered: true },
-  { id: "notready", label: "Not ready", states: ["Not Ready"] },
-  { id: "failing", label: "Failing", states: ["Pending Failure"] },
-  { id: "failed", label: "Failed", states: ["Failed", "Cancelled"] },
-  { id: "merged", label: "Recently merged", states: ["Merged"] },
-];
-
-const STATE_ICON = { Testing: ["testing", "run"], "Tests Passed": ["rocket", "ok"], Pending: ["hourglass", "accent"], "Not Ready": ["paused", "warn"], "Pending Failure": ["fail", "bad"], Failed: ["fail", "bad"], Cancelled: ["ban", "dim"], Merged: ["merged", "merged"] };
-
-export function sidebarQueue(view, t) {
-  const trunk = view.trunk;
-  if (!trunk) return [view.placeholder(t, null, "Reading the Trunk merge queue…")];
-  if (!trunk.listing) return [view.placeholder(t, trunk.error, "The merge queue isn't available.")];
-  const mine = new Set((view.mine?.prs ?? []).filter((pr) => pr.repo === trunk.repo).map((pr) => pr.number));
-  const items = trunk.listing.items;
-  const rows = [
-    h_flex()
-      .px(8)
-      .pt(6)
-      .gap(6)
-      .items_center()
-      .child(icon(t, "queue", "muted", 12))
-      .child(div().text_size(11).text_color(t.muted).child(`${trunk.repo} · ${trunk.listing.branch}`))
-      .child(div().flex_1())
-      .child(div().text_size(10.5).text_color(trunk.listing.running === "Running" ? tone(t, "ok") : tone(t, "warn")).child(trunk.listing.running)),
-  ];
-  const yours = items.filter((item) => mine.has(item.number) && item.state !== "Merged");
-  const row = (item, index, numbered) => {
-    const [iconName, toneName] = STATE_ICON[item.state] ?? ["pr", "muted"];
-    const pr = view.findPr(trunk.repo, item.number, item.title);
-    const id = `prs-q-${item.state}-${item.number}`;
-    return h_flex()
-      .id(id)
-      .px(8)
-      .py(4)
-      .gap(6)
-      .items_center()
-      .rounded(7)
-      .cursor_pointer()
-      .hover((el) => el.bg(t.hover))
-      .on_hover((on, cx) => view.hover(id, on, cx))
-      .on_click(() => view.act("details", pr))
-      .on_mouse_down("right", (_e, cx) => {
-        cx.stop_propagation();
-        view.menu(pr, "queue");
-      })
-      .child(icon(t, iconName, toneName, 12))
-      .when(numbered, (el) => el.child(div().w(18).flex_none().text_size(10.5).text_color(t.dim).child(String(index + 1))))
-      .child(div().flex_none().text_size(11).text_color(t.dim).child(`#${item.number}`))
-      .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(mine.has(item.number) ? t.foreground : t.muted).child(item.title))
-      .when(view.hovered === id, (el) => el.child(linkIcons(view, t, id, pr)));
-  };
-  if (yours.length) {
-    rows.push(foldHeader(view, t, "queue:yours", "Yours", yours.length));
-    if (!view.folded.has("queue:yours")) rows.push(...yours.map((item, index) => row(item, index, false)));
-  }
-  for (const section of QUEUE_SECTIONS) {
-    const list = items.filter((item) => section.states.includes(item.state));
-    if (!list.length) continue;
-    rows.push(foldHeader(view, t, `queue:${section.id}`, section.label, list.length >= LISTING_CAP ? `${LISTING_CAP}+` : list.length));
-    if (!view.folded.has(`queue:${section.id}`)) rows.push(...list.map((item, index) => row(item, index, section.numbered)));
-  }
-  if (rows.length === 1) rows.push(view.placeholder(t, null, "The queue is empty."));
   return rows;
 }
 
@@ -305,30 +270,48 @@ export function sidebarHeader(view, t, counts) {
   const failing = view.failures > 0;
   return h_flex()
     .px(6)
-    .pt(6)
-    .pb(4)
-    .gap(2)
+    .pt(8)
+    .pb(6)
+    .gap(4)
     .items_center()
     .children(
       SIDEBAR_TABS.map((tab) => {
         const on = view.sidebarTab === tab.id;
         return h_flex()
           .id(`prs-sbtab-${tab.id}`)
-          .h(24)
-          .px(7)
-          .gap(4)
+          .h(28)
+          .px(10)
+          .gap(6)
           .items_center()
-          .rounded(6)
+          .rounded(7)
           .cursor_pointer()
           .when(on, (el) => el.bg(t.raised))
           .hover((el) => el.bg(t.hover))
           .on_click((_e, cx) => view.setSidebarTab(tab.id, cx))
-          .child(icon(t, tab.icon, on ? "foreground" : "muted", 12))
-          .child(div().text_size(11.5).text_color(on ? t.foreground : t.muted).child(tab.label))
-          .when(Boolean(counts[tab.id]), (el) => el.child(div().text_size(10.5).text_color(t.dim).child(String(counts[tab.id]))));
+          .child(icon(t, tab.icon, on ? "foreground" : "muted", 13))
+          .child(div().text_size(12).text_color(on ? t.foreground : t.muted).child(tab.label))
+          .when(Boolean(counts[tab.id]), (el) => el.child(div().text_size(12).text_color(t.dim).child(String(counts[tab.id]))));
       }),
     )
     .child(div().flex_1())
+    .when(Boolean(view.statusAlert()), (el) => {
+      const alert = view.statusAlert();
+      return el.child(
+        h_flex()
+          .id("prs-sb-status")
+          .h(20)
+          .px(5)
+          .gap(4)
+          .items_center()
+          .rounded(5)
+          .cursor_pointer()
+          .hover((s) => s.bg(t.hover))
+          .tooltip(alert.title)
+          .on_click(() => view.openPage("status"))
+          .child(icon(t, "alert", alert.level, 12))
+          .child(div().text_size(10.5).text_color(tone(t, alert.level)).child(String(alert.troubled.length))),
+      );
+    })
     .when(view.sidebarTab === "mine", (el) => el.child(draftsButton(view, t)))
     .child(h_flex().id("prs-sb-refresh").p(4).rounded(5).cursor_pointer().hover((el) => el.bg(t.hover)).on_click((_e, cx) => view.refreshAll(cx)).child(icon(t, "refresh", failing ? "warn" : "dim", 12, view.loading())))
     .child(h_flex().id("prs-sb-page").px(5).h(20).items_center().rounded(5).cursor_pointer().hover((el) => el.bg(t.hover)).on_click(() => view.openPage()).child(div().text_size(11).text_color(t.dim).child("⤢")));

@@ -5,6 +5,7 @@ import { enqueue, trunkRepo, TrunkUnavailable } from "./trunk.js";
 
 export const isTrunkPr = (pr) => Boolean(trunkRepo()) && pr.repo === trunkRepo();
 export const usesTrunk = (pr) => pr.queue?.provider === "trunk";
+export const mergesThroughQueue = (pr) => isTrunkPr(pr) || usesTrunk(pr) || pr.queue?.provider === "github";
 
 const commentTrunkMerge = (pr) => gh(["pr", "comment", String(pr.number), "-R", pr.repo, "-b", "/trunk merge"]);
 

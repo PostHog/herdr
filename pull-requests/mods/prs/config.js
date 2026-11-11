@@ -1,4 +1,5 @@
 import { appHome, readTextFile, writeTextFile, setShared } from "herdr";
+import { DEFAULT_SERVICES } from "./status.js";
 
 export const DEFAULT_CONFIG = {
   version: 1,
@@ -8,6 +9,7 @@ export const DEFAULT_CONFIG = {
   trunk: { repo: "PostHog/posthog", machine: null },
   models: { review: "claude-sonnet-5-5", judge: "claude-opus-5-5" },
   notifications: true,
+  status: { services: DEFAULT_SERVICES },
 };
 
 let cache = null;

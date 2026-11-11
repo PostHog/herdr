@@ -1,13 +1,11 @@
 # PostHog Herdr layouts and mods
 
 Layouts and mods for [Herdr](https://herdr.dev) that people at PostHog made for themselves and share here.
-Each top-level folder with a `RECIPE.md` is one piece, apart from retired ones (below). You pick the pieces you want, and `install.sh` copies them into your Herdr config and keeps them up to date with your teammates' changes.
+Each top-level folder with a `RECIPE.md` is one piece. You pick the pieces you want, and `install.sh` copies them into your Herdr config and keeps them up to date with your teammates' changes.
 
 | Piece | What it is |
 | --- | --- |
-| [`pull-requests`](pull-requests/RECIPE.md) | A PR panel for Herdr's sidebar: your PRs, the Trunk merge queue and your reviews. Two layouts: `github-and-trunk` has just the panel, and `Pull-Requests` adds a full-page PR workspace (`cmd-shift-g`) with review ranking, workflows, and agent fixes and reviews on this computer or a Herdr machine. Both use `flat-spaces`, a spaces list that doesn't fold worktree spaces under their repo. |
-
-`github-and-trunk` used to be its own piece. It's part of `pull-requests` now, and `./install.sh` moves you over if you had it enabled. Its old folder stays for a while so older copies of `install.sh` keep working; `./install.sh` never lists or offers it.
+| [`pull-requests`](pull-requests/README.md) | A PR panel for Herdr's sidebar: your PRs, the Trunk merge queue and your reviews. Two layouts: `github-and-trunk` has just the panel, and `Pull-Requests` adds a full-page PR workspace (`cmd-shift-g`) with review ranking, workflows, and agent fixes and reviews on this computer or a Herdr machine. Both use `flat-spaces`, a spaces list that doesn't fold worktree spaces under their repo. |
 
 ## Install
 
@@ -28,7 +26,7 @@ herdr-app do layout.switch '{"name":"github-and-trunk"}'   # just the panel
 
 The `pull-requests` piece needs the [GitHub CLI](https://cli.github.com) logged in (`gh auth login`).
 For the merge queue it also needs Trunk: a `PostHog/posthog` checkout, and `trunk` on your PATH or from that checkout's flox environment, after `trunk login`.
-Without Trunk, the rest of the panel works and the Queue tab says what's missing.
+Without Trunk, the rest of the panel works and the Status page says what's missing.
 
 Agent fixes and reviews also need `claude` on the machine they run on. Settings, on the full page, sets the repos (`owner/*` covers a whole org), where agents and Trunk run, and each repo's checkout. In `github-and-trunk`, the panel's `⤢` opens the full page as a dialog. Merge `pull-requests/keys.json` (`cmd-shift-g`) into yours by hand.
 
@@ -49,8 +47,6 @@ It skips the pull when your checkout has local changes.
 ./install.sh enable <piece>     # install it
 ./install.sh disable <piece>    # remove it
 ```
-
-A retired piece's name still works: `enable github-and-trunk` enables `pull-requests`, and `disable github-and-trunk` removes what it placed without enabling anything.
 
 `cmd-shift-l` cycles through every layout in Herdr's config folder.
 That's Herdr's own `main`, `terminals` and `win98`, which Herdr puts back on every start, plus the pieces you enabled.
@@ -75,7 +71,7 @@ It only removes files it placed itself, which it lists in `~/.config/herdr-app/.
 
    Herdr's own guide, `~/.config/herdr-app/AGENTS.md`, covers layouts, mods and the `RECIPE.md` format.
    The first sentence of `RECIPE.md` is the summary `install.sh` shows, so keep it short.
-2. Pick names that no other piece uses, including retired ones like `github-and-trunk`, and that Herdr doesn't ship (`main`, `terminals`, `win98`, `agents`, `tabs`, `spaces`, and the rest under `~/.config/herdr-app/mods/`). The script skips a name Herdr ships, because Herdr would overwrite it.
+2. Pick names that no other piece uses and that Herdr doesn't ship (`main`, `terminals`, `win98`, `agents`, `tabs`, `spaces`, and the rest under `~/.config/herdr-app/mods/`). The script skips a name Herdr ships, because Herdr would overwrite it.
 3. Install it and try it: `./install.sh enable my-piece`, then `herdr-app check ~/.config/herdr-app/mods/<name>`.
 4. Open a PR.
 
