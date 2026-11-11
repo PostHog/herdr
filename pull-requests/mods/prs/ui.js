@@ -20,9 +20,9 @@ export const tone = (t, name) => t[TONES[name] ?? name] ?? (name === "run" ? t.a
 export const TEXT = { title: 12.5, meta: 11, chip: 11, section: 10.5 };
 
 export function button(t, id, label, onClick, options = {}) {
-  const { primary = false, danger = false, small = false, disabled = false, icon = null, tooltip = null } = options;
+  const { primary = false, danger = false, small = false, disabled = false, icon = null, tooltip = null, ghost = false } = options;
   const bg = primary ? t.solid : t.raised;
-  const fg = primary ? t.solid_foreground : danger ? tone(t, "bad") : t.foreground;
+  const fg = primary ? t.solid_foreground : danger ? tone(t, "bad") : ghost ? t.muted : t.foreground;
   return h_flex()
     .id(id)
     .h(small ? 22 : 30)
@@ -31,14 +31,16 @@ export function button(t, id, label, onClick, options = {}) {
     .flex_none()
     .items_center()
     .rounded(small ? 6 : 8)
-    .border_1()
-    .border_color(primary ? t.solid : t.border)
-    .bg(bg)
+    .when(!ghost, (el) => el.border_1().border_color(primary ? t.solid : t.border).bg(bg))
     .text_size(small ? TEXT.chip : 12.5)
     .text_color(fg)
     .when(Boolean(tooltip), (el) => el.tooltip(tooltip))
     .when(disabled, (el) => el.opacity(0.45))
-    .when(!disabled, (el) => el.cursor_pointer().hover((s) => s.opacity(0.85)).on_click((event, cx) => {
+    .when(!disabled && ghost, (el) => el.cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground)).on_click((event, cx) => {
+      cx.stop_propagation();
+      onClick(event, cx);
+    }))
+    .when(!disabled && !ghost, (el) => el.cursor_pointer().hover((s) => s.opacity(0.85)).on_click((event, cx) => {
       cx.stop_propagation();
       onClick(event, cx);
     }))
@@ -91,7 +93,7 @@ export function textIconButton(t, id, iconName, label, onClick) {
     .child(label);
 }
 
-export function chip(t, id, label, on, onClick, count) {
+export function chip(t, id, label, on, onClick, count, dot = null) {
   return h_flex()
     .id(id)
     .h(24)
@@ -108,8 +110,49 @@ export function chip(t, id, label, on, onClick, count) {
     .cursor_pointer()
     .hover((s) => s.text_color(t.foreground))
     .on_click((event, cx) => onClick(event, cx))
+    .when(Boolean(dot), (el) => el.child(div().size(7).rounded(4).flex_none().bg(dot)))
     .child(label)
     .when(count !== undefined && count !== null, (el) => el.child(div().text_color(t.dim).child(String(count))));
+}
+
+export function tint(color, radius) {
+  return div().absolute().top(0).left(0).size_full().rounded(radius).bg(color).opacity(0.14);
+}
+
+const AVATAR_TONES = ["info", "warn", "merged", "ok", "run"];
+
+export function avatar(t, login, size = 20) {
+  const name = String(login ?? "?");
+  const hash = [...name].reduce((sum, char) => (sum * 31 + char.charCodeAt(0)) >>> 0, 7);
+  const color = tone(t, AVATAR_TONES[hash % AVATAR_TONES.length]);
+  return h_flex()
+    .relative()
+    .size(size)
+    .flex_none()
+    .items_center()
+    .justify_center()
+    .rounded(size / 2)
+    .child(tint(color, size / 2))
+    .child(div().text_size(Math.round(size * 0.45 * 10) / 10).font_semibold().text_color(color).child(name.replace(/^@/, "").charAt(0).toUpperCase()));
+}
+
+export function countPill(t, label, color = null) {
+  return h_flex()
+    .relative()
+    .h(16)
+    .px(6)
+    .flex_none()
+    .items_center()
+    .rounded(8)
+    .when(!color, (el) => el.bg(t.raised))
+    .when(Boolean(color), (el) => el.child(tint(color, 8)))
+    .text_size(10.5)
+    .text_color(color ?? t.muted)
+    .child(label);
+}
+
+export function codePill(t, label) {
+  return h_flex().min_w(0).px(7).h(18).items_center().rounded(5).border_1().border_color(t.border).bg(t.raised).text_size(11).text_color(t.muted).child(div().min_w(0).truncate().child(label));
 }
 
 export function badge(t, label, colorName) {
