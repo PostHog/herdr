@@ -1,14 +1,12 @@
 # Pull Requests
 
-Herdr's main layout with a pull request panel, and optionally a full-page PR workspace.
-The panel sits under the agents list. In the `Pull-Requests` layout, `cmd-shift-g` swaps the terminals for the full page and back; the `github-and-trunk` layout has just the panel. One mod (`prs`) draws both, and runs agent fixes and reviews on this computer or any Herdr machine.
+Herdr's main layout with a pull request panel and a full-page PR workspace.
+The panel sits under the agents list. In the `Pull-Requests` layout, `cmd-shift-g` swaps the terminals for the full page and back. One mod (`prs`) draws both, and runs agent fixes and reviews on this computer or any Herdr machine.
 
 ## What you see
 
-- **The layouts:**
-  - **`Pull-Requests`:** Herdr's `main` layout with a 372 px sidebar. The sidebar stacks spaces, agents and the PR panel at weights 0.8, 1.18 and 1.22.
-  - **`github-and-trunk`:** the same sidebar, and Herdr's `main` work area unchanged, with no full page. Without the page in the layout, `⤢` and rail clicks open the full page as a 1180×800 dialog (its "Back to terminals" reads "Close"), notifications don't open anything, and `cmd-shift-g` does nothing.
-- **`flat-spaces`, the spaces list both layouts use:** Herdr's spaces list without the worktree nesting. Every space keeps its own row and avatar, even when its first terminal is in a git worktree, so tabs and panes in one space can each sit in their own worktree. The repo and branch still show after the name. Both layouts here use it; set a layout's `spaces` block back to `{ "mod": "spaces" }` for Herdr's nested list.
+- **The layout:** `Pull-Requests` is Herdr's `main` layout with a 372 px sidebar. The sidebar stacks spaces, agents and the PR panel at weights 0.8, 1.18 and 1.22.
+- **`flat-spaces`, the spaces list the layout uses:** Herdr's spaces list without the worktree nesting. Every space keeps its own row and avatar, even when its first terminal is in a git worktree, so tabs and panes in one space can each sit in their own worktree. The repo and branch still show after the name. Set the layout's `spaces` block back to `{ "mod": "spaces" }` for Herdr's nested list.
 - **The work area:** a stack (`pr-center`) with two children. `work` is Herdr's tabs, panes, Files/Changes panel and status bar, unchanged. `prs-page` is the full PR page. Only one shows at a time; the other keeps running.
 - **The sidebar panel:** tabs **Mine** and **Review**, each with a count, then a warning icon with a count while a service has an incident (click it for the Status page), then on Mine a draft icon that hides drafts (colored while they're hidden), a refresh icon (yellow after a failed refresh) and `⤢` to open the full page. Narrower than 160 px it draws a rail of tab icons with counts.
   - **Mine** splits your open PRs into "Needs you", "Enqueued" (queued, testing or merging, with nothing for you to do) and "Waiting on others", each foldable. A PR needs you when it's a draft, has a visual review to approve, can be fixed (conflicts, failing checks, changes requested, threads), was removed from the queue, is behind its base branch, or is ready to merge; a stack sits under "Needs you" when any layer does. PRs outside the first configured repo show the repo before their number. Hiding drafts drops a stack only when every layer is a draft, so "k/N ready" still counts draft layers.
@@ -58,7 +56,6 @@ The panel sits under the agents list. In the `Pull-Requests` layout, `cmd-shift-
 
 ## Built from
 
-- **`layouts/github-and-trunk.json`:** Herdr's `main` with a `{ "mod": "prs" }` block (min 140 px) in `sidebar-lists`, and the work area unchanged. `github-and-trunk.svg` is its preview.
 - **`layouts/Pull-Requests.json`:** Herdr's `main` with a `pull-requests` block (`{ "mod": "prs" }`, min 140 px) in `sidebar-lists`. The `work` column is wrapped in the `pr-center` stack, next to `prs-page` (`{ "mod": "prs", "props": { "page": true } }`). `Pull-Requests.svg` is its preview.
 - **`mods/flat-spaces/`:** a `mod.clone` of the shipped `spaces` (0.1.14) with `ordered()` returning spaces as they are, so nothing is nested or moved under its repo's checkout. Re-clone and redo that change to pick up a newer `spaces`.
 - **`mods/prs/`**:
@@ -86,6 +83,5 @@ The panel sits under the agents list. In the `Pull-Requests` layout, `cmd-shift-
 - `herdr-app check ~/.config/herdr-app/mods/prs` passes.
 - `herdr-app do layout.switch '{"name":"Pull-Requests"}'` shows the panel under the agents list, with your open PRs in the configured repos, stacks grouped, and Trunk state on queued PRs.
 - `cmd-shift-g` swaps the terminals for the full page and back, without the page reloading.
-- `herdr-app do layout.switch '{"name":"github-and-trunk"}'` shows the same panel with no page; `⤢` opens the page as a dialog.
 - Queue matches `trunk merge status`, and Review matches GitHub's review requests.
 - Settings saves to `data/prs-config.json`, and changing "Agents run on" moves where Fix sessions open.

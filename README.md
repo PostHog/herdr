@@ -5,7 +5,7 @@ Each top-level folder with a `RECIPE.md` is one piece. You pick the pieces you w
 
 | Piece | What it is |
 | --- | --- |
-| [`pull-requests`](pull-requests/README.md) | A PR panel for Herdr's sidebar: your PRs, the Trunk merge queue and your reviews. Two layouts: `github-and-trunk` has just the panel, and `Pull-Requests` adds a full-page PR workspace (`cmd-shift-g`) with review ranking, workflows, and agent fixes and reviews on this computer or a Herdr machine. Both use `flat-spaces`, a spaces list that doesn't fold worktree spaces under their repo. |
+| [`pull-requests`](pull-requests/README.md) | A PR panel for Herdr's sidebar: your PRs, the Trunk merge queue and your reviews. The `Pull-Requests` layout adds a full-page PR workspace (`cmd-shift-g`) with review ranking, workflows, and agent fixes and reviews on this computer or a Herdr machine. It uses `flat-spaces`, a spaces list that doesn't fold worktree spaces under their repo. |
 
 ## Install
 
@@ -18,8 +18,7 @@ cd herdr
 The first run asks which pieces to enable. Then pick a layout with `cmd-shift-l`, or:
 
 ```sh
-herdr-app do layout.switch '{"name":"Pull-Requests"}'      # panel plus the full page
-herdr-app do layout.switch '{"name":"github-and-trunk"}'   # just the panel
+herdr-app do layout.switch '{"name":"Pull-Requests"}'
 ```
 
 `ctrl-alt-shift-escape` always takes you back to Herdr's default layout.
@@ -28,7 +27,7 @@ The `pull-requests` piece needs the [GitHub CLI](https://cli.github.com) logged 
 For the merge queue it also needs Trunk: a `PostHog/posthog` checkout, and `trunk` on your PATH or from that checkout's flox environment, after `trunk login`.
 Without Trunk, the rest of the panel works and the Status page says what's missing.
 
-Agent fixes and reviews also need `claude` on the machine they run on. Settings, on the full page, sets the repos (`owner/*` covers a whole org), where agents and Trunk run, and each repo's checkout. In `github-and-trunk`, the panel's `⤢` opens the full page as a dialog. Merge `pull-requests/keys.json` (`cmd-shift-g`) into yours by hand.
+Agent fixes and reviews also need `claude` on the machine they run on. Settings, on the full page, sets the repos (`owner/*` covers a whole org), where agents and Trunk run, and each repo's checkout. Merge `pull-requests/keys.json` (`cmd-shift-g`) into yours by hand.
 
 ## Update
 
