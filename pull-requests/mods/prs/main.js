@@ -1,9 +1,9 @@
-import { View, div, svg } from "gpui-kit";
+import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { theme, props, openOverlay, closeOverlay, shared, setShared, run, spaces, machines, notify, layout, nextCommand, focused } from "herdr";
 import { loadStore, store, updateStore, prKey, newId } from "./store.js";
 import { fetchMyPrs, fetchReviews, fetchDetail, statusPill, needsAttention, needsReview, readyToMerge, orderWithStacks, comparePriority, isOrgWide, ownerOf } from "./github.js";
-import { mergePr, updateBranch, rerunFailed, approvePr, commentOnPr, resolveThread, openUrl, copyText, markdownLink, toggleWatch, toggleHidden, report, usesTrunk, isTrunkPr } from "./actions.js";
+import { mergePr, markReady, updateBranch, rerunFailed, approvePr, commentOnPr, resolveThread, openUrl, copyText, markdownLink, toggleWatch, toggleHidden, report, usesTrunk, isTrunkPr } from "./actions.js";
 import { startFixSession, startReview, syncRuns, fixPrompt, findingsFixPrompt, reviewPromptForOthers, setFindingState, findingsMarkdown } from "./agents.js";
 import { processSnapshot, TRIGGERS, ACTION_KINDS } from "./automation.js";
 import { loadConfig, config, updateConfig, configPath, machineLabel } from "./config.js";
@@ -11,8 +11,8 @@ import { forgetCheckouts, checkoutFor } from "./runner.js";
 import { loadTrunk, dequeue, resetTrunk } from "./trunk.js";
 import { sidebarHeader, sidebarMine, sidebarQueue, sidebarReviews, sidebarRail, statusLine, prIcon, progressLine, stackHeader } from "./sidebar.js";
 import { visualAsks, stackGroups, withoutDraftStacks, step, queueFor } from "./steps.js";
-import { openClaude } from "./claude.js";
-import { ago, button, iconButton, textIconButton, chip, badge, section, empty, field, menuItem, SPINNER, tone, TEXT } from "./ui.js";
+import { openClaude, CLAUDE_ICON } from "./claude.js";
+import { ago, button, iconButton, glyphButton, textIconButton, chip, badge, section, empty, field, menuItem, SPINNER, tone, TEXT } from "./ui.js";
 
 const MINE_EVERY_MS = 90000;
 const REVIEWS_EVERY_MS = 180000;
@@ -22,7 +22,7 @@ const FAILURES_BEFORE_ERROR = 3;
 const VIEW_STACK = "pr-center";
 const PAGE_NODE = "prs-page";
 const WORK_NODE = "work";
-const QUICK_ACTIONS_WIDTH = 110;
+const QUICK_ACTIONS_WIDTH = 138;
 
 function findNode(node, id) {
   if (node?.id === id) return node;
@@ -130,6 +130,7 @@ export const NAMED = {
   merge: (pr) => act(pr, "merge", isTrunkPr(pr) || usesTrunk(pr) ? `Send #${pr.number} to Trunk` : `Merge #${pr.number}`, () => mergePr(pr)),
   dequeue: (pr) => act(pr, "dequeue", `Remove #${pr.number} from the queue`, () => dequeue(pr.number)),
   openUrl: (pr) => openUrl(pr.url),
+  markReady: (pr) => act(pr, "ready", `Mark #${pr.number} ready for review`, () => markReady(pr)),
   updateBranch: (pr) => act(pr, "update", `Update #${pr.number}`, () => updateBranch(pr)),
   rerunFailed: (pr) => act(pr, "rerun", `Rerun failed checks on #${pr.number}`, () => rerunFailed(pr)),
   fix: (pr) => act(pr, "fix", `Fix #${pr.number}`, async () => {
@@ -189,6 +190,7 @@ function menuEntries(pr, scope) {
     ["claude", "Claude Code on this PR"],
     ["fix", "Fix with Claude"],
     ["agentReview", "Agent review (headless)"],
+    ...(pr.mine && pr.isDraft ? [["markReady", "Mark ready for review"]] : []),
     ...(pr.mine ? [["merge", isTrunkPr(pr) || usesTrunk(pr) ? "Send to merge queue…" : "Merge…"]] : []),
     ...(pr.mine && isTrunkPr(pr) ? [["dequeue", "Remove from merge queue…"]] : []),
     ["updateBranch", "Update branch"],
@@ -769,7 +771,13 @@ export default class Prs extends View {
       ["copyLink", "copy", "Copy as Markdown link"],
       ["open", "external", "Open on GitHub"],
     ];
-    return h_flex().w(QUICK_ACTIONS_WIDTH).flex_none().gap(2).justify_end().children(entries.map(([name, iconName, label]) => iconButton(t, `prs-q-${scope}-${pr.number}-${name}`, iconName, label, () => choose(name, pr))));
+    return h_flex()
+      .w(QUICK_ACTIONS_WIDTH)
+      .flex_none()
+      .gap(2)
+      .justify_end()
+      .child(glyphButton(t, `prs-q-${scope}-${pr.number}-claude`, image(CLAUDE_ICON).size(14), "Claude Code on this PR", () => choose("claude", pr)))
+      .children(entries.map(([name, iconName, label]) => iconButton(t, `prs-q-${scope}-${pr.number}-${name}`, iconName, label, () => choose(name, pr))));
   }
 
   wideRow(t, id, pr, scope, depth, left, middle, right) {
@@ -1339,6 +1347,7 @@ export default class Prs extends View {
       ? [
           button(t, "prs-ov-fix", "Fix with Claude", () => NAMED.fix(pr), { primary: true }),
           button(t, "prs-ov-review", "Agent review", () => NAMED.agentReview(pr)),
+          ...(pr.isDraft ? [button(t, "prs-ov-ready", "Ready for review", () => NAMED.markReady(pr))] : []),
           button(t, "prs-ov-merge", usesTrunk(pr) ? "Send to queue…" : "Merge…", () => choose("merge", pr)),
           button(t, "prs-ov-update", "Update branch", () => NAMED.updateBranch(pr)),
           button(t, "prs-ov-rerun", "Rerun failed", () => NAMED.rerunFailed(pr), { disabled: !failing.length }),
