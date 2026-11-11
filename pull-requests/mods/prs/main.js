@@ -13,7 +13,7 @@ import { sidebarHeader, sidebarMine, sidebarQueue, sidebarReviews, sidebarRail, 
 import { visualAsks, stackGroups, withoutDraftStacks, step, queueFor } from "./steps.js";
 import { openClaude, CLAUDE_ICON } from "./claude.js";
 import { ago, button, iconButton, glyphButton, textIconButton, chip, badge, section, empty, field, menuItem, SPINNER, tone, TEXT, tint, avatar, countPill, codePill, gateStrip, titleText } from "./ui.js";
-import { readiness, groupChecks, rowMatches, tallyChecks, tallyText, tallyLabel, worstBucket, mergeStateNote, groupFiles, fileSummary, parseMarkdown } from "./sheet.js";
+import { readiness, groupChecks, rowMatches, tallyChecks, tallyText, tallyLabel, worstBucket, mergeStateNote, changeShape, parseMarkdown } from "./sheet.js";
 
 const MINE_EVERY_MS = 90000;
 const REVIEWS_EVERY_MS = 180000;
@@ -1387,13 +1387,11 @@ export default class Prs extends View {
     const openFindings = findings.filter((finding) => finding.state === "open").length;
     const worst = worstBucket(state.tally);
     const reviewCount = this.detail ? this.conversation().reviews : 0;
-    const files = this.detail?.files.length || pr.changedFiles || 0;
     const tabs = [
       ["overview", "Overview", null],
       ["findings", "Findings", openFindings ? countPill(t, String(openFindings)) : null],
       ["checks", "Checks", state.tally.total ? countPill(t, tallyLabel(state.tally), worst ? bucketColor(t, worst) : null) : null],
       ["reviews", "Reviews", reviewCount ? countPill(t, String(reviewCount)) : null],
-      ["files", "Files", files ? countPill(t, String(Math.max(files, pr.changedFiles ?? 0))) : null],
     ];
     return h_flex()
       .mt(8)
@@ -1429,7 +1427,6 @@ export default class Prs extends View {
     if (!this.detail) return this.scrollBody([empty(t, "Loading details…")]);
     if (this.tab === "checks") return this.scrollBody(this.checksTab(t), 12);
     if (this.tab === "reviews") return this.scrollBody(this.reviewsTab(t, pr, state), 20);
-    if (this.tab === "files") return this.scrollBody(this.filesTab(t, pr), 8);
     return this.overviewTab(t, pr, state);
   }
 
@@ -1559,6 +1556,7 @@ export default class Prs extends View {
     const reviewers = state.reviewers ?? [];
     const files = this.detail.files;
     const fileCount = pr.changedFiles ?? files.length;
+    const shape = changeShape(files);
     const note = mergeStateNote(pr);
     return v_flex()
       .id("prs-sheet-rail")
@@ -1579,7 +1577,24 @@ export default class Prs extends View {
             .child(div().text_color(tone(t, "ok")).child(`+${pr.additions ?? 0}`))
             .child(div().text_color(tone(t, "bad")).child(`−${pr.deletions ?? 0}`))
             .child(div().text_color(t.dim).child(`in ${fileCount} file${fileCount === 1 ? "" : "s"}`)),
-          ...(files.length === 1 ? [div().text_size(11.5).text_color(t.muted).truncate().child(files[0].path.slice(files[0].path.lastIndexOf("/") + 1))] : []),
+          ...(shape.where ? [div().text_size(11.5).text_color(t.muted).child(shape.where)] : []),
+          ...shape.notes.map((note) => div().text_size(11.5).text_color(t.muted).child(note)),
+          ...shape.largest.map((file, index) =>
+            h_flex()
+              .id(`prs-rail-file-${index}`)
+              .gap(6)
+              .items_center()
+              .text_size(11.5)
+              .cursor_pointer()
+              .hover((el) => el.text_color(t.foreground))
+              .tooltip(file.path)
+              .on_click(() => openUrl(`${pr.url}/files`))
+              .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(file.name))
+              .child(div().flex_none().text_color(tone(t, "ok")).child(`+${file.additions}`))
+              .child(div().flex_none().text_color(tone(t, "bad")).child(`−${file.deletions}`)),
+          ),
+          ...(shape.more ? [div().text_size(11.5).text_color(t.dim).child(`and ${shape.more} smaller file${shape.more === 1 ? "" : "s"}`)] : []),
+          div().id("prs-rail-diff").text_size(11.5).text_color(t.accent).cursor_pointer().on_click(() => openUrl(`${pr.url}/files`)).child("Open the diff on GitHub"),
         ]),
       )
       .child(block("Labels", [pr.labels?.length ? h_flex().gap(4).flex_wrap().children(pr.labels.map((label) => codePill(t, label))) : div().text_size(12.5).text_color(t.dim).child("None")]))
@@ -1828,101 +1843,6 @@ export default class Prs extends View {
           .child(h_flex().gap(6).text_size(11).text_color(t.dim).child(div().font_semibold().text_color(t.foreground).child(`@${comment.author}${comment.isBot ? " (bot)" : ""}`)).child(ago(comment.createdAt)))
           .child(div().text_size(12).text_color(t.muted).child(cleanBody(comment.body).slice(0, 600))),
       ));
-  }
-
-  filesTab(t, pr) {
-    this.fileSort ??= "folder";
-    this.toggledFolders ??= new Set();
-    const files = this.detail.files;
-    if (!files.length) return [empty(t, "No changed files.")];
-    const summary = fileSummary(files);
-    const sortBy = (mode) => (_e, cx) => {
-      this.fileSort = mode;
-      cx.notify();
-    };
-    const rows = [
-      h_flex()
-        .px(8)
-        .pb(4)
-        .gap(10)
-        .items_center()
-        .child(div().flex_none().font_semibold().child(`${files.length} file${files.length === 1 ? "" : "s"}`))
-        .child(div().flex_none().text_size(12).text_color(tone(t, "ok")).child(`+${summary.additions}`))
-        .child(div().flex_none().text_size(12).text_color(tone(t, "bad")).child(`−${summary.deletions}`))
-        .when(Boolean(summary.note), (el) => el.child(div().min_w(0).truncate().text_size(12).text_color(t.dim).child(`· ${summary.note}`)))
-        .child(div().flex_1())
-        .child(chip(t, "prs-files-folder", "By folder", this.fileSort === "folder", sortBy("folder")))
-        .child(chip(t, "prs-files-largest", "Largest first", this.fileSort === "largest", sortBy("largest"))),
-    ];
-    if ((pr.changedFiles ?? 0) > files.length) rows.push(div().px(8).text_size(11.5).text_color(t.dim).child(`Showing the first ${files.length} of ${pr.changedFiles} files.`));
-    groupFiles(files, this.fileSort).forEach((group, groupIndex) => {
-      const open = !this.toggledFolders.has(group.label);
-      rows.push(
-        v_flex()
-          .gap(1)
-          .child(
-            h_flex()
-              .id(`prs-files-group-${groupIndex}`)
-              .h(26)
-              .px(8)
-              .gap(8)
-              .items_center()
-              .rounded(6)
-              .cursor_pointer()
-              .hover((s) => s.bg(t.hover))
-              .accessibility_label(`${open ? "Collapse" : "Expand"} ${group.label}`)
-              .on_click((_e, cx) => {
-                if (this.toggledFolders.has(group.label)) this.toggledFolders.delete(group.label);
-                else this.toggledFolders.add(group.label);
-                cx.notify();
-              })
-              .child(svg(ICON(open ? "chevron-down" : "chevron-right")).size(12).flex_none().text_color(t.dim))
-              .child(div().min_w(0).truncate().text_size(12).font_medium().child(group.label))
-              .child(div().flex_none().text_size(11.5).text_color(t.dim).child(`${group.files.length} file${group.files.length === 1 ? "" : "s"}`))
-              .child(div().flex_1())
-              .child(div().flex_none().text_size(11).text_color(t.dim).child(`+${group.additions} −${group.deletions}`)),
-          )
-          .when(open, (el) => el.children(group.files.map((file, fileIndex) => this.fileRow(t, pr, file, summary.widest, `${groupIndex}-${fileIndex}`)))),
-      );
-    });
-    return rows;
-  }
-
-  fileRow(t, pr, file, widest, id) {
-    const barWidth = (count) => (count ? Math.max(2, Math.round((count / widest) * 64)) : 0);
-    const count = (text, toneName) => h_flex().w(34).flex_none().justify_end().text_size(11.5).text_color(tone(t, toneName)).child(text);
-    return h_flex()
-      .id(`prs-file-${id}`)
-      .h(30)
-      .pl(30)
-      .pr(10)
-      .gap(10)
-      .items_center()
-      .rounded(7)
-      .cursor_pointer()
-      .hover((s) => s.bg(t.hover))
-      .tooltip(file.path)
-      .on_click(() => openUrl(`${pr.url}/files`))
-      .child(
-        h_flex()
-          .flex_1()
-          .min_w(0)
-          .text_size(12)
-          .when(Boolean(file.dir), (el) => el.child(div().min_w(0).truncate().text_color(t.dim).child(file.dir)))
-          .child(div().flex_none().text_color(t.foreground).child(file.name)),
-      )
-      .when(Boolean(file.tag), (el) => el.child(badge(t, file.tag, "muted")))
-      .child(count(`+${file.additions}`, "ok"))
-      .child(count(`−${file.deletions}`, "bad"))
-      .child(
-        h_flex()
-          .w(66)
-          .flex_none()
-          .gap(1)
-          .items_center()
-          .when(barWidth(file.additions) > 0, (el) => el.child(div().w(barWidth(file.additions)).h(6).rounded(2).bg(tone(t, "ok"))))
-          .when(barWidth(file.deletions) > 0, (el) => el.child(div().w(barWidth(file.deletions)).h(6).rounded(2).bg(tone(t, "bad")))),
-      );
   }
 
   findingsTab(t, pr, findings) {

@@ -19,6 +19,4 @@ Click a PR for its sheet. These are the design mockups the sheet was built from.
 | --- | --- |
 | ![Overview tab](screenshots/overview.png) | ![Checks tab](screenshots/checks.png) |
 
-| Reviews | Files |
-| --- | --- |
-| ![Reviews tab](screenshots/reviews.png) | ![Files tab](screenshots/files.png) |
+![Reviews tab](screenshots/reviews.png)

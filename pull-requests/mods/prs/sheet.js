@@ -281,41 +281,29 @@ function sharedDirectory(entries) {
   return shared.length ? `${shared.join("/")}/` : "";
 }
 
-const fileGroup = (label, files) => ({ label, files, additions: files.reduce((sum, file) => sum + file.additions, 0), deletions: files.reduce((sum, file) => sum + file.deletions, 0) });
-
-export function groupFiles(files, mode = "folder") {
+export function changeShape(files, largestCount = 4) {
   const entries = files.map(fileEntry);
-  if (mode === "largest") return [fileGroup("Largest first", [...entries].sort((a, b) => b.size - a.size || a.path.localeCompare(b.path)))];
+  const total = entries.reduce((sum, entry) => sum + entry.size, 0);
+  const share = (size) => (total ? Math.round((size / total) * 100) : 0);
   const byTop = new Map();
   for (const entry of entries) {
     const top = entry.path.includes("/") ? entry.path.slice(0, entry.path.indexOf("/")) : "";
-    if (!byTop.has(top)) byTop.set(top, []);
-    byTop.get(top).push(entry);
+    byTop.set(top, [...(byTop.get(top) ?? []), entry]);
   }
-  const groups = [];
-  const rest = [];
-  for (const [top, members] of byTop) {
-    if (!top || members.length < 2) {
-      rest.push(...members);
-      continue;
-    }
-    const prefix = sharedDirectory(members);
-    groups.push(fileGroup(prefix, members.map((entry) => ({ ...entry, dir: entry.dir.slice(prefix.length) }))));
-  }
-  if (rest.length) groups.push(fileGroup(groups.length ? "Everything else" : "Files", rest));
-  return groups;
-}
-
-export function fileSummary(files) {
-  const entries = files.map(fileEntry);
-  const tests = entries.filter((entry) => entry.tag === "test").length;
-  const snapshots = entries.filter((entry) => entry.tag === "snapshot").length;
-  const notes = [tests ? `${tests} ${tests === 1 ? "is a test" : "are tests"}` : null, snapshots ? `${snapshots} ${snapshots === 1 ? "is a snapshot" : "are snapshots"}` : null].filter(Boolean);
+  const [top, members] = [...byTop.entries()].sort((a, b) => b[1].reduce((sum, entry) => sum + entry.size, 0) - a[1].reduce((sum, entry) => sum + entry.size, 0))[0] ?? ["", []];
+  const topShare = share(members.reduce((sum, entry) => sum + entry.size, 0));
+  const tagged = (tag) => entries.filter((entry) => entry.tag === tag);
+  const note = (tag, one, many) => {
+    const hits = tagged(tag);
+    if (!hits.length) return null;
+    const part = share(hits.reduce((sum, entry) => sum + entry.size, 0));
+    return `${hits.length} ${hits.length === 1 ? one : many}${part >= 10 ? `, ${part}% of the diff` : ""}`;
+  };
   return {
-    additions: entries.reduce((sum, entry) => sum + entry.additions, 0),
-    deletions: entries.reduce((sum, entry) => sum + entry.deletions, 0),
-    widest: Math.max(1, ...entries.map((entry) => entry.size)),
-    note: notes.join(", "),
+    where: top && byTop.size > 1 && topShare >= 50 ? `${topShare}% in ${sharedDirectory(members)}` : null,
+    notes: [note("test", "test file", "test files"), note("snapshot", "snapshot", "snapshots")].filter(Boolean),
+    largest: entries.length > 1 ? [...entries].sort((a, b) => b.size - a.size || a.path.localeCompare(b.path)).slice(0, largestCount) : entries,
+    more: Math.max(0, entries.length - largestCount),
   };
 }
 
