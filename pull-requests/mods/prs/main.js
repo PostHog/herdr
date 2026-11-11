@@ -9,7 +9,8 @@ import { processSnapshot, TRIGGERS, ACTION_KINDS } from "./automation.js";
 import { loadConfig, config, updateConfig, configPath, machineLabel } from "./config.js";
 import { forgetCheckouts, checkoutFor } from "./runner.js";
 import { loadTrunk, dequeue, resetTrunk } from "./trunk.js";
-import { sidebarHeader, sidebarMine, queuePage, sidebarReviews, sidebarRail, statusLine, prIcon, progressLine, stackHeader, gatesFor, splitByNeed, needsYou, rowButtons, nextFor } from "./sidebar.js";
+import { fetchServices, queueService, statusOverview } from "./status.js";
+import { sidebarHeader, sidebarMine, sidebarReviews, sidebarRail, statusLine, prIcon, progressLine, stackHeader, gatesFor, splitByNeed, needsYou, rowButtons, nextFor } from "./sidebar.js";
 import { visualAsks, stackGroups, withoutDraftStacks, step, queueFor } from "./steps.js";
 import { openClaude, CLAUDE_ICON } from "./claude.js";
 import { ago, button, iconButton, glyphButton, textIconButton, chip, badge, section, empty, field, menuItem, SPINNER, tone, TEXT, tint, avatar, countPill, codePill, gateStrip, titleText } from "./ui.js";
@@ -19,6 +20,7 @@ const MINE_EVERY_MS = 90000;
 const REVIEWS_EVERY_MS = 180000;
 const RUNS_EVERY_MS = 20000;
 const TRUNK_EVERY_MS = 45000;
+const SERVICES_EVERY_MS = 120000;
 const FAILURES_BEFORE_ERROR = 3;
 const VIEW_STACK = "pr-center";
 const PAGE_NODE = "prs-page";
@@ -75,9 +77,9 @@ function toggleView() {
 const PAGES = [
   { id: "mine", label: "My PRs" },
   { id: "reviews", label: "Reviews" },
-  { id: "queue", label: "Queue" },
   { id: "code", label: "Code review" },
   { id: "workflows", label: "Workflows" },
+  { id: "status", label: "Status" },
   { id: "settings", label: "Settings" },
 ];
 
@@ -258,6 +260,7 @@ export default class Prs extends View {
     this.sidebarTab = localStorage.getItem("sidebarTab") === "reviews" ? "reviews" : "mine";
     this.folded = new Set(JSON.parse(localStorage.getItem("folded") ?? '["review:teams","queue:merged"]'));
     this.trunk = shared("prs.cache.trunk") ?? null;
+    this.serviceStatus = shared("prs.cache.services") ?? null;
     this.mineFailures = 0;
     this.reviewsFailures = 0;
     this.seen = null;
@@ -298,6 +301,8 @@ export default class Prs extends View {
       cx.timer.every(MINE_EVERY_MS, (cx) => this.loadMine(cx));
       cx.timer.every(REVIEWS_EVERY_MS, (cx) => this.loadReviews(cx));
       cx.timer.every(TRUNK_EVERY_MS, (cx) => this.loadTrunkData(cx));
+      this.loadServices(cx);
+      cx.timer.every(SERVICES_EVERY_MS, (cx) => this.loadServices(cx));
       cx.timer.every(RUNS_EVERY_MS, (cx) => cx.spawn(async (cx) => {
         try {
           if (await syncRuns()) cx.notify();
@@ -319,6 +324,7 @@ export default class Prs extends View {
         this.seenRefreshAll = refreshAll;
         this.loadMine(cx);
         this.loadReviews(cx);
+        this.loadServices(cx);
       }
       const configVersion = shared("prs.config") ?? null;
       if (configVersion !== this.seenConfig) {
@@ -387,6 +393,29 @@ export default class Prs extends View {
     });
   }
 
+  loadServices(cx) {
+    if (this.loadingServices) return;
+    this.loadingServices = true;
+    cx.spawn(async (cx) => {
+      try {
+        this.serviceStatus = await fetchServices(config().status?.services);
+        setShared("prs.cache.services", this.serviceStatus);
+      } catch {}
+      this.loadingServices = false;
+      cx.notify();
+    });
+  }
+
+  allServices() {
+    const queue = queueService(this.trunk);
+    return [...(this.serviceStatus?.services ?? []), ...(queue ? [queue] : [])];
+  }
+
+  statusAlert() {
+    const overview = statusOverview(this.allServices());
+    return overview.troubled.length ? overview : null;
+  }
+
   announce() {
     if (!this.mine || config().notifications === false) return;
     const now = new Map();
@@ -435,6 +464,7 @@ export default class Prs extends View {
     this.mine = shared("prs.cache.mine") ?? this.mine;
     this.reviews = shared("prs.cache.reviews") ?? this.reviews;
     this.trunk = shared("prs.cache.trunk") ?? this.trunk;
+    this.serviceStatus = shared("prs.cache.services") ?? this.serviceStatus;
     Object.assign(this, shared("prs.status") ?? {});
     const request = shared("prs.page.request");
     if (request && request.at !== this.seenPageRequest) {
@@ -527,6 +557,7 @@ export default class Prs extends View {
     }
     this.loadMine(cx);
     this.loadReviews(cx);
+    this.loadServices(cx);
   }
 
   loadReviews(cx) {
@@ -649,7 +680,6 @@ export default class Prs extends View {
       mine: this.mine ? this.mine.prs.length - this.hiddenDrafts() : undefined,
       reviews: this.reviews?.filter((pr) => !this.isHidden(pr)).length,
       code: Object.values(store().runs).filter((run) => run.kind === "review" && run.status === "running").length || null,
-      queue: this.trunk?.listing ? this.trunk.listing.items.filter((item) => item.state !== "Merged" && (this.mine?.prs ?? []).some((pr) => isTrunkPr(pr) && pr.number === item.number)).length || null : null,
     };
   }
 
@@ -686,7 +716,8 @@ export default class Prs extends View {
   renderWide(t) {
     const counts = this.counts();
     const loading = this.loadingMine || this.loadingReviews;
-    const title = { mine: "My PRs", reviews: "Review requests", queue: "Merge queue", code: "Code review", workflows: "Workflows", settings: "Settings" }[this.page];
+    const title = { mine: "My PRs", reviews: "Review requests", status: "Status", code: "Code review", workflows: "Workflows", settings: "Settings" }[this.page];
+    const alert = this.statusAlert();
     const nav = v_flex()
       .w(230)
       .flex_none()
@@ -707,7 +738,8 @@ export default class Prs extends View {
         .when(this.page === page.id, (el) => el.bg(t.selected))
         .hover((el) => el.bg(t.hover))
         .on_click((_e, cx) => this.setPage(page.id, cx))
-        .child(div().flex_1().text_size(13).child(page.id === "reviews" ? "Review requests" : page.id === "queue" ? "Merge queue" : page.label))
+        .child(div().flex_1().text_size(13).child(page.id === "reviews" ? "Review requests" : page.label))
+        .when(page.id === "status" && Boolean(alert), (el) => el.child(svg("mods/prs/icons/alert.svg").size(14).flex_none().text_color(tone(t, alert.level))))
         .when(Boolean(counts[page.id]), (el) => el.child(div().px(7).rounded(9).bg(t.raised).text_size(11).text_color(t.muted).child(String(counts[page.id]))))))
       .child(div().flex_1())
       .child(h_flex()
@@ -995,8 +1027,8 @@ export default class Prs extends View {
     switch (this.page) {
       case "reviews":
         return this.wideReviewRows(t);
-      case "queue":
-        return this.queueRows(t);
+      case "status":
+        return this.statusRows(t);
       case "code":
         return this.codeRows(t);
       case "workflows":
@@ -1008,24 +1040,6 @@ export default class Prs extends View {
     }
   }
 
-  rowShell(t, id, pr, scope, depth, children) {
-    return v_flex()
-      .id(id)
-      .pl(8 + depth * 14)
-      .pr(8)
-      .py(7)
-      .gap(4)
-      .rounded(8)
-      .cursor_pointer()
-      .hover((el) => el.bg(t.hover))
-      .on_click(() => NAMED.details(pr))
-      .on_mouse_down("right", (_e, cx) => {
-        cx.stop_propagation();
-        openMenu(pr, scope);
-      })
-      .children(children);
-  }
-
   titleLine(t, pr, quiet = false) {
     return h_flex()
       .gap(6)
@@ -1034,24 +1048,55 @@ export default class Prs extends View {
       .when(isBusy(pr), (el) => el.child(svg(SPINNER).size(11).spin(900).text_color(t.dim)));
   }
 
-  queueRows(t) {
-    const rows = [];
-    const ready = (this.mine?.prs ?? []).filter((pr) => !pr.queue?.active && !(isTrunkPr(pr) && this.trunk?.items?.[pr.number]) && readyToMerge(pr) && pr.mine);
-    if (ready.length) {
-      rows.push(section(t, "Ready to merge"));
-      for (const pr of ready) {
-        rows.push(this.rowShell(t, `prs-ready-${pr.repo}-${pr.number}`, pr, "mine", 0, [
-          this.titleLine(t, pr),
-          h_flex()
-            .gap(6)
-            .items_center()
-            .child(statusLine(this, t, pr, { buttons: false }))
-            .child(div().flex_1())
-            .child(iconButton(t, `prs-merge-${pr.number}`, "merged", isTrunkPr(pr) || usesTrunk(pr) ? "Send to queue…" : "Merge…", () => choose("merge", pr), "ok")),
-        ]));
-      }
-    }
-    return queuePage(this, t, rows);
+  statusRows(t) {
+    const services = this.allServices();
+    if (!this.serviceStatus) return [empty(t, "Reading the status pages…")];
+    const overview = statusOverview(services);
+    const levelColor = (level) => (level === "unknown" ? t.dim : tone(t, level));
+    const detail = (id, text, color, url) =>
+      div()
+        .id(id)
+        .pl(18)
+        .text_size(12)
+        .text_color(color)
+        .when(Boolean(url), (el) => el.cursor_pointer().hover((s) => s.text_color(t.foreground)).on_click((_e, cx) => {
+          cx.stop_propagation();
+          openUrl(url);
+        }))
+        .child(text);
+    return [
+      h_flex()
+        .px(16)
+        .pt(14)
+        .pb(10)
+        .gap(8)
+        .items_center()
+        .when(overview.troubled.length > 0, (el) => el.child(svg("mods/prs/icons/alert.svg").size(15).flex_none().text_color(tone(t, overview.level))))
+        .child(div().flex_1().text_size(14).font_semibold().text_color(overview.troubled.length ? tone(t, overview.level) : t.foreground).child(overview.title))
+        .child(div().flex_none().text_size(11.5).text_color(t.dim).child(`Checked ${ago(new Date(this.serviceStatus.at).toISOString())}`)),
+      ...overview.sorted.map((service, index) =>
+        v_flex()
+          .id(`prs-status-${index}`)
+          .px(16)
+          .py(10)
+          .gap(5)
+          .border_b_1()
+          .border_color(t.border)
+          .when(Boolean(service.url), (el) => el.cursor_pointer().hover((s) => s.bg(t.hover)).on_click(() => openUrl(service.url)))
+          .child(
+            h_flex()
+              .gap(10)
+              .items_center()
+              .child(div().w(8).h(8).rounded(4).flex_none().bg(levelColor(service.level)))
+              .child(div().w(220).flex_none().truncate().text_size(13).font_semibold().child(service.name))
+              .child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(service.level === "ok" ? t.muted : levelColor(service.level)).child(service.description))
+              .when(Boolean(service.url), (el) => el.child(svg("mods/prs/icons/external.svg").size(13).flex_none().text_color(t.dim))),
+          )
+          .children(service.incidents.map((incident, at) => detail(`prs-status-${index}-i${at}`, `${incident.name}${incident.status ? ` · ${incident.status}` : ""}${incident.since ? ` · ${ago(incident.since)}` : ""}`, t.foreground, incident.url)))
+          .children(service.components.slice(0, 6).map((component, at) => detail(`prs-status-${index}-c${at}`, `${component.name}: ${component.status}`, t.muted, null)))
+          .children(service.maintenance.map((item, at) => detail(`prs-status-${index}-m${at}`, `Maintenance: ${item.name}`, t.muted, item.url))),
+      ),
+    ];
   }
 
   findPr(repo, number, title) {

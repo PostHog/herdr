@@ -11,6 +11,12 @@ My PRs splits into what needs you and what's waiting on others. Each row has a f
 
 <img src="screenshots/rows-sidebar.png" alt="My PRs in the sidebar" width="340">
 
+## Status
+
+The Status page shows whether GitHub, Trunk, Depot, Docker and the other services the work depends on are up. An incident puts a warning on the nav item and in the sidebar's top bar. This is a design mockup with a made-up incident.
+
+![Status page](screenshots/status.png)
+
 ## The PR sheet
 
 Click a PR for its sheet. These are the design mockups the sheet was built from.

@@ -2,7 +2,6 @@ import { div, svg, image } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { run } from "herdr";
 import { comparePriority } from "./github.js";
-import { LISTING_CAP } from "./trunk.js";
 import { step, queueFor, stackGroups, layerWaitingOn, visualAsks, fixable } from "./steps.js";
 import { CLAUDE_ICON } from "./claude.js";
 import { ago, tone, actionButton, badge, gateStrip, titleText, TEXT } from "./ui.js";
@@ -221,7 +220,7 @@ export function sidebarMine(view, t) {
   }
   const groups = stackGroups(prs).sort((a, b) => view.repoIndex(a.repo) - view.repoIndex(b.repo));
   const primaryRepo = groups[0].repo;
-  const rows = [queueLine(view, t)].filter(Boolean);
+  const rows = [];
   for (const part of splitByNeed(view, groups)) {
     const foldId = `mine:${part.id}`;
     rows.push(foldHeader(view, t, foldId, part.label, part.groups.reduce((sum, group) => sum + group.members.length, 0)));
@@ -234,130 +233,6 @@ export function sidebarMine(view, t) {
       } else rows.push(prRow(view, t, group.members[0].pr, { group, quiet: part.id === "waiting", showRepo }));
     }
   }
-  return rows;
-}
-
-const QUEUE_SECTIONS = [
-  { id: "testing", label: "Testing", states: ["Testing"] },
-  { id: "merging", label: "Merging", states: ["Tests Passed"] },
-  { id: "waiting", label: "Waiting", states: ["Pending"], numbered: true },
-  { id: "notready", label: "Not ready", states: ["Not Ready"] },
-  { id: "failing", label: "Failing", states: ["Pending Failure"] },
-  { id: "failed", label: "Failed", states: ["Failed", "Cancelled"] },
-  { id: "merged", label: "Recently merged", states: ["Merged"] },
-];
-
-const FAILING_STATES = ["Pending Failure", "Failed"];
-
-const STATE_ICON = { Testing: ["testing", "run"], "Tests Passed": ["rocket", "ok"], Pending: ["hourglass", "accent"], "Not Ready": ["paused", "warn"], "Pending Failure": ["fail", "bad"], Failed: ["fail", "bad"], Cancelled: ["ban", "dim"], Merged: ["merged", "merged"] };
-
-export function queueHealth(view) {
-  const listing = view.trunk?.listing;
-  if (!listing) return null;
-  const mine = new Set((view.mine?.prs ?? []).filter((pr) => pr.repo === view.trunk.repo).map((pr) => pr.number));
-  const live = listing.items.filter((item) => item.state !== "Merged");
-  const yours = live.filter((item) => mine.has(item.number));
-  const running = listing.running === "Running";
-  const firstOfYours = live.findIndex((item) => mine.has(item.number));
-  const blocker = firstOfYours > 0 ? live.slice(0, firstOfYours).find((item) => FAILING_STATES.includes(item.state)) : null;
-  if (!yours.length && running) return null;
-  const parts = [running ? "Trunk running" : `Trunk ${String(listing.running).toLowerCase()}`];
-  if (yours.length) parts.push(`${yours.length} of yours queued`);
-  if (blocker) parts.push(`#${blocker.number} failing ahead`);
-  return { label: parts.join(" · "), tone: !running || blocker ? "warn" : "dim" };
-}
-
-export function queueLine(view, t) {
-  const health = queueHealth(view);
-  if (!health) return null;
-  return h_flex()
-    .id("prs-sb-queue-line")
-    .px(8)
-    .pt(6)
-    .gap(6)
-    .items_center()
-    .cursor_pointer()
-    .tooltip("Open the merge queue")
-    .on_click(() => view.openPage("queue"))
-    .child(icon(t, "queue", health.tone, 12))
-    .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(tone(t, health.tone)).child(health.label));
-}
-
-export function queuePage(view, t, yourReady = []) {
-  const trunk = view.trunk;
-  if (!trunk) return [view.placeholder(t, null, "Reading the Trunk merge queue…")];
-  if (!trunk.listing) return [view.placeholder(t, trunk.error, "The merge queue isn't available.")];
-  const mine = new Set((view.mine?.prs ?? []).filter((pr) => pr.repo === trunk.repo).map((pr) => pr.number));
-  const items = trunk.listing.items;
-  const rows = [
-    h_flex()
-      .px(8)
-      .pt(6)
-      .gap(6)
-      .items_center()
-      .child(icon(t, "queue", "muted", 12))
-      .child(div().text_size(11).text_color(t.muted).child(`${trunk.repo} · ${trunk.listing.branch}`))
-      .child(div().flex_1())
-      .child(div().text_size(10.5).text_color(trunk.listing.running === "Running" ? tone(t, "ok") : tone(t, "warn")).child(trunk.listing.running)),
-  ];
-  const yours = items.filter((item) => mine.has(item.number) && item.state !== "Merged");
-  const row = (item, index, numbered) => {
-    const [iconName, toneName] = STATE_ICON[item.state] ?? ["pr", "muted"];
-    const pr = view.findPr(trunk.repo, item.number, item.title);
-    const id = `prs-q-${item.state}-${item.number}`;
-    return h_flex()
-      .id(id)
-      .px(8)
-      .py(4)
-      .gap(6)
-      .items_center()
-      .rounded(7)
-      .cursor_pointer()
-      .hover((el) => el.bg(t.hover))
-      .on_hover((on, cx) => view.hover(id, on, cx))
-      .on_click(() => view.act("details", pr))
-      .on_mouse_down("right", (_e, cx) => {
-        cx.stop_propagation();
-        view.menu(pr, "queue");
-      })
-      .child(icon(t, iconName, toneName, 12))
-      .when(numbered, (el) => el.child(div().w(18).flex_none().text_size(10.5).text_color(t.dim).child(String(index + 1))))
-      .child(div().flex_none().text_size(11).text_color(t.dim).child(`#${item.number}`))
-      .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(mine.has(item.number) ? t.foreground : t.muted).child(item.title))
-      .when(view.hovered === id, (el) => el.child(linkIcons(view, t, id, pr)));
-  };
-  if (yours.length) {
-    rows.push(foldHeader(view, t, "queue:yours", "Yours", yours.length));
-    if (!view.folded.has("queue:yours")) rows.push(...yours.map((item, index) => row(item, index, false)));
-  }
-  rows.push(...yourReady);
-  const others = items.filter((item) => !mine.has(item.number));
-  if (others.length) {
-    const open = view.folded.has("queue:others-open");
-    rows.push(
-      h_flex()
-        .id("prs-queue-others")
-        .px(6)
-        .pt(12)
-        .pb(3)
-        .gap(4)
-        .items_center()
-        .cursor_pointer()
-        .on_click((_e, cx) => view.toggleFold("queue:others-open", cx))
-        .child(icon(t, open ? "chevron-down" : "chevron-right", "dim", 11))
-        .child(div().text_size(10.5).font_semibold().text_color(t.dim).child("EVERYONE ELSE"))
-        .child(div().text_size(10.5).text_color(t.dim).child(others.length >= LISTING_CAP ? `${LISTING_CAP}+` : String(others.length))),
-    );
-    if (open) {
-      for (const section of QUEUE_SECTIONS) {
-        const list = others.filter((item) => section.states.includes(item.state));
-        if (!list.length) continue;
-        rows.push(foldHeader(view, t, `queue:${section.id}`, section.label, list.length));
-        if (!view.folded.has(`queue:${section.id}`)) rows.push(...list.map((item, index) => row(item, index, section.numbered)));
-      }
-    }
-  }
-  if (!items.length && !yourReady.length) rows.push(view.placeholder(t, null, "The queue is empty."));
   return rows;
 }
 
@@ -406,6 +281,24 @@ export function sidebarHeader(view, t, counts) {
       }),
     )
     .child(div().flex_1())
+    .when(Boolean(view.statusAlert()), (el) => {
+      const alert = view.statusAlert();
+      return el.child(
+        h_flex()
+          .id("prs-sb-status")
+          .h(20)
+          .px(5)
+          .gap(4)
+          .items_center()
+          .rounded(5)
+          .cursor_pointer()
+          .hover((s) => s.bg(t.hover))
+          .tooltip(alert.title)
+          .on_click(() => view.openPage("status"))
+          .child(icon(t, "alert", alert.level, 12))
+          .child(div().text_size(10.5).text_color(tone(t, alert.level)).child(String(alert.troubled.length))),
+      );
+    })
     .when(view.sidebarTab === "mine", (el) => el.child(draftsButton(view, t)))
     .child(h_flex().id("prs-sb-refresh").p(4).rounded(5).cursor_pointer().hover((el) => el.bg(t.hover)).on_click((_e, cx) => view.refreshAll(cx)).child(icon(t, "refresh", failing ? "warn" : "dim", 12, view.loading())))
     .child(h_flex().id("prs-sb-page").px(5).h(20).items_center().rounded(5).cursor_pointer().hover((el) => el.bg(t.hover)).on_click(() => view.openPage()).child(div().text_size(11).text_color(t.dim).child("⤢")));
