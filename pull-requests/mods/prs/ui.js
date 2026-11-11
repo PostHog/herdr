@@ -257,18 +257,16 @@ export function gateStrip(t, id, gates, { segment = null, height = 3 } = {}) {
     }));
 }
 
-export function actionButton(t, id, iconName, label, onClick, toneName = "muted") {
+export function actionButton(t, id, iconName, label, onClick, toneName = "muted", { plain = false } = {}) {
   return h_flex()
     .id(id)
-    .w(26)
-    .h(22)
+    .w(plain ? 18 : 26)
+    .h(plain ? 18 : 22)
     .flex_none()
     .items_center()
     .justify_center()
-    .rounded(6)
-    .border_1()
-    .border_color(t.border)
-    .bg(t.raised)
+    .rounded(plain ? 4 : 6)
+    .when(!plain, (el) => el.border_1().border_color(t.border).bg(t.raised))
     .cursor_pointer()
     .hover((s) => s.bg(t.hover))
     .tooltip(label)

@@ -98,14 +98,14 @@ export function priorityBadge(t, pr) {
   return chip ? badge(t, chip.label, chip.points > 0 ? "ok" : "dim") : null;
 }
 
-export function rowButtons(view, t, pr, { scope, next, entry, group }) {
+export function rowButtons(view, t, pr, { scope, next, entry, group, plain = false }) {
   const buttons = [];
   if (scope !== "mine" || !next) return buttons;
   for (const ask of visualAsks(pr)) buttons.push(tinyButton(t, `prs-b-vis-${pr.number}-${ask.type}`, "Approve", () => view.act("openUrl", { ...pr, url: ask.url }), true, { icon: VISUAL_ICONS[ask.type] ?? "eye", tooltip: `Approve ${ask.type} changes: ${ask.summary}` }));
-  if (pr.isDraft && pr.mine) buttons.push(actionButton(t, `prs-b-ready-${pr.number}`, "pr", "Mark ready for review", () => view.act("markReady", pr), "ok"));
-  if (next.ready && (!group || group.members.length === 1) && !entry) buttons.push(actionButton(t, `prs-b-merge-${pr.number}`, "merged", mergesThroughQueue(pr) ? "Send to queue…" : "Merge…", () => view.act("merge", pr), "ok"));
-  if (next.requeue) buttons.push(actionButton(t, `prs-b-again-${pr.number}`, "merged", mergesThroughQueue(pr) ? "Send to queue again…" : "Merge again…", () => view.act("merge", pr), "ok"));
-  if (fixable(pr)) buttons.push(actionButton(t, `prs-b-fix-${pr.number}`, "wrench", "Fix with Claude", () => view.act("fix", pr), "merged"));
+  if (pr.isDraft && pr.mine) buttons.push(actionButton(t, `prs-b-ready-${pr.number}`, "pr", "Mark ready for review", () => view.act("markReady", pr), "ok", { plain }));
+  if (next.ready && (!group || group.members.length === 1) && !entry) buttons.push(actionButton(t, `prs-b-merge-${pr.number}`, "merged", mergesThroughQueue(pr) ? "Send to queue…" : "Merge…", () => view.act("merge", pr), "ok", { plain }));
+  if (next.requeue) buttons.push(actionButton(t, `prs-b-again-${pr.number}`, "merged", mergesThroughQueue(pr) ? "Send to queue again…" : "Merge again…", () => view.act("merge", pr), "ok", { plain }));
+  if (fixable(pr)) buttons.push(actionButton(t, `prs-b-fix-${pr.number}`, "wrench", "Fix with Claude", () => view.act("fix", pr), "merged", { plain }));
   return buttons;
 }
 
@@ -124,7 +124,7 @@ export function statusLine(view, t, pr, { scope = "mine", group = null, buttons 
     .when(pr.approvals > 0, (el) => el.child(stat(t, "approved", String(pr.approvals), "ok")))
     .when(pr.threads.total > 0, (el) => el.child(stat(t, "comment", String(pr.threads.total), "warn")))
     .when(Boolean(pr.watching && !pr.mine), (el) => el.child(stat(t, "eye", "watching", "info")))
-    .when(buttons, (el) => el.children(rowButtons(view, t, pr, { scope, next, entry, group })));
+    .when(buttons, (el) => el.children(rowButtons(view, t, pr, { scope, next, entry, group, plain: true })));
 }
 
 export function prIcon(view, t, pr, { scope = "mine", group = null } = {}) {
@@ -213,7 +213,7 @@ export function stackHeader(view, t, group) {
     .child(icon(t, "stack", "merged", 12))
     .child(div().flex_1().min_w(0).truncate().text_size(TEXT.meta).text_color(t.muted).child(`Stack of ${group.members.length} · ${top.headRef}`))
     .child(div().flex_none().text_size(TEXT.meta).text_color(queued ? t.accent : all ? tone(t, "ok") : t.dim).child(queued ? queued.state : `${ready}/${group.members.length} ready`))
-    .when(all && !queued && top.mine, (el) => el.child(actionButton(t, `prs-stack-merge-${group.id}`, "merged", "Merge stack…", () => view.act("merge", top), "ok")));
+    .when(all && !queued && top.mine, (el) => el.child(actionButton(t, `prs-stack-merge-${group.id}`, "merged", "Merge stack…", () => view.act("merge", top), "ok", { plain: true })));
 }
 
 export function sidebarMine(view, t) {
