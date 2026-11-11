@@ -257,27 +257,27 @@ export function sidebarHeader(view, t, counts) {
   const failing = view.failures > 0;
   return h_flex()
     .px(6)
-    .pt(6)
-    .pb(4)
-    .gap(2)
+    .pt(8)
+    .pb(6)
+    .gap(4)
     .items_center()
     .children(
       SIDEBAR_TABS.map((tab) => {
         const on = view.sidebarTab === tab.id;
         return h_flex()
           .id(`prs-sbtab-${tab.id}`)
-          .h(24)
-          .px(7)
-          .gap(4)
+          .h(28)
+          .px(10)
+          .gap(6)
           .items_center()
-          .rounded(6)
+          .rounded(7)
           .cursor_pointer()
           .when(on, (el) => el.bg(t.raised))
           .hover((el) => el.bg(t.hover))
           .on_click((_e, cx) => view.setSidebarTab(tab.id, cx))
-          .child(icon(t, tab.icon, on ? "foreground" : "muted", 12))
-          .child(div().text_size(11.5).text_color(on ? t.foreground : t.muted).child(tab.label))
-          .when(Boolean(counts[tab.id]), (el) => el.child(div().text_size(10.5).text_color(t.dim).child(String(counts[tab.id]))));
+          .child(icon(t, tab.icon, on ? "foreground" : "muted", 13))
+          .child(div().text_size(12).text_color(on ? t.foreground : t.muted).child(tab.label))
+          .when(Boolean(counts[tab.id]), (el) => el.child(div().text_size(12).text_color(t.dim).child(String(counts[tab.id]))));
       }),
     )
     .child(div().flex_1())
