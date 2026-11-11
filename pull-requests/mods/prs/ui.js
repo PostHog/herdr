@@ -257,7 +257,7 @@ export function gateStrip(t, id, gates, { segment = null, height = 3 } = {}) {
     }));
 }
 
-export function actionButton(t, id, iconName, label, onClick, toneName = "muted", { plain = false } = {}) {
+export function actionButton(t, id, iconName, label, onClick, toneName = "muted", { plain = false, color = null } = {}) {
   return h_flex()
     .id(id)
     .w(plain ? 18 : 26)
@@ -275,5 +275,5 @@ export function actionButton(t, id, iconName, label, onClick, toneName = "muted"
       cx.stop_propagation();
       onClick(event, cx);
     })
-    .child(svg(`mods/prs/icons/${iconName}.svg`).size(13).text_color(tone(t, toneName)));
+    .child(svg(`mods/prs/icons/${iconName}.svg`).size(13).text_color(color ?? tone(t, toneName)));
 }

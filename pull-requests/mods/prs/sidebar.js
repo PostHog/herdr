@@ -5,7 +5,7 @@ import { comparePriority } from "./github.js";
 import { LISTING_CAP } from "./trunk.js";
 import { step, queueFor, stackGroups, layerWaitingOn, visualAsks, fixable } from "./steps.js";
 import { CLAUDE_ICON } from "./claude.js";
-import { ago, tone, button, actionButton, badge, gateStrip, titleText, TEXT } from "./ui.js";
+import { ago, tone, actionButton, badge, gateStrip, titleText, TEXT } from "./ui.js";
 import { readiness } from "./sheet.js";
 import { mergesThroughQueue } from "./actions.js";
 
@@ -22,11 +22,8 @@ export const SIDEBAR_TABS = [
   { id: "reviews", label: "Review", icon: "eye" },
 ];
 
-function tinyButton(t, id, label, onClick, primary = false, extra = {}) {
-  return button(t, id, label, onClick, { small: true, primary, ...extra });
-}
-
 const VISUAL_ICONS = { storybook: "book", playwright: "drama" };
+const VISUAL_COLORS = { storybook: "#FF4785" };
 
 export function stat(t, iconName, text, toneName = "dim") {
   return h_flex().gap(3).flex_none().items_center().child(icon(t, iconName, toneName, 11)).child(div().text_size(TEXT.meta).text_color(tone(t, toneName)).child(text));
@@ -101,7 +98,7 @@ export function priorityBadge(t, pr) {
 export function rowButtons(view, t, pr, { scope, next, entry, group, plain = false }) {
   const buttons = [];
   if (scope !== "mine" || !next) return buttons;
-  for (const ask of visualAsks(pr)) buttons.push(tinyButton(t, `prs-b-vis-${pr.number}-${ask.type}`, "Approve", () => view.act("openUrl", { ...pr, url: ask.url }), true, { icon: VISUAL_ICONS[ask.type] ?? "eye", tooltip: `Approve ${ask.type} changes: ${ask.summary}` }));
+  for (const ask of visualAsks(pr)) buttons.push(actionButton(t, `prs-b-vis-${pr.number}-${ask.type}`, VISUAL_ICONS[ask.type] ?? "eye", `Approve ${ask.type} changes: ${ask.summary}`, () => view.act("openUrl", { ...pr, url: ask.url }), "warn", { plain, color: VISUAL_COLORS[ask.type] ?? null }));
   if (pr.isDraft && pr.mine) buttons.push(actionButton(t, `prs-b-ready-${pr.number}`, "pr", "Mark ready for review", () => view.act("markReady", pr), "ok", { plain }));
   if (next.ready && (!group || group.members.length === 1) && !entry) buttons.push(actionButton(t, `prs-b-merge-${pr.number}`, "merged", mergesThroughQueue(pr) ? "Send to queue…" : "Merge…", () => view.act("merge", pr), "ok", { plain }));
   if (next.requeue) buttons.push(actionButton(t, `prs-b-again-${pr.number}`, "merged", mergesThroughQueue(pr) ? "Send to queue again…" : "Merge again…", () => view.act("merge", pr), "ok", { plain }));
@@ -124,7 +121,7 @@ export function statusLine(view, t, pr, { scope = "mine", group = null, buttons 
     .when(pr.approvals > 0, (el) => el.child(stat(t, "approved", String(pr.approvals), "ok")))
     .when(pr.threads.total > 0, (el) => el.child(stat(t, "comment", String(pr.threads.total), "warn")))
     .when(Boolean(pr.watching && !pr.mine), (el) => el.child(stat(t, "eye", "watching", "info")))
-    .when(buttons, (el) => el.children(rowButtons(view, t, pr, { scope, next, entry, group, plain: true })));
+    .when(buttons, (el) => el.child(div().flex_1()).children(rowButtons(view, t, pr, { scope, next, entry, group, plain: true })));
 }
 
 export function prIcon(view, t, pr, { scope = "mine", group = null } = {}) {
