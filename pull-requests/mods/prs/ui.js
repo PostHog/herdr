@@ -202,7 +202,7 @@ export function section(t, label, right) {
 }
 
 export function empty(t, text) {
-  return div().p(14).text_size(12).text_color(t.dim).child(text);
+  return div().px(8).py(14).text_size(12).text_color(t.dim).child(text);
 }
 
 export function field(t, label, control, hint) {

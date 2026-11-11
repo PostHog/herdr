@@ -25,8 +25,11 @@ const FAILURES_BEFORE_ERROR = 3;
 const VIEW_STACK = "pr-center";
 const PAGE_NODE = "prs-page";
 const WORK_NODE = "work";
-const QUICK_ACTIONS_WIDTH = 176;
-const GATE_WIDTH = 61;
+const SUGGESTED_WIDTH = 88;
+const QUICK_ACTIONS_WIDTH = SUGGESTED_WIDTH + 144;
+const UPDATED_WIDTH = 64;
+const CONTENT_MAX_WIDTH = 1280;
+const GATE_WIDTH = 64;
 const STATUS_WIDTH = GATE_WIDTH * 5 + 12;
 const GATE_HEADERS = ["CHECKS", "REVIEW", "THREADS", "CONFLICTS", "QUEUE"];
 const ICON = (name) => `mods/prs/icons/${name}.svg`;
@@ -758,7 +761,7 @@ export default class Prs extends View {
         .when(!props()?.overlay, (el) => el.child(div().text_size(11).text_color(t.dim).child("⌘⇧G"))));
     const columns = this.page === "mine" || this.page === "reviews"
       ? h_flex()
-          .px(16)
+          .px(20)
           .py(8)
           .gap(12)
           .border_b_1()
@@ -767,9 +770,9 @@ export default class Prs extends View {
           .font_semibold()
           .text_color(t.dim)
           .child(div().flex_1().child("TITLE"))
-          .child(h_flex().w(STATUS_WIDTH).flex_none().gap(3).children(GATE_HEADERS.map((label) => div().w(GATE_WIDTH).flex_none().child(label))))
-          .child(div().w(80).child("UPDATED"))
-          .child(div().w(QUICK_ACTIONS_WIDTH))
+          .child(h_flex().w(STATUS_WIDTH).flex_none().gap(3).children(GATE_HEADERS.map((label) => div().w(GATE_WIDTH).flex_none().text_size(10).child(label))))
+          .child(div().w(UPDATED_WIDTH).flex_none().child("UPDATED"))
+          .child(div().w(QUICK_ACTIONS_WIDTH).flex_none())
       : null;
     const body = this.page === "mine" ? this.wideMineRows(t) : this.page === "reviews" ? this.wideReviewRows(t) : this.pageBody(t);
     return h_flex()
@@ -787,31 +790,32 @@ export default class Prs extends View {
           cx.stop_propagation();
         }))
       .child(nav)
-      .child(
+      .child(v_flex().flex_1().min_w(0).h_full().child(
         v_flex()
-          .flex_1()
-          .min_w(0)
+          .w_full()
+          .max_w(CONTENT_MAX_WIDTH)
           .h_full()
           .child(
             h_flex()
-              .px(18)
+              .px(20)
               .pt(14)
               .pb(8)
               .gap(8)
               .items_center()
               .child(div().flex_1().text_size(18).font_semibold().child(title))
               .when(loading, (el) => el.child(svg(SPINNER).size(13).spin(900).text_color(t.dim)))
+              .when(this.page === "workflows", (el) => el.child(textIconButton(t, "prs-wf-new", "plus", "New workflow", () => this.newWorkflow())))
               .when(this.page === "mine", (el) => el.child(textIconButton(t, "prs-addpr", "plus", "Add PR", () => openOverlay({ mod: "prs", kind: "dialog", width: 440, height: 200, props: { mode: "addPr" } }))))
               .when(["mine", "reviews"].includes(this.page), (el) => el.child(textIconButton(t, "prs-copylist", "copy", "Copy list", () => copyText(this.visibleList().map((pr) => `- ${markdownLink(pr)}`).join("\n"), "Copied the filtered PRs as a list."))))
               .child(iconButton(t, "prs-wide-refresh", "refresh", "Refresh", (_e, cx) => this.refreshAll(cx))),
           )
-          .child(div().px(10).child(this.toolbar(t)))
+          .child(div().px(12).child(this.toolbar(t)))
           .when(Boolean(columns), (el) => el.child(columns))
-          .child(v_flex().id("prs-wide-list").flex_1().min_h(0).px(6).pb(16).overflow_y_scrollbar().children(body)),
-      );
+          .child(v_flex().id("prs-wide-list").flex_1().min_h(0).px(12).pb(16).overflow_y_scrollbar().children(body)),
+      ));
   }
 
-  quickActions(t, pr, scope, leading = []) {
+  quickActions(t, pr, scope, leading = [], shown = true) {
     const entries = [
       ...(scope === "reviews" ? [["reviewInClaude", "terminal", "Review in Claude"]] : []),
       ["agentReview", "bot", "Agent review (headless)"],
@@ -822,19 +826,19 @@ export default class Prs extends View {
       .w(QUICK_ACTIONS_WIDTH)
       .flex_none()
       .gap(2)
-      .justify_end()
       .items_center()
-      .children(leading)
-      .when(leading.length > 0, (el) => el.child(div().w(4)))
-      .child(glyphButton(t, `prs-q-${scope}-${pr.number}-claude`, image(CLAUDE_ICON).size(14), "Claude Code on this PR", () => choose("claude", pr)))
-      .children(entries.map(([name, iconName, label]) => iconButton(t, `prs-q-${scope}-${pr.number}-${name}`, iconName, label, () => choose(name, pr))));
+      .child(h_flex().w(SUGGESTED_WIDTH).flex_none().gap(4).justify_end().items_center().children(leading))
+      .child(div().w(4).flex_none())
+      .when(shown, (el) => el
+        .child(glyphButton(t, `prs-q-${scope}-${pr.number}-claude`, image(CLAUDE_ICON).size(14), "Claude Code on this PR", () => choose("claude", pr)))
+        .children(entries.map(([name, iconName, label]) => iconButton(t, `prs-q-${scope}-${pr.number}-${name}`, iconName, label, () => choose(name, pr)))));
   }
 
   wideRow(t, id, pr, scope, depth, left, middle, right, leading = []) {
     return h_flex()
       .id(id)
-      .pl(16 + depth * 16)
-      .pr(16)
+      .pl(8 + depth * 16)
+      .pr(8)
       .py(9)
       .gap(12)
       .items_center()
@@ -842,6 +846,7 @@ export default class Prs extends View {
       .border_color(t.border)
       .cursor_pointer()
       .hover((el) => el.bg(t.hover))
+      .on_hover((on, cx) => this.hover(id, on, cx))
       .on_click(() => NAMED.details(pr))
       .on_mouse_down("right", (_e, cx) => {
         cx.stop_propagation();
@@ -849,8 +854,8 @@ export default class Prs extends View {
       })
       .child(v_flex().flex_1().min_w(0).gap(4).children(left))
       .child(middle)
-      .child(div().w(80).flex_none().text_size(12).text_color(t.dim).child(right))
-      .child(this.quickActions(t, pr, scope, leading));
+      .child(div().w(UPDATED_WIDTH).flex_none().text_size(12).text_color(t.dim).child(right))
+      .child(this.quickActions(t, pr, scope, leading, this.hovered === id));
   }
 
   wideMineRows(t) {
@@ -861,10 +866,10 @@ export default class Prs extends View {
     const groups = stackGroups(prs, this.sortNewest);
     const primaryRepo = [...new Set(prs.map((pr) => pr.repo))].sort((a, b) => this.repoIndex(a) - this.repoIndex(b))[0];
     for (const part of splitByNeed(this, groups)) {
-      rows.push(div().px(10).child(section(t, `${part.label} · ${part.groups.reduce((sum, group) => sum + group.members.length, 0)}`)));
+      rows.push(div().px(2).child(section(t, `${part.label} · ${part.groups.reduce((sum, group) => sum + group.members.length, 0)}`)));
       for (const group of part.groups) {
         const members = group.members.length > 1 ? [...group.members].reverse() : group.members;
-        if (group.members.length > 1) rows.push(div().px(8).pt(6).child(stackHeader(this, t, group)));
+        if (group.members.length > 1) rows.push(div().pt(6).child(stackHeader(this, t, group)));
         for (const member of members) {
           const pr = member.pr;
           const id = `prs-wm-${pr.repo}-${pr.number}`;
@@ -906,7 +911,7 @@ export default class Prs extends View {
       rows.push(
         h_flex()
           .id("prs-wide-hidden")
-          .px(16)
+          .px(8)
           .py(10)
           .text_size(12)
           .text_color(t.dim)
@@ -1091,7 +1096,7 @@ export default class Prs extends View {
     };
     return [
       h_flex()
-        .px(16)
+        .px(8)
         .pt(14)
         .pb(12)
         .gap(8)
@@ -1099,7 +1104,7 @@ export default class Prs extends View {
         .when(overview.troubled.length > 0, (el) => el.child(svg("mods/prs/icons/alert.svg").size(15).flex_none().text_color(tone(t, overview.level))))
         .child(div().flex_1().text_size(14).font_semibold().text_color(overview.troubled.length ? tone(t, overview.level) : t.foreground).child(overview.title))
         .child(div().flex_none().text_size(11.5).text_color(t.dim).child(`Checked ${ago(new Date(this.serviceStatus.at).toISOString())}`)),
-      h_flex().px(16).gap(10).flex_wrap().items_start().children(overview.sorted.map(tile)),
+      h_flex().px(8).gap(10).flex_wrap().items_start().children(overview.sorted.map(tile)),
     ];
   }
 
@@ -1261,18 +1266,26 @@ export default class Prs extends View {
     ];
   }
 
+  newWorkflow() {
+    openOverlay({ mod: "prs", kind: "dialog", width: 560, height: 720, props: { mode: "workflow", repos: this.knownRepos() } });
+  }
+
   workflowRows(t) {
     const workflows = store().workflows;
-    const rows = [
-      h_flex()
-        .px(8)
-        .pt(8)
-        .gap(6)
-        .items_center()
-        .child(div().flex_1().text_size(11.5).text_color(t.dim).child("Runs on your PRs and review requests while Herdr is open, checked on every refresh. At most 5 runs per PR per hour."))
-        .child(button(t, "prs-wf-new", "New workflow", () => openOverlay({ mod: "prs", kind: "dialog", width: 560, height: 720, props: { mode: "workflow", repos: this.knownRepos() } }), { small: true, primary: true })),
-    ];
-    if (!workflows.length) rows.push(empty(t, "No workflows yet."));
+    const about = "Runs on your PRs and review requests while Herdr is open, checked on every refresh. At most 5 runs per PR per hour.";
+    if (!workflows.length) {
+      return [
+        v_flex()
+          .px(8)
+          .pt(14)
+          .gap(8)
+          .items_start()
+          .child(div().text_size(13).font_semibold().child("No workflows yet"))
+          .child(div().text_size(12).text_color(t.muted).child(about))
+          .child(button(t, "prs-wf-first", "New workflow", () => this.newWorkflow(), { small: true, primary: true })),
+      ];
+    }
+    const rows = [div().px(8).pt(8).pb(4).text_size(11.5).text_color(t.dim).child(about)];
     for (const workflow of workflows) {
       const enabled = workflow.enabled !== false;
       rows.push(
