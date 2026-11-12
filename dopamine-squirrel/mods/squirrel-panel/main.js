@@ -50,6 +50,7 @@ export default class SquirrelPanel extends View {
     this.starting = {};
     this.queueBusy = {};
     this.queueError = {};
+    this.queueAdded = {};
     this.confirm = {};
     this.expanded = {};
     this.leaving = {};

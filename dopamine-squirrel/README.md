@@ -75,4 +75,4 @@ What changes colour, since screenshots can't show it:
 - Context % and plan limit bars: green, yellow from 50%, red from 80%.
 - WAITING turns red after 48 hours. Clicked PR links turn purple.
 - A WATCH PR that comes back gets an amber edge and a `↻` tag.
-- Merge buttons turn green (add) or red (remove) while waiting for the confirming click.
+- Remove turns red while waiting for its confirming click.

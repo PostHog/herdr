@@ -14,11 +14,11 @@ function trunk(args) {
 
 // My PRs: three tables on one column grid (in review, merge queue, recently merged) and the visualizer.
 export const myPrViews = {
-  // Trunk merge queue buttons: a first click arms, a second within 4s runs `trunk merge` or `trunk merge cancel`.
+  // Trunk merge queue buttons: Add runs `trunk merge` at once; Remove asks for a second click within 4s.
   queue(p, action, cx) {
     const key = p.url;
     if (this.queueBusy[key]) return;
-    if (!this.confirm[key]) {
+    if (action === "remove" && !this.confirm[key]) {
       this.confirm[key] = true;
       cx.notify();
       cx.spawn(async (cx) => { await cx.sleep(4000); delete this.confirm[key]; cx.notify(); });
@@ -32,6 +32,7 @@ export const myPrViews = {
     cx.spawn(async (cx) => {
       const r = await trunk(args).catch((e) => ({ code: 1, stderr: String(e?.message ?? e) }));
       if (r.code !== 0) this.queueError[key] = (r.stderr || r.stdout || "trunk failed").replace(/\x1b\[[0-9;]*m/g, "").trim().split("\n").pop();
+      else if (action === "add") this.queueAdded[key] = Date.now();
       delete this.queueBusy[key];
       cx.notify();
       for (const wait of [3000, 20000]) { await cx.sleep(wait); run("squirrel-topbar.gh_refresh"); }
@@ -82,6 +83,7 @@ export const myPrViews = {
         .hover((s) => s.bg(t.raised).text_color(t.foreground)).cursor_pointer()
         .on_click((_e, cx) => this.queue(p, action, cx))
         .child(busy ? svg("mods/workspace-chrome/spinner.svg").size(12).spin(900)
+          : this.queueAdded?.[key] && Date.now() - this.queueAdded[key] < 20000 ? "Added ✓"
           : confirming ? "Click to confirm" : action === "add" ? "Add to queue" : "Remove");
     };
     const note = (p, kind) => {
