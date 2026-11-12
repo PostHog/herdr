@@ -176,7 +176,9 @@ export const myPrViews = {
           : ["FAILURE", "ERROR"].includes(p.ci) ? div().id(`ci-${p.url}`).flex_none().cursor_pointer().tooltip("Open Claude on the failing CI")
             .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
             .on_click((_e, cx) => { cx.stop_propagation(); this.fixCi(p, cx); })
-            .child(this.ciStarting?.[p.url] ? c.chip(W.ci, "Opening…", c.red) : c.ci(p))
+            // Once opened (pane open or since closed), the chip fills in so you can see you already sent Claude.
+            .child(this.ciStarting?.[p.url] ? c.chip(W.ci, "Opening…", c.red)
+              : (shared(CI_PANES) ?? {})[p.url] ? c.chip(W.ci, "CI · on it", c.red).bg(c.red + "33") : c.ci(p))
           : c.ci(p))
         .child(c.link(p, W.pr))
         .child(h_flex().flex_1().min_w(0).gap(5).items_center()
