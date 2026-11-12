@@ -80,6 +80,18 @@ export function needsYou(view, pr, group) {
   return pr.isDraft || visualAsks(pr).length > 0 || Boolean(next.requeue) || fixable(pr) || Boolean(next.behind) || Boolean(next.ready && !entry);
 }
 
+export function workRank(view, pr, group) {
+  if (!pr.mine) return 0;
+  const { next, entry } = nextFor(view, pr, group);
+  if (next.requeue) return 7;
+  if (pr.mergeable === "CONFLICTING" || pr.mergeState === "DIRTY" || pr.checks.failed > 0 || pr.reviewDecision === "CHANGES_REQUESTED") return 6;
+  if (pr.threads.total > 0) return 5;
+  if (visualAsks(pr).length > 0) return 4;
+  if (next.behind) return 3;
+  if (next.ready && !entry) return 2;
+  return pr.isDraft ? 1 : 0;
+}
+
 const QUEUE_DONE = ["Merged", "Failed", "Cancelled"];
 
 export function inQueue(view, pr, group) {

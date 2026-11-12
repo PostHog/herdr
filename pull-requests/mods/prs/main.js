@@ -2,15 +2,15 @@ import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { theme, props, openOverlay, closeOverlay, shared, setShared, run, machines, notify, layout, nextCommand, focused } from "herdr";
 import { loadStore, store, updateStore, prKey, newId } from "./store.js";
-import { fetchMyPrs, fetchReviews, fetchDetail, statusPill, needsAttention, needsReview, readyToMerge, orderWithStacks, comparePriority, isOrgWide, ownerOf } from "./github.js";
+import { fetchMyPrs, fetchReviews, fetchDetail, statusPill, needsReview, readyToMerge, comparePriority, isOrgWide, ownerOf } from "./github.js";
 import { mergePr, markReady, updateBranch, rerunFailed, approvePr, commentOnPr, resolveThread, openUrl, copyText, markdownLink, toggleWatch, toggleHidden, report, usesTrunk, isTrunkPr, mergesThroughQueue } from "./actions.js";
 import { startFixSession, startReview, syncRuns, fixPrompt, findingsFixPrompt, reviewPromptForOthers, setFindingState, findingsMarkdown } from "./agents.js";
 import { processSnapshot, TRIGGERS, ACTION_KINDS } from "./automation.js";
 import { loadConfig, config, updateConfig, configPath, machineLabel } from "./config.js";
 import { forgetCheckouts, checkoutFor } from "./runner.js";
 import { loadTrunk, dequeue, resetTrunk } from "./trunk.js";
-import { fetchServices, queueService, statusOverview } from "./status.js";
-import { sidebarHeader, sidebarMine, sidebarReviews, sidebarRail, statusLine, prIcon, progressLine, stackHeader, gatesFor, splitByNeed, isQuiet, rowButtons, nextFor } from "./sidebar.js";
+import { fetchServices, isIncident, queueService, statusOverview } from "./status.js";
+import { sidebarHeader, sidebarMine, sidebarReviews, sidebarRail, statusLine, prIcon, progressLine, stackHeader, gatesFor, splitByNeed, isQuiet, rowButtons, nextFor, needsYou, workRank } from "./sidebar.js";
 import { visualAsks, stackGroups, withoutDraftStacks, step, queueFor, withTrunkQueue } from "./steps.js";
 import { openClaude, CLAUDE_ICON } from "./claude.js";
 import { ago, button, iconButton, glyphButton, textIconButton, chip, badge, section, empty, field, menuItem, SPINNER, tone, TEXT, tint, avatar, countPill, codePill, gateStrip, titleText } from "./ui.js";
@@ -27,10 +27,11 @@ const PAGE_NODE = "prs-page";
 const WORK_NODE = "work";
 const SUGGESTED_WIDTH = 88;
 const QUICK_ACTIONS_WIDTH = SUGGESTED_WIDTH + 144;
-const UPDATED_WIDTH = 64;
 const CONTENT_MAX_WIDTH = 1280;
-const GATE_WIDTH = 64;
+const GATE_WIDTH = 72;
 const NAV_WIDTH = 230;
+const STATUS_TILE_MIN = 220;
+const STATUS_TILE_GAP = 10;
 const statusWidth = (gate) => gate * 5 + 12;
 const GATE_HEADERS = ["CHECKS", "REVIEW", "THREADS", "CONFLICTS", "QUEUE"];
 const ICON = (name) => `mods/prs/icons/${name}.svg`;
@@ -88,11 +89,17 @@ const PAGES = [
 ];
 
 const MINE_CHIPS = [
-  { id: "attention", label: "Needs attention", test: needsAttention },
+  { id: "attention", label: "Needs you", test: (pr, needs) => needs.has(prKey(pr.repo, pr.number)) },
   { id: "review", label: "Needs review", test: needsReview },
   { id: "ready", label: "Ready to merge", test: readyToMerge },
-  { id: "watching", label: "Watching", test: (pr) => pr.watching },
+  { id: "watching", label: "Watching", test: (pr) => pr.watching, hideWhenEmpty: true },
 ];
+
+const MINE_SORTS = {
+  newest: { label: "↓ Newest", next: "oldest" },
+  oldest: { label: "↑ Oldest", next: "priority" },
+  priority: { label: "✦ Priority", next: "newest" },
+};
 
 const REVIEW_SORTS = {
   priority: { label: "✦ Priority", next: "newest", compare: comparePriority },
@@ -269,7 +276,7 @@ export default class Prs extends View {
     this.reviewsFailures = 0;
     this.seen = null;
     this.seenConfig = shared("prs.config") ?? null;
-    this.sortNewest = localStorage.getItem("sort") !== "oldest";
+    this.mineSort = MINE_SORTS[localStorage.getItem("sort")] ? localStorage.getItem("sort") : "newest";
     this.reviewSort = REVIEW_SORTS[localStorage.getItem("reviewSort")] ? localStorage.getItem("reviewSort") : "priority";
     this.chips = new Set();
     this.hideDrafts = localStorage.getItem("hideDrafts") === "true";
@@ -402,12 +409,25 @@ export default class Prs extends View {
     this.loadingServices = true;
     cx.spawn(async (cx) => {
       try {
+        const previous = this.serviceStatus;
         this.serviceStatus = await fetchServices(config().status?.services, (ms) => cx.sleep(ms));
         setShared("prs.cache.services", this.serviceStatus);
+        this.announceOutages(previous?.services ?? []);
       } catch {}
       this.loadingServices = false;
       cx.notify();
     });
+  }
+
+  announceOutages(previous) {
+    if (config().notifications === false) return;
+    const wasDown = new Set(previous.filter((service) => service.level === "bad").map((service) => service.name));
+    const action = hasPage() ? { action: { name: "layout.select", args: { stack: VIEW_STACK, child: PAGE_NODE } } } : {};
+    for (const service of this.serviceStatus.services) {
+      if (service.level !== "bad" || wasDown.has(service.name)) continue;
+      const incident = service.incidents[0]?.name;
+      notify({ title: `${service.name} major outage`, body: incident ?? service.description, level: "error", timeout: 12000, ...action });
+    }
   }
 
   allServices() {
@@ -775,7 +795,6 @@ export default class Prs extends View {
           .child(columnsFit.gate === GATE_WIDTH
             ? h_flex().w(statusWidth(columnsFit.gate)).flex_none().gap(3).children(GATE_HEADERS.map((label) => div().w(columnsFit.gate).flex_none().text_size(10).child(label)))
             : div().w(statusWidth(columnsFit.gate)).flex_none().child("READINESS"))
-          .when(columnsFit.updated, (el) => el.child(div().w(UPDATED_WIDTH).flex_none().child("UPDATED")))
           .child(div().w(columnsFit.actions).flex_none())
       : null;
     const body = this.page === "mine" ? this.wideMineRows(t) : this.page === "reviews" ? this.wideReviewRows(t) : this.pageBody(t);
@@ -794,10 +813,10 @@ export default class Prs extends View {
           cx.stop_propagation();
         }))
       .child(nav)
-      .child(v_flex().flex_1().min_w(0).h_full().child(
+      .child(v_flex().flex_1().min_w(0).h_full().when(!columns, (el) => el.items_center()).child(
         v_flex()
           .w_full()
-          .max_w(CONTENT_MAX_WIDTH)
+          .when(!columns, (el) => el.max_w(CONTENT_MAX_WIDTH))
           .h_full()
           .child(
             h_flex()
@@ -820,10 +839,10 @@ export default class Prs extends View {
   }
 
   wideLayout() {
-    const content = Math.min(CONTENT_MAX_WIDTH, (this.width || CONTENT_MAX_WIDTH + NAV_WIDTH) - NAV_WIDTH);
-    if (content >= 1100) return { gate: GATE_WIDTH, updated: true, quick: true, actions: QUICK_ACTIONS_WIDTH };
-    if (content >= 880) return { gate: 48, updated: true, quick: true, actions: QUICK_ACTIONS_WIDTH };
-    return { gate: 40, updated: false, quick: false, actions: SUGGESTED_WIDTH };
+    const content = (this.width || CONTENT_MAX_WIDTH + NAV_WIDTH) - NAV_WIDTH;
+    if (content >= 1100) return { gate: GATE_WIDTH, quick: true, actions: QUICK_ACTIONS_WIDTH };
+    if (content >= 880) return { gate: 48, quick: true, actions: QUICK_ACTIONS_WIDTH };
+    return { gate: 40, quick: false, actions: SUGGESTED_WIDTH };
   }
 
   quickActions(t, pr, scope, leading = [], shown = true) {
@@ -838,15 +857,16 @@ export default class Prs extends View {
       .w(columnsFit.actions)
       .flex_none()
       .gap(2)
+      .justify_end()
       .items_center()
-      .child(h_flex().w(SUGGESTED_WIDTH).flex_none().gap(4).justify_end().items_center().children(leading))
-      .when(columnsFit.quick, (el) => el.child(div().w(4).flex_none()))
       .when(shown && columnsFit.quick, (el) => el
         .child(glyphButton(t, `prs-q-${scope}-${pr.number}-claude`, image(CLAUDE_ICON).size(14), "Claude Code on this PR", () => choose("claude", pr)))
-        .children(entries.map(([name, iconName, label]) => iconButton(t, `prs-q-${scope}-${pr.number}-${name}`, iconName, label, () => choose(name, pr)))));
+        .children(entries.map(([name, iconName, label]) => iconButton(t, `prs-q-${scope}-${pr.number}-${name}`, iconName, label, () => choose(name, pr))))
+        .child(div().w(6).flex_none()))
+      .child(h_flex().flex_none().gap(4).items_center().children(leading));
   }
 
-  wideRow(t, id, pr, scope, depth, left, middle, right, leading = []) {
+  wideRow(t, id, pr, scope, depth, left, middle, leading = []) {
     return h_flex()
       .id(id)
       .pl(8 + depth * 16)
@@ -866,7 +886,6 @@ export default class Prs extends View {
       })
       .child(v_flex().flex_1().min_w(0).gap(4).children(left))
       .child(middle)
-      .when(this.wideLayout().updated, (el) => el.child(div().w(UPDATED_WIDTH).flex_none().text_size(12).text_color(t.dim).child(right)))
       .child(this.quickActions(t, pr, scope, leading, this.hovered === id));
   }
 
@@ -875,7 +894,7 @@ export default class Prs extends View {
     const prs = this.mineVisible().map((row) => row.pr);
     if (!prs.length) return [empty(t, "No PRs match.")];
     const rows = [];
-    const groups = stackGroups(prs, this.sortNewest);
+    const groups = this.mineGroups(prs);
     const columnsFit = this.wideLayout();
     const primaryRepo = [...new Set(prs.map((pr) => pr.repo))].sort((a, b) => this.repoIndex(a) - this.repoIndex(b))[0];
     for (const part of splitByNeed(this, groups)) {
@@ -888,14 +907,13 @@ export default class Prs extends View {
           const id = `prs-wm-${pr.repo}-${pr.number}`;
           const progress = progressLine(this, t, pr, group);
           const { next, entry } = nextFor(this, pr, group);
-          const meta = `${pr.repo === primaryRepo ? "" : pr.repo}#${pr.number}${pr.mine ? "" : ` · @${pr.author}`} · opened ${ago(pr.createdAt)}`;
+          const meta = `${pr.repo === primaryRepo ? "" : pr.repo}#${pr.number}${pr.mine ? "" : ` · @${pr.author}`} · opened ${ago(pr.createdAt)} · updated ${ago(pr.updatedAt)}`;
           rows.push(this.wideRow(t, id, pr, "mine", group.members.length > 1 ? 1 : 0,
             [
               h_flex().gap(6).items_center().child(prIcon(this, t, pr, { group })).child(div().flex_1().min_w(0).child(this.titleLine(t, pr, isQuiet(this, part, pr, group)))),
               div().pl(19).min_w(0).truncate().text_size(TEXT.meta).text_color(t.dim).child(meta),
             ],
             v_flex().w(statusWidth(columnsFit.gate)).flex_none().gap(5).child(statusLine(this, t, pr, { group, buttons: false })).child(gateStrip(t, id, gatesFor(this, pr, group), { segment: columnsFit.gate, height: 4 })).when(Boolean(progress), (el) => el.child(progress)),
-            ago(pr.updatedAt),
             rowButtons(this, t, pr, { scope: "mine", next, entry, group }),
           ));
         }
@@ -914,10 +932,9 @@ export default class Prs extends View {
       return this.wideRow(t, id, pr, "reviews", 0,
         [
           h_flex().gap(6).items_center().child(prIcon(this, t, pr, { scope: "reviews" })).child(div().flex_1().min_w(0).child(this.titleLine(t, pr))),
-          div().pl(19).truncate().text_size(TEXT.meta).text_color(t.dim).child(`${pr.repo}#${pr.number}${via ? ` · via ${via}` : ""}`),
+          div().pl(19).truncate().text_size(TEXT.meta).text_color(t.dim).child(`${pr.repo}#${pr.number}${via ? ` · via ${via}` : ""} · updated ${ago(pr.updatedAt)}`),
         ],
         v_flex().w(statusWidth(columnsFit.gate)).flex_none().gap(5).child(statusLine(this, t, pr, { scope: "reviews", buttons: false })).child(gateStrip(t, id, gatesFor(this, pr, null, "reviews"), { segment: columnsFit.gate, height: 4 })),
-        ago(pr.updatedAt),
       );
     };
     const rows = visible.length ? visible.map(row) : [empty(t, "No PRs waiting on your review.")];
@@ -972,25 +989,31 @@ export default class Prs extends View {
           .min_w(0)
           .gap(4)
           .flex_wrap()
-          .child(chip(t, "prs-repo", `${repoLabel} ▾`, Boolean(this.repoFilter), () => this.pick("prs.pick.repo", [{ label: "All repos", value: null }, ...this.knownRepos().map((repo) => ({ label: repo, value: repo }))], this.repoFilter)))
-          .when(scope === "mine", (el) => el.children(MINE_CHIPS.map((item) => chip(t, `prs-chip-${item.id}`, item.label, this.chips.has(item.id), (_e, cx) => {
-            if (this.chips.has(item.id)) this.chips.delete(item.id);
-            else this.chips.add(item.id);
-            cx.notify();
-          }, this.mine ? this.mine.prs.filter(item.test).length || null : null))))
-          .when(scope === "mine", (el) => el.child(chip(t, "prs-drafts", "Hide drafts", this.hideDrafts, (_e, cx) => this.toggleDrafts(cx), this.hideDrafts ? this.hiddenDrafts() || null : null)))
-          .when(scope === "mine", (el) => el.child(chip(t, "prs-sort", this.sortNewest ? "↓ Newest" : "↑ Oldest", false, (_e, cx) => {
-            this.sortNewest = !this.sortNewest;
-            localStorage.setItem("sort", this.sortNewest ? "newest" : "oldest");
+          .when(scope === "mine", (el) => el.child(chip(t, "prs-sort", MINE_SORTS[this.mineSort].label, this.mineSort === "priority", (_e, cx) => {
+            this.mineSort = MINE_SORTS[this.mineSort].next;
+            localStorage.setItem("sort", this.mineSort);
             cx.notify();
           })))
-          .when(scope === "reviews", (el) => el
-            .child(chip(t, "prs-via", `${this.viaLabel()} ▾`, Boolean(this.viaFilter), () => this.pick("prs.pick.via", this.viaOptions(), this.viaFilter)))
-            .child(chip(t, "prs-rsort", REVIEW_SORTS[this.reviewSort].label, this.reviewSort === "priority", (_e, cx) => {
-              this.reviewSort = REVIEW_SORTS[this.reviewSort].next;
-              localStorage.setItem("reviewSort", this.reviewSort);
-              cx.notify();
-            })))
+          .when(scope === "reviews", (el) => el.child(chip(t, "prs-rsort", REVIEW_SORTS[this.reviewSort].label, this.reviewSort === "priority", (_e, cx) => {
+            this.reviewSort = REVIEW_SORTS[this.reviewSort].next;
+            localStorage.setItem("reviewSort", this.reviewSort);
+            cx.notify();
+          })))
+          .child(chip(t, "prs-repo", `${repoLabel} ▾`, Boolean(this.repoFilter), () => this.pick("prs.pick.repo", [{ label: "All repos", value: null }, ...this.knownRepos().map((repo) => ({ label: repo, value: repo }))], this.repoFilter)))
+          .when(scope === "mine", (el) => {
+            const needs = this.needsYouKeys();
+            return el.children(MINE_CHIPS.flatMap((item) => {
+              const count = this.mine ? this.mine.prs.filter((pr) => item.test(pr, needs)).length : 0;
+              if (item.hideWhenEmpty && !count && !this.chips.has(item.id)) return [];
+              return [chip(t, `prs-chip-${item.id}`, item.label, this.chips.has(item.id), (_e, cx) => {
+                if (this.chips.has(item.id)) this.chips.delete(item.id);
+                else this.chips.add(item.id);
+                cx.notify();
+              }, count || null)];
+            }));
+          })
+          .when(scope === "mine", (el) => el.child(chip(t, "prs-drafts", "Hide drafts", this.hideDrafts, (_e, cx) => this.toggleDrafts(cx), this.hideDrafts ? this.hiddenDrafts() || null : null)))
+          .when(scope === "reviews", (el) => el.child(chip(t, "prs-via", `${this.viaLabel()} ▾`, Boolean(this.viaFilter), () => this.pick("prs.pick.via", this.viaOptions(), this.viaFilter))))
           .children(filters.map((filter) => chip(t, `prs-filter-${filter.id}`, filter.name, this.savedFilter === filter.id, (_e, cx) => {
             this.savedFilter = this.savedFilter === filter.id ? null : filter.id;
             cx.notify();
@@ -1031,8 +1054,21 @@ export default class Prs extends View {
   }
 
   mineVisible() {
-    const prs = this.applyCommon(this.withDraftsApplied(this.mine?.prs ?? [])).filter((pr) => MINE_CHIPS.every((item) => !this.chips.has(item.id) || item.test(pr)));
-    return orderWithStacks(prs, this.sortNewest);
+    const needs = this.needsYouKeys();
+    const prs = this.applyCommon(this.withDraftsApplied(this.mine?.prs ?? [])).filter((pr) => MINE_CHIPS.every((item) => !this.chips.has(item.id) || item.test(pr, needs)));
+    return this.mineGroups(prs).flatMap((group) => group.members);
+  }
+
+  needsYouKeys() {
+    const groups = stackGroups(this.mine?.prs ?? []).filter((group) => group.members.some((member) => needsYou(this, member.pr, group)));
+    return new Set(groups.flatMap((group) => group.members.map((member) => prKey(member.pr.repo, member.pr.number))));
+  }
+
+  mineGroups(prs) {
+    const groups = stackGroups(prs, this.mineSort !== "oldest");
+    if (this.mineSort !== "priority") return groups;
+    const rank = new Map(groups.map((group) => [group, Math.max(...group.members.map((member) => workRank(this, member.pr, group)))]));
+    return groups.sort((a, b) => rank.get(b) - rank.get(a) || b.updated - a.updated);
   }
 
   reviewsVisible() {
@@ -1071,55 +1107,142 @@ export default class Prs extends View {
     const services = this.allServices();
     if (!this.serviceStatus) return [empty(t, "Reading the status pages…")];
     const overview = statusOverview(services);
-    const levelColor = (level) => (level === "unknown" ? t.dim : tone(t, level));
-    const tile = (service, index) => {
-      const troubled = service.level === "warn" || service.level === "bad";
-      return v_flex()
-        .id(`prs-status-${index}`)
-        .w(264)
-        .flex_none()
-        .p(12)
-        .gap(6)
-        .rounded(10)
-        .border_1()
-        .border_color(troubled ? levelColor(service.level) : t.border)
-        .bg(t.surface)
-        .when(Boolean(service.url), (el) => el.cursor_pointer().hover((s) => s.bg(t.hover)).on_click(() => openUrl(service.url)))
-        .child(
-          h_flex()
-            .gap(8)
-            .items_center()
-            .child(div().w(8).h(8).rounded(4).flex_none().bg(levelColor(service.level)))
-            .child(div().flex_1().min_w(0).truncate().text_size(13).font_semibold().child(service.name))
-            .when(Boolean(service.url), (el) => el.child(svg("mods/prs/icons/external.svg").size(12).flex_none().text_color(t.dim))),
-        )
-        .child(div().text_size(12).text_color(troubled ? levelColor(service.level) : t.muted).child(service.description))
-        .children(service.incidents.slice(0, 2).map((incident, at) =>
-          div()
-            .id(`prs-status-${index}-i${at}`)
-            .text_size(11.5)
-            .text_color(t.foreground)
-            .cursor_pointer()
-            .hover((s) => s.text_color(t.muted))
-            .on_click((_e, cx) => {
-              cx.stop_propagation();
-              openUrl(incident.url);
-            })
-            .child(`${incident.name}${incident.since ? ` · ${ago(incident.since)}` : ""}`),
-        ));
-    };
+    const troubled = overview.sorted.filter(isIncident);
+    const calm = overview.sorted.filter((service) => !isIncident(service));
+    const header = h_flex()
+      .px(8)
+      .pt(14)
+      .pb(12)
+      .gap(8)
+      .items_center()
+      .when(troubled.length > 0, (el) => el.child(svg("mods/prs/icons/alert.svg").size(15).flex_none().text_color(tone(t, overview.level))))
+      .child(div().flex_1().text_size(14).font_semibold().text_color(troubled.length ? tone(t, overview.level) : t.foreground).child(overview.title))
+      .child(div().flex_none().text_size(11.5).text_color(t.dim).child(`Checked ${ago(new Date(this.serviceStatus.at).toISOString())}`));
     return [
-      h_flex()
-        .px(8)
-        .pt(14)
-        .pb(12)
-        .gap(8)
-        .items_center()
-        .when(overview.troubled.length > 0, (el) => el.child(svg("mods/prs/icons/alert.svg").size(15).flex_none().text_color(tone(t, overview.level))))
-        .child(div().flex_1().text_size(14).font_semibold().text_color(overview.troubled.length ? tone(t, overview.level) : t.foreground).child(overview.title))
-        .child(div().flex_none().text_size(11.5).text_color(t.dim).child(`Checked ${ago(new Date(this.serviceStatus.at).toISOString())}`)),
-      h_flex().px(8).gap(10).flex_wrap().items_start().children(overview.sorted.map(tile)),
+      header,
+      ...troubled.map((service, index) => this.incidentCard(t, service, index)),
+      ...this.statusGrid(t, calm),
     ];
+  }
+
+  incidentCard(t, service, index) {
+    const color = tone(t, service.level);
+    const incidents = service.incidents.slice(0, 3);
+    const affected = (incident) => (incident.affected.length ? incident.affected : service.components.map((component) => component.name)).slice(0, 6);
+    const sentence = (text) => text.charAt(0).toUpperCase() + text.slice(1);
+    const when = (incident) => [
+      incident.since ? `Started ${ago(incident.since)}` : null,
+      incident.updated && incident.updated !== incident.since ? `updated ${ago(incident.updated)}` : null,
+    ].filter(Boolean).join(" · ");
+    return v_flex()
+      .id(`prs-status-incident-${index}`)
+      .mx(8)
+      .mb(12)
+      .rounded(12)
+      .border_1()
+      .border_color(color)
+      .bg(t.surface)
+      .overflow_hidden()
+      .child(
+        h_flex()
+          .px(18)
+          .pt(16)
+          .pb(14)
+          .gap(12)
+          .items_center()
+          .child(h_flex().relative().size(32).flex_none().items_center().justify_center().rounded(8).child(tint(color, 8)).child(svg("mods/prs/icons/alert.svg").size(16).text_color(color)))
+          .child(v_flex().flex_1().min_w(0).gap(2)
+            .child(div().truncate().text_size(14).font_semibold().child(service.name))
+            .child(div().truncate().text_size(12).text_color(color).child(service.description)))
+          .when(Boolean(service.url), (el) => el.child(
+            h_flex()
+              .id(`prs-status-incident-${index}-page`)
+              .flex_none()
+              .h(26)
+              .px(9)
+              .gap(6)
+              .items_center()
+              .rounded(6)
+              .text_size(11.5)
+              .text_color(t.muted)
+              .cursor_pointer()
+              .hover((s) => s.bg(t.hover).text_color(t.foreground))
+              .on_click(() => openUrl(service.url))
+              .child("Status page")
+              .child(svg("mods/prs/icons/external.svg").size(12).text_color(t.dim)),
+          )),
+      )
+      .when(!incidents.length && service.components.length > 0, (el) => el.child(
+        h_flex().px(18).pb(16).pl(62).gap(6).flex_wrap().children(service.components.map((component) => codePill(t, component.name))),
+      ))
+      .children(incidents.map((incident, at) =>
+        v_flex()
+          .id(`prs-status-incident-${index}-${at}`)
+          .pl(62)
+          .pr(18)
+          .py(14)
+          .gap(8)
+          .border_t_1()
+          .border_color(t.border)
+          .cursor_pointer()
+          .hover((s) => s.bg(t.hover))
+          .on_click(() => openUrl(incident.url))
+          .child(
+            h_flex()
+              .gap(8)
+              .items_center()
+              .child(div().min_w(0).truncate().text_size(13).font_semibold().child(incident.name))
+              .when(Boolean(incident.impact) && incident.impact !== "none", (el) => el.child(countPill(t, sentence(incident.impact), color)))
+              .when(Boolean(incident.status), (el) => el.child(countPill(t, sentence(incident.status))))
+              .child(div().flex_1())
+              .when(Boolean(when(incident)), (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(when(incident)))),
+          )
+          .when(Boolean(incident.latest), (el) => el.child(div().max_w(760).text_size(12.5).text_color(t.muted).child(incident.latest)))
+          .when(affected(incident).length > 0, (el) => el.child(h_flex().gap(6).flex_wrap().children(affected(incident).map((name) => codePill(t, name))))),
+      ))
+      .when(service.incidents.length > incidents.length, (el) => el.child(div().pl(62).pr(18).py(10).border_t_1().border_color(t.border).text_size(11).text_color(t.dim).child(`${service.incidents.length - incidents.length} more on the status page`)));
+  }
+
+  statusGrid(t, services) {
+    if (!services.length) return [];
+    const width = Math.min(CONTENT_MAX_WIDTH, (this.width || CONTENT_MAX_WIDTH + NAV_WIDTH) - NAV_WIDTH) - 40;
+    const perRow = Math.max(1, Math.floor((width + STATUS_TILE_GAP) / (STATUS_TILE_MIN + STATUS_TILE_GAP)));
+    const levelColor = (level) => (level === "unknown" ? t.dim : tone(t, level));
+    const tile = (service, index) => v_flex()
+      .id(`prs-status-${index}`)
+      .flex_1()
+      .min_w(0)
+      .h(64)
+      .px(12)
+      .justify_center()
+      .gap(4)
+      .rounded(10)
+      .border_1()
+      .border_color(t.border)
+      .bg(t.surface)
+      .when(Boolean(service.url), (el) => el.cursor_pointer().hover((s) => s.bg(t.hover)).on_click(() => openUrl(service.url)))
+      .child(
+        h_flex()
+          .gap(8)
+          .items_center()
+          .child(div().w(8).h(8).rounded(4).flex_none().bg(levelColor(service.level)))
+          .child(div().flex_1().min_w(0).truncate().text_size(13).font_semibold().child(service.name))
+          .when(Boolean(service.url), (el) => el.child(svg("mods/prs/icons/external.svg").size(12).flex_none().text_color(t.dim))),
+      )
+      .child(div().truncate().text_size(12).text_color(service.level === "info" ? levelColor(service.level) : t.muted).child(service.maintenance[0]?.name ?? service.description));
+    const rows = [];
+    for (let start = 0; start < services.length; start += perRow) {
+      const slice = services.slice(start, start + perRow);
+      rows.push(h_flex()
+        .px(8)
+        .mb(STATUS_TILE_GAP)
+        .gap(STATUS_TILE_GAP)
+        .children([
+          ...slice.map((service, at) => tile(service, start + at)),
+          ...Array.from({ length: perRow - slice.length }, () => div().flex_1().min_w(0)),
+        ]));
+    }
+    return rows;
   }
 
   findPr(repo, number, title) {
