@@ -12,7 +12,7 @@ function trunk(args) {
   return exec("/bin/sh", ["-c", script, "sh", checkout, ...args], { timeout: 60000 });
 }
 
-const SECTION_GAP = 22;
+const SECTION_GAP = 9;
 
 // My PRs: three tables on one column grid (in review, merge queue, recently merged) and the visualizer.
 export const myPrViews = {
@@ -156,7 +156,7 @@ export const myPrViews = {
       .child(c.head(W.note, noteLabel)).child(c.head(W.act, "ACTIVITY")).child(c.head(W.age, "AGE")).child(c.head(W.when, whenLabel))
       .child(c.head(W.size, "SIZE")).child(c.head(W.cc, "CC", true)).when(W.merge > 0, (el) => el.child(c.head(W.merge, "MERGE", true)));
     // A clear break between the three tables.
-    const divider = () => div().h(SECTION_GAP).flex().items_center().px(6).child(div().w_full().h(3).rounded(2).bg(t.border));
+    const divider = () => div().h(SECTION_GAP).flex().items_center().child(div().w_full().h(2).bg(t.border));
     const empty = (text) => div().px(8).h(ROW).flex().items_center().text_size(12).text_color(t.dim).child(text);
 
     const body = v_flex().px(4).py(2)
