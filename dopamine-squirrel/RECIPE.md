@@ -1,7 +1,7 @@
 # Dopamine Squirrel
 
 Jake Ruth's opinionated, ADHD-proof Herdr setup: one top bar and one panel that hold everything that might pull your attention (agents, review requests, your PRs, the merge queue), so nothing slips and nothing nags.
-Take the whole thing, or point your agent at one part below and ask for just that.
+Laid out for a vertical monitor; works on a wide one too. [README.md](README.md) is the tour with screenshots; this file is the reference: setup, behaviour, settings and how it's built.
 
 ![Dopamine Squirrel](preview.png)
 
@@ -15,11 +15,9 @@ Take the whole thing, or point your agent at one part below and ask for just tha
 
 > **Not at PostHog?** Three things are PostHog-specific and fail quietly elsewhere: the review button and the standup button ask Claude to load a skill from the PostHog MCP's project skill store (`explaining-prs`, `standup`), and the merge queue table reads the Trunk bot. Point `reviewSkill` and `standupSkill` at skills you have, or ignore those buttons. Everything else works anywhere.
 
-## What you get
+## What it does
 
 ### Top bar (`mods/squirrel-topbar/`)
-
-![Top bar](screenshots/top-bar.png)
 
 - Tabs on the left, hidden while you only have one. `+`, Changes, GitHub, standup, search, settings on the right.
 - **GitHub badge**: the number of PRs waiting on your review that you haven't triaged. Click it for the Reviews view.
@@ -30,16 +28,12 @@ Take the whole thing, or point your agent at one part below and ask for just tha
 
 ### Running agents (`mods/squirrel-panel/agents.js`)
 
-![Running agents](screenshots/agents.png)
-
 - One card per agent: CC or GPT badge, pane name, status, branch, session cost and a context % bar. Click a card to focus it.
 - A sub-agent (a terminal another agent started) sits right after its parent with `↳`. One without a pane shows as "+N in background" on the parent; click it to give it a pane.
 - **Plan limits strip**: one line per Claude subscription, with the same columns on each: 5-hour, week, per-model weeks such as Fable, and usage credits, each with when it resets. `usage.js` reads Claude Code's own `/usage` screen every 10 minutes: it starts a hidden Claude session in an empty folder, types `/usage`, reads the screen and closes the session. That sends nothing to the model. Between reads, the statusline keeps 5-hour and week current after every reply.
 - The panel sizes itself to the rows of cards.
 
 ### Reviews (`mods/squirrel-panel/reviews.js`)
-
-![Reviews](screenshots/reviews.png)
 
 - Every open PR where you or one of your teams is a requested reviewer, newest first, PRs that ask for you by name on top (`@you` tag and an accent edge).
 - Columns: review status, CI, PR link (turns purple once clicked), title with tags, author, WAITING (red after 48 h), last update, new comments since your last review, size.
@@ -50,8 +44,6 @@ Take the whole thing, or point your agent at one part below and ask for just tha
 - At most 10 rows show; the rest scroll under a sticky header.
 
 ### My PRs (`mods/squirrel-panel/my-prs.js`)
-
-![My PRs](screenshots/my-prs.png)
 
 - Three tables on one column grid: **In review** (your open PRs in any repo), **Merge queue** (where each one stands in Trunk, from the Trunk bot's comment) and **Recently merged** (the last 7 days).
 - The REVIEWS column counts approvals, open threads and comments from others, so non-blocking notes on an approved PR don't get missed. Click an open PR's row to read them: open threads first, then the latest comments, each linking to GitHub.
@@ -89,7 +81,7 @@ Take the whole thing, or point your agent at one part below and ask for just tha
   "mergedDays": 7,
   "claudeProfiles": [
     { "name": "work", "configDir": "~/.claude" },
-    { "name": "personal", "configDir": "~/.claude-personal" }
+    { "name": "work-2", "configDir": "~/.claude-personal" }
   ]
 }
 ```
