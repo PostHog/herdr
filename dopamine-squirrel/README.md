@@ -10,7 +10,7 @@ Jake Ruth's opinionated, ADHD-proof Herdr setup: one top bar and one panel for e
 
 ![Top bar](screenshots/top-bar.gif)
 
-Review count, one-click standup, and a slow neon glow (sped up here).
+Review count, a fact-check button (paste a Slack link or screenshot, Claude checks it before you hit send), one-click standup, and a slow neon glow (sped up here).
 
 ## Running agents · `cmd-1`
 

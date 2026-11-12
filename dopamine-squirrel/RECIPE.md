@@ -21,6 +21,7 @@ Laid out for a vertical monitor; works on a wide one too. [README.md](README.md)
 
 - Tabs on the left, hidden while you only have one. `+`, Changes, GitHub, standup, search, settings on the right.
 - **GitHub badge**: the number of PRs waiting on your review that you haven't triaged. Click it for the Reviews view.
+- **Fact-check button** (Slack icon): opens a pane below with Claude (Opus, high effort) primed to fact-check the Slack link or screenshot you paste next. It answers "Paste it." and waits.
 - **Standup button** (megaphone): opens a pane below running Claude with your standup skill. A second click jumps to that pane.
 - **Glow**: soft neon bands drifting behind the bar, 7 s per colour, with a rim of the normal bar colour. `glow.js`.
 - `cmd-w` asks before closing a pane, so a stray key never kills an agent.

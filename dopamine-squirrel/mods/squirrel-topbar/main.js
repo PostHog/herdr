@@ -91,6 +91,20 @@ export default class SquirrelTopbar extends View {
   }
 
   // One click starts the standup: Claude (standupCommand) with the standup skill from the PostHog MCP. A second click focuses that pane.
+  // Fact-check: a pane below with Claude (Opus, high effort) primed to check a Slack message or screenshot you
+  // paste next. It answers "Paste it." and waits.
+  factCheck() {
+    const prompt = [
+      "Fact-check mode. My next message will be a Slack link or a screenshot of something I wrote or am about to say.",
+      "Check it before I send it: verify each claim against the code, docs, PRs or data you can reach (read Slack links with the Slack tools).",
+      "Tell me plainly if I'm wrong, overstating, missing context, or would look uninformed, and suggest corrected wording.",
+      "Verdict first, then the fixes. Be clear, concise and direct.",
+      "For now, reply only: Paste it.",
+    ].join(" ");
+    const checkout = squirrelSettings().posthogCheckout.replace(/^~/, home());
+    run("pane.split", { direction: "down", argv: ["/bin/sh", "-c", 'cd "$1" 2>/dev/null || cd; exec claude --model opus --effort high -n "Fact check" "$2"', "sh", checkout, prompt] });
+  }
+
   standup(cx) {
     const existing = panes().find((p) => p.pane === shared("squirrel.standup-pane"));
     if (existing) { run("tab.select", { id: existing.tab }); run("pane.focus", { pane: existing.pane }); return; }
@@ -185,6 +199,9 @@ export default class SquirrelTopbar extends View {
       .when(enabled.includes("files"), el => el.child(panelButton("files", "Files", "mods/files/file.svg")))
       .when(enabled.includes("changes"), el => el.child(panelButton("changes", "Changes", "mods/changes/changes.svg")))
       .child(this.ghBadge(t, stop))
+      .child(div().id("fact-check").size(26).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.ansi5)
+        .hover(s => s.bg(t.hover)).tooltip("Fact-check something before you say it").on_mouse_down("left", stop).on_click(() => this.factCheck())
+        .child(svg("mods/squirrel-topbar/slack.svg").size(15)))
       .child(div().id("standup").size(26).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.ansi3)
         .hover(s => s.bg(t.hover)).tooltip("Start today's standup").on_mouse_down("left", stop).on_click((_e, cx) => this.standup(cx))
         .child(this.standupStarting ? svg("mods/workspace-chrome/spinner.svg").size(14).spin(900) : svg("mods/squirrel-topbar/megaphone.svg").size(15)))
