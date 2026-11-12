@@ -27,10 +27,10 @@ export const myPrViews = {
     cx.spawn(async (cx) => {
       const r = await exec("gh", ["pr", "ready", pr.url], { timeout: 60000 }).catch((e) => ({ code: 1, stderr: String(e?.message ?? e) }));
       if (r.code !== 0) this.queueError[pr.url] = (r.stderr || "gh pr ready failed").trim().split("\n").pop();
-      run("squirrel-topbar.gh_refresh");
-      await cx.sleep(4000);
+      else { this.readyDone ??= {}; this.readyDone[pr.url] = Date.now(); }
       delete this.readyBusy[pr.url];
       cx.notify();
+      run("squirrel-topbar.gh_refresh");
     });
   },
 
@@ -177,7 +177,9 @@ export const myPrViews = {
       extra += 10 + lines.length * LINE;
       return v_flex().pl(16).pr(12).pb(6).pt(2).gap(2).text_size(11.5).children(lines);
     };
-    const row = (p, kind) => {
+    const row = (p0, kind) => {
+      const done = this.readyDone?.[p0.url];
+      const p = done && p0.draft && Date.now() - done < 10 * 60 * 1000 ? { ...p0, draft: false } : p0;
       const key = `mine:${p.url}`, open = kind !== "merged" && Boolean(this.expanded[key]);
       return v_flex().child(rowLine(p, kind, key, open)).when(open, (el) => el.child(details(p)));
     };
