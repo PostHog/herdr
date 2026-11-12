@@ -3,11 +3,12 @@
 // ~/.posthog/credentials.json. Without that file this quietly returns nothing.
 import { exec } from "herdr";
 
-// curl with the token read inside the shell, so it never appears in an argument list.
+// The token never appears in any process's arguments: the shell's printf builtin writes the header to
+// curl's standard input, and `-H @-` reads it from there.
 const CALL = 'f="$HOME/.posthog/credentials.json"; [ -f "$f" ] || exit 3; '
   + 'host=$(sed -n \'s/.*"host"[^"]*"\\([^"]*\\)".*/\\1/p\' "$f"); '
-  + 'token=$(sed -n \'s/.*"token"[^"]*"\\([^"]*\\)".*/\\1/p\' "$f"); '
-  + 'curl -sf -H "Authorization: Bearer $token" "${host:-https://us.posthog.com}$1"';
+  + 'printf "Authorization: Bearer %s\\n" "$(sed -n \'s/.*"token"[^"]*"\\([^"]*\\)".*/\\1/p\' "$f")" '
+  + '| curl -sf -H @- "${host:-https://us.posthog.com}$1"';
 
 async function api(path) {
   const r = await exec("/bin/sh", ["-c", CALL, "sh", path], { timeout: 30000 }).catch(() => null);
