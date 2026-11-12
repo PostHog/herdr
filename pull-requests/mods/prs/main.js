@@ -1,6 +1,6 @@
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
-import { theme, props, openOverlay, closeOverlay, shared, setShared, run, machines, notify, layout, nextCommand, focused } from "herdr";
+import { theme, props, openOverlay, closeOverlay, shared, setShared, run, machines, notify, layout, nextCommand, focused, window } from "herdr";
 import { loadStore, store, updateStore, prKey, newId } from "./store.js";
 import { fetchMyPrs, fetchReviews, fetchDetail, statusPill, needsReview, readyToMerge, comparePriority, isOrgWide, ownerOf } from "./github.js";
 import { mergePr, markReady, updateBranch, rerunFailed, approvePr, commentOnPr, resolveThread, openUrl, copyText, markdownLink, toggleWatch, toggleHidden, report, usesTrunk, isTrunkPr, mergesThroughQueue } from "./actions.js";
@@ -13,7 +13,7 @@ import { fetchServices, isIncident, queueService, statusOverview } from "./statu
 import { sidebarHeader, sidebarMine, sidebarReviews, sidebarRail, statusLine, prIcon, progressLine, stackHeader, gatesFor, splitByNeed, isQuiet, rowButtons, nextFor, needsYou, workRank } from "./sidebar.js";
 import { visualAsks, stackGroups, withoutDraftStacks, step, queueFor, withTrunkQueue } from "./steps.js";
 import { openClaude, CLAUDE_ICON } from "./claude.js";
-import { ago, button, iconButton, glyphButton, textIconButton, chip, badge, section, empty, field, menuItem, SPINNER, tone, TEXT, tint, avatar, countPill, codePill, gateStrip, titleText } from "./ui.js";
+import { ago, button, iconButton, glyphButton, textIconButton, chip, badge, section, empty, field, menuItem, SPINNER, tone, TEXT, tint, avatar, countPill, codePill, gateStrip, titleText, readable } from "./ui.js";
 import { readiness, groupChecks, rowMatches, tallyChecks, tallyText, tallyLabel, worstBucket, mergeStateNote, changeShape, parseMarkdown } from "./sheet.js";
 
 const MINE_EVERY_MS = 90000;
@@ -22,6 +22,7 @@ const RUNS_EVERY_MS = 20000;
 const TRUNK_EVERY_MS = 45000;
 const SERVICES_EVERY_MS = 120000;
 const FAILURES_BEFORE_ERROR = 3;
+const STALE_AFTER_MS = 20000;
 const VIEW_STACK = "pr-center";
 const PAGE_NODE = "prs-page";
 const WORK_NODE = "work";
@@ -328,8 +329,11 @@ export default class Prs extends View {
         cx.notify();
       }
     });
+    this.wasAttending = true;
+    this.wasOnPage = pageShown();
     cx.timer.every(1500, (cx) => {
       if (this.leader) this.publishStatus();
+      if (this.leader) this.refreshOnReturn(cx);
       const refreshAll = shared("prs.refreshAll") ?? null;
       if (this.leader && refreshAll !== this.seenRefreshAll) {
         this.seenRefreshAll = refreshAll;
@@ -364,9 +368,22 @@ export default class Prs extends View {
     });
   }
 
+  refreshOnReturn(cx) {
+    const attending = Boolean(window()?.active);
+    const onPage = pageShown();
+    const returned = attending && (!this.wasAttending || (onPage && !this.wasOnPage));
+    this.wasAttending = attending;
+    this.wasOnPage = onPage;
+    if (!returned) return;
+    const now = Date.now();
+    if (now - (this.mineStartedAt ?? 0) > STALE_AFTER_MS) this.loadMine(cx);
+    if (now - (this.reviewsStartedAt ?? 0) > STALE_AFTER_MS) this.loadReviews(cx);
+  }
+
   loadMine(cx) {
     if (this.loadingMine) return;
     this.loadingMine = true;
+    this.mineStartedAt = Date.now();
     cx.notify();
     cx.spawn(async (cx) => {
       try {
@@ -587,6 +604,7 @@ export default class Prs extends View {
   loadReviews(cx) {
     if (this.loadingReviews) return;
     this.loadingReviews = true;
+    this.reviewsStartedAt = Date.now();
     cx.notify();
     cx.spawn(async (cx) => {
       try {
@@ -605,7 +623,7 @@ export default class Prs extends View {
   }
 
   render(cx) {
-    const t = theme();
+    const t = readable(theme());
     switch (this.mode) {
       case "menu":
         return this.renderMenu(t);
