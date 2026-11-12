@@ -99,6 +99,7 @@ export default class SquirrelTopbar extends View {
       "Check it before I send it: verify each claim against the code, docs, PRs or data you can reach (read Slack links with the Slack tools).",
       "Tell me plainly if I'm wrong, overstating, missing context, or would look uninformed, and suggest corrected wording.",
       "Verdict first, then the fixes. Be clear, concise and direct.",
+      "Give any suggested wording as plain text ready to paste into Slack: no blockquote, no markdown, no gutter characters.",
       "For now, reply only: Paste it.",
     ].join(" ");
     const checkout = squirrelSettings().posthogCheckout.replace(/^~/, home());
@@ -201,7 +202,7 @@ export default class SquirrelTopbar extends View {
       .child(this.ghBadge(t, stop))
       .child(div().id("fact-check").size(26).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.ansi5)
         .hover(s => s.bg(t.hover)).tooltip("Fact-check something before you say it").on_mouse_down("left", stop).on_click(() => this.factCheck())
-        .child(svg("mods/squirrel-topbar/slack.svg").size(15)))
+        .child(image("mods/squirrel-topbar/slack-logo.svg").size(15)))
       .child(div().id("standup").size(26).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.ansi3)
         .hover(s => s.bg(t.hover)).tooltip("Start today's standup").on_mouse_down("left", stop).on_click((_e, cx) => this.standup(cx))
         .child(this.standupStarting ? svg("mods/workspace-chrome/spinner.svg").size(14).spin(900) : svg("mods/squirrel-topbar/megaphone.svg").size(15)))
