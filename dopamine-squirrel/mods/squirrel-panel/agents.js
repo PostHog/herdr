@@ -212,7 +212,7 @@ export const agentsViews = {
       return h_flex().id(`pill-${a.address}`).w(PILL_W).h(PILL_H).flex_none().px(8).gap(6).items_center().rounded(PILL_H / 2)
         .bg(a.focused ? t.raised : t.surface).border(1).border_color(a.focused ? t.accent : a.status === "blocked" ? t.blocked : t.border)
         .hover((s) => s.bg(t.hover)).cursor_pointer().text_size(11)
-        .on_click(() => { run("tab.select", { id: a.tab }); run("pane.focus", { pane: a.pane }); })
+        .on_click((_e, cx) => { this.openTabs[a.tab] = true; cx.notify(); })
         .tooltip(bg ? `background: ${bgText(bg)}` : WORD[a.status] ?? a.status)
         .child(a.status === "working" ? svg("mods/workspace-chrome/spinner.svg").size(10).flex_none().text_color(color).spin(900)
           : div().size(7).flex_none().rounded(4).bg(color))
