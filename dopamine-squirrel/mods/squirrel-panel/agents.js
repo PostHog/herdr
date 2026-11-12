@@ -27,7 +27,8 @@ export async function readContext() {
     try {
       const saved = JSON.parse(line.slice(tab + 1)), status = saved.status ?? saved;
       terminals[line.slice(0, tab)] = { pct: contextPercent(status), cost: status?.cost?.total_cost_usd ?? null,
-        sessionId: status?.session_id ?? null, cwd: status?.workspace?.current_dir ?? status?.cwd ?? null };
+        sessionId: status?.session_id ?? null, cwd: status?.workspace?.current_dir ?? status?.cwd ?? null,
+        transcript: status?.transcript_path ?? null };
       const account = (accounts[saved.config_dir ?? "~/.claude"] ??= {});
       for (const [window, v] of Object.entries(status?.rate_limits ?? {})) {
         const have = account[window];
@@ -108,6 +109,43 @@ export async function readBackground(terminalIds) {
   }
   return out;
 }
+// Drops saved statuses of terminals that no longer exist.
+export async function pruneContext(liveIds) {
+  const r = await exec("/bin/sh", ["-c", 'ls "$HOME"/.config/herdr-app/data/squirrel/context/ 2>/dev/null']).catch(() => null);
+  const dead = (r?.stdout ?? "").split("\n").filter((f) => f.endsWith(".json") && !liveIds.has(f.slice(0, -5)));
+  if (dead.length) await exec("/bin/sh", ["-c", 'cd "$HOME"/.config/herdr-app/data/squirrel/context && rm -f -- "$@"', "sh", ...dead]).catch(() => null);
+}
+
+// Links a helper to the agent that opened it when Herdr didn't record a parent (an agent opened it with
+// `herdr-app do tab.new`, `pane.split` or `terminal.open` rather than `hc run`). Claude saves every Bash
+// command in its session transcript, so the parent is the agent whose transcript holds the command that
+// launched this terminal: its exact command line, or a launch command naming it with `-n '<name>'`.
+// Only a single clear match is tagged (hc label <t> squirrel.parent=<parent>).
+const LAUNCH = "tab\\.new|pane\\.split|terminal\\.open|hc run";
+export async function linkParents(untagged, candidates) {
+  for (const { id, name } of untagged) {
+    const info = await hc(["get", id, "--json"]).catch(() => null);
+    let argv = [];
+    try { argv = JSON.parse(info?.stdout ?? "{}").argv ?? []; } catch {}
+    // The longest argument is the distinctive one (the shell line with cd, model, flags and name).
+    const command = argv.filter((x) => !x.includes('"$@"')).reduce((a, b) => (b.length > a.length ? b : a), "");
+    const needles = [
+      command.length > 20 ? JSON.stringify(command).slice(1, -1) : null,
+      name ? `-n '${name}'` : null,
+      name ? `-n \\"${name}\\"` : null,
+    ].filter(Boolean);
+    const matches = [];
+    for (const c of candidates) {
+      if (c.id === id || !c.transcript) continue;
+      for (const needle of needles) {
+        const r = await exec("/bin/sh", ["-c", 'grep -F -- "$1" "$2" 2>/dev/null | grep -E "$3" | grep -c "\\"tool_use\\""', "sh", needle, c.transcript, LAUNCH]).catch(() => null);
+        if (Number(r?.stdout?.trim() || 0) > 0) { matches.push(c.id); break; }
+      }
+    }
+    if (matches.length === 1) await hc(["label", id, `squirrel.parent=${matches[0]}`]).catch(() => null);
+  }
+}
+
 const bgText = (counts) => Object.entries(counts).map(([k, n]) => `${n} ${k}${n === 1 ? "" : "s"}`).join(" · ");
 
 const WORD = { working: "working", blocked: "needs you", done: "done", idle: "idle" };

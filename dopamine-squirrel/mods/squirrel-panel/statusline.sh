@@ -6,6 +6,8 @@
 umask 077
 dir="$(cd "$(dirname "$0")/../.." && pwd)/data/squirrel"
 payload="$(cat)"
+# The hidden /usage reads (usage.js) aren't agents; don't record them.
+[ -n "$SQUIRREL_PROBE" ] && exit 0
 if [ -n "$HC_TERMINAL_ID" ]; then
   mkdir -p "$dir/context"
   config="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"

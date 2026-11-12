@@ -18,6 +18,22 @@ const SECTION_GAP = 9;
 const CI_PANES = "squirrel.ci-panes";
 
 export const myPrViews = {
+  // RFR on a draft: `gh pr ready`, then refresh so the row updates.
+  markReady(pr, cx) {
+    this.readyBusy ??= {};
+    if (this.readyBusy[pr.url]) return;
+    this.readyBusy[pr.url] = true;
+    cx.notify();
+    cx.spawn(async (cx) => {
+      const r = await exec("gh", ["pr", "ready", pr.url], { timeout: 60000 }).catch((e) => ({ code: 1, stderr: String(e?.message ?? e) }));
+      if (r.code !== 0) this.queueError[pr.url] = (r.stderr || "gh pr ready failed").trim().split("\n").pop();
+      run("squirrel-topbar.gh_refresh");
+      await cx.sleep(4000);
+      delete this.readyBusy[pr.url];
+      cx.notify();
+    });
+  },
+
   // A failing CI chip opens Claude (Opus, high effort) in a pane below, in the PR's checkout, to fix what is
   // obvious or bring back what needs your call. A second click jumps to that pane.
   fixCi(pr, cx) {
@@ -67,6 +83,7 @@ export const myPrViews = {
       else if (action === "add") this.queueAdded[key] = Date.now();
       delete this.queueBusy[key];
       cx.notify();
+      run("squirrel-topbar.gh_refresh");
       for (const wait of [3000, 20000]) { await cx.sleep(wait); run("squirrel-topbar.gh_refresh"); }
     });
   },
@@ -171,7 +188,15 @@ export const myPrViews = {
         .when(open, (el) => el.bg(t.surface))
         .when(kind !== "merged", (el) => el.cursor_pointer().on_click((_e, cx) => { this.expanded[key] = !open; cx.notify(); }))
         .child(c.cell(W.repo, repoName(p), t.muted))
-        .child(kind === "review" ? c.review(p) : kind === "queue" ? c.chip(W.status, qLabel, qColor) : div().w(W.status).flex_none())
+        .child(kind === "review" && p.draft ? h_flex().w(W.status).flex_none().gap(4).items_center()
+            .child(c.chip(W.status - 46, "Draft", t.dim))
+            .child(h_flex().id(`rfr-${p.url}`).w(42).flex_none().h(17).justify_center().items_center().rounded(3).border(1).border_color(t.accent)
+              .text_size(10).font_semibold().text_color(t.accent).cursor_pointer().tooltip("Mark ready for review")
+              .hover((s) => s.bg(t.raised))
+              .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+              .on_click((_e, cx) => { cx.stop_propagation(); this.markReady(p, cx); })
+              .child(this.readyBusy?.[p.url] ? svg("mods/workspace-chrome/spinner.svg").size(10).spin(900) : "RFR"))
+          : kind === "review" ? c.review(p) : kind === "queue" ? c.chip(W.status, qLabel, qColor) : div().w(W.status).flex_none())
         .child(kind === "merged" ? div().w(W.ci).flex_none()
           : ["FAILURE", "ERROR"].includes(p.ci) ? div().id(`ci-${p.url}`).flex_none().cursor_pointer().tooltip("Open Claude on the failing CI")
             .on_mouse_down("left", (_e, cx) => cx.stop_propagation())

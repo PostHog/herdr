@@ -64,7 +64,7 @@ async function readProfile(profile) {
   // Claude's default config must start without CLAUDE_CONFIG_DIR: naming ~/.claude explicitly makes
   // Claude treat it as a fresh install with no login.
   const dirPath = absolute(profile.configDir ?? DEFAULT_DIR);
-  const argv = dirPath === absolute(DEFAULT_DIR) ? ["claude"] : ["env", `CLAUDE_CONFIG_DIR=${dirPath}`, "claude"];
+  const argv = dirPath === absolute(DEFAULT_DIR) ? ["env", "SQUIRREL_PROBE=1", "claude"] : ["env", "SQUIRREL_PROBE=1", `CLAUDE_CONFIG_DIR=${dirPath}`, "claude"];
   const started = await hc(["run", "--bg", "--no-notify", "--name", name, "--cwd", dir, ...argv]).catch(() => null);
   if (started?.code !== 0) return null;
   try {
@@ -84,6 +84,9 @@ async function readProfile(profile) {
   } finally {
     await hc(["kill", name]).catch(() => null);
     await hc(["rm", name]).catch(() => null);
+    // Claude saves a session for every start, so each read leaves one behind in the probe folder's
+    // project directory. Only these probes ever run there, so clear it.
+    await exec("/bin/sh", ["-c", 'rm -f "$1"/projects/*-data-squirrel-usage/*.jsonl', "sh", dirPath]).catch(() => null);
   }
 }
 

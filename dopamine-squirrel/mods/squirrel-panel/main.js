@@ -3,10 +3,10 @@
 // fetches the PR lists into shared "squirrel.github" every 5 minutes.
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { agents, panes, run, theme, shared, setShared } from "herdr";
+import { agents, panes, terminals, run, theme, shared, setShared } from "herdr";
 import { VIEW, GITHUB, TRIAGED, ROW, HEADER, COLS, MAX_ROWS, CARD_W, CARD_H, GAP, ago } from "./shared.js";
 import { stepSim } from "./visualizer.js";
-import { readContext, readBackground, agentsViews, usageHeight } from "./agents.js";
+import { readContext, readBackground, pruneContext, linkParents, agentsViews, usageHeight } from "./agents.js";
 import { readUsage } from "./usage.js";
 import { tableParts } from "./table.js";
 import { reviewViews } from "./reviews.js";
@@ -20,6 +20,13 @@ export default class SquirrelPanel extends View {
         const next = await readContext();
         this.rememberReviewSessions(next.terminals);
         const ids = agents().map((a) => panes().find((p) => p.pane === a.pane)?.terminal).filter(Boolean);
+        const all = terminals();
+        await pruneContext(new Set(all.filter((x) => x.state === "live").map((x) => x.address)));
+        this.linkTries ??= {};
+        const known = new Map(all.map((x) => [x.address, x.parent ?? x.labels?.["squirrel.parent"] ?? null]));
+        const untagged = agents().map((a) => ({ id: panes().find((p) => p.pane === a.pane)?.terminal, name: (a.title ?? "").replace(/^[^\p{L}\p{N}]+/u, "").trim() }))
+          .filter((u) => u.id && !known.get(u.id) && (this.linkTries[u.id] = (this.linkTries[u.id] ?? 0) + 1) <= 6);
+        if (untagged.length) await linkParents(untagged, ids.map((id) => ({ id, transcript: next.terminals[id]?.transcript })));
         const bg = await readBackground(ids);
         if (JSON.stringify(bg) !== JSON.stringify(this.background ?? {})) { this.background = bg; cx.notify(); }
         if (JSON.stringify(next) !== JSON.stringify(this.context)) { this.context = next; cx.notify(); }
