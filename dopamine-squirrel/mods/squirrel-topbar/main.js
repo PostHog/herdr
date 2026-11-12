@@ -98,8 +98,8 @@ export default class SquirrelTopbar extends View {
   factCheck(cx) {
     const template = "Fact-check this before I send it. Verify each claim against the code, docs, PRs or data you can reach "
       + "(read Slack links with the Slack tools). Tell me plainly if I'm wrong, overstating, missing context, or about to look "
-      + "like a retard. Verdict first, then corrected wording as plain text ready to paste into Slack (no blockquote, markdown "
-      + "or gutter characters). Be clear, concise and direct. Here it is: ";
+      + "like a retard. Verdict first, then corrected wording ready to paste into Slack: Slack formatting (*bold*, _italic_, "
+      + "`code`, bullets) is fine, but no blockquote bars or other terminal-only gutter characters. Be clear, concise and direct. Here it is: ";
     const checkout = squirrelSettings().posthogCheckout.replace(/^~/, home());
     const before = new Set(panes().map((p) => p.pane));
     run("pane.split", { direction: "down", argv: ["/bin/sh", "-c", 'cd "$1" 2>/dev/null || cd; exec claude --model opus --effort high -n "Fact check"', "sh", checkout] });
