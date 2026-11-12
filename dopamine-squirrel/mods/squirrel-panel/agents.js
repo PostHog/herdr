@@ -1,6 +1,6 @@
 import { div, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { agents, panes, terminals, run, theme, setAgentOrder, shared, setShared, home, exec } from "herdr";
+import { agents, panes, terminals, run, theme, setAgentOrder, shared, setShared, home, exec, hc } from "herdr";
 import { NAMES, VIEW, GITHUB, TRIAGED, REVIEW_PANES, VISITED, ROW, HEADER, COLS, MAX_ROWS, LINE, STALE_MS, CARD_W, CARD_H, GAP, now, settings, ago, order, newest } from "./shared.js";
 
 // Context % and session cost come from Claude Code's statusLine: statusline.sh saves each session's
@@ -27,7 +27,8 @@ export async function readContext() {
     try {
       const saved = JSON.parse(line.slice(tab + 1)), status = saved.status ?? saved;
       terminals[line.slice(0, tab)] = { pct: contextPercent(status), cost: status?.cost?.total_cost_usd ?? null,
-        sessionId: status?.session_id ?? null, cwd: status?.workspace?.current_dir ?? status?.cwd ?? null };
+        sessionId: status?.session_id ?? null, cwd: status?.workspace?.current_dir ?? status?.cwd ?? null,
+        transcript: status?.transcript_path ?? null };
       const account = (accounts[saved.config_dir ?? "~/.claude"] ??= {});
       for (const [window, v] of Object.entries(status?.rate_limits ?? {})) {
         const have = account[window];
@@ -87,6 +88,65 @@ export function usageStrip(t, accounts, usage = {}) {
 const USAGE_CELL = 240;
 export const usageHeight = (accounts, usage) => { const n = accountLines(accounts, usage).length; return n ? n * USAGE_H + 4 : 0; };
 export const USAGE_H = 24;
+const TAB_LABEL = 18, PILL_W = 210, PILL_H = 24;
+
+// Background work Herdr doesn't report: Claude prints what's still running (shells, monitors,
+// background agents) in its footer, e.g. "· 1 shell, 1 monitor". Read the bottom of each agent's
+// screen and keep the counts.
+export async function readBackground(terminalIds) {
+  const out = {};
+  for (const id of terminalIds) {
+    const r = await hc(["read", id, "--lines", "0"]).catch(() => null);
+    const bottom = (r?.code === 0 ? r.stdout : "").split("\n").map((l) => l.trim()).filter(Boolean).slice(-4)
+      .filter((l) => l.includes("·") || /still running/.test(l));
+    const counts = {};
+    for (const line of bottom)
+      for (const m of line.matchAll(/(\d+)\s+(shell|monitor|background agent|agent|background task|task)s?\b/gi)) {
+        const kind = m[2].toLowerCase().replace("background ", "");
+        counts[kind] = Math.max(counts[kind] ?? 0, Number(m[1]));
+      }
+    if (Object.keys(counts).length) out[id] = counts;
+  }
+  return out;
+}
+// Drops saved statuses of terminals that no longer exist.
+export async function pruneContext(liveIds) {
+  const r = await exec("/bin/sh", ["-c", 'ls "$HOME"/.config/herdr-app/data/squirrel/context/ 2>/dev/null']).catch(() => null);
+  const dead = (r?.stdout ?? "").split("\n").filter((f) => f.endsWith(".json") && !liveIds.has(f.slice(0, -5)));
+  if (dead.length) await exec("/bin/sh", ["-c", 'cd "$HOME"/.config/herdr-app/data/squirrel/context && rm -f -- "$@"', "sh", ...dead]).catch(() => null);
+}
+
+// Links a helper to the agent that opened it when Herdr didn't record a parent (an agent opened it with
+// `herdr-app do tab.new`, `pane.split` or `terminal.open` rather than `hc run`). Claude saves every Bash
+// command in its session transcript, so the parent is the agent whose transcript holds the command that
+// launched this terminal: its exact command line, or a launch command naming it with `-n '<name>'`.
+// Only a single clear match is tagged (hc label <t> squirrel.parent=<parent>).
+const LAUNCH = "tab\\.new|pane\\.split|terminal\\.open|hc run";
+export async function linkParents(untagged, candidates) {
+  for (const { id, name } of untagged) {
+    const info = await hc(["get", id, "--json"]).catch(() => null);
+    let argv = [];
+    try { argv = JSON.parse(info?.stdout ?? "{}").argv ?? []; } catch {}
+    // The longest argument is the distinctive one (the shell line with cd, model, flags and name).
+    const command = argv.filter((x) => !x.includes('"$@"')).reduce((a, b) => (b.length > a.length ? b : a), "");
+    const needles = [
+      command.length > 20 ? JSON.stringify(command).slice(1, -1) : null,
+      name ? `-n '${name}'` : null,
+      name ? `-n \\"${name}\\"` : null,
+    ].filter(Boolean);
+    const matches = [];
+    for (const c of candidates) {
+      if (c.id === id || !c.transcript) continue;
+      for (const needle of needles) {
+        const r = await exec("/bin/sh", ["-c", 'grep -F -- "$1" "$2" 2>/dev/null | grep -E "$3" | grep -c "\\"tool_use\\""', "sh", needle, c.transcript, LAUNCH]).catch(() => null);
+        if (Number(r?.stdout?.trim() || 0) > 0) { matches.push(c.id); break; }
+      }
+    }
+    if (matches.length === 1) await hc(["label", id, `squirrel.parent=${matches[0]}`]).catch(() => null);
+  }
+}
+
+const bgText = (counts) => Object.entries(counts).map(([k, n]) => `${n} ${k}${n === 1 ? "" : "s"}`).join(" · ");
 
 const WORD = { working: "working", blocked: "needs you", done: "done", idle: "idle" };
 const clean = (s) => (s ?? "").replace(/^[^\p{L}\p{N}]+/u, "").trim();
@@ -105,7 +165,9 @@ export const agentsViews = {
     const byPane = new Map(panes().map((p) => [p.pane, p]));
     const termOf = (a) => byPane.get(a.pane)?.terminal;
     // A sub-agent (a terminal another agent started) follows its parent; ones without a pane are counted on the parent.
-    const parentOf = new Map(terminals().map((x) => [x.address, x.parent]));
+    // A helper's parent: the terminal that started it with `hc run` (Herdr records that), or a
+    // squirrel.parent label for helpers opened another way (`hc label <t> squirrel.parent=<parent>`).
+    const parentOf = new Map(terminals().map((x) => [x.address, x.parent ?? x.labels?.["squirrel.parent"] ?? null]));
     const all = agents(), agentTerms = new Set(all.map(termOf));
     const isChild = (a) => agentTerms.has(parentOf.get(termOf(a)));
     const list = [];
@@ -118,13 +180,18 @@ export const agentsViews = {
     const h = home();
     const where = (cwd) => !cwd ? "" : cwd === h ? "~" : cwd.startsWith(h + "/") ? "~" + cwd.slice(h.length) : cwd;
 
+    const helpersOf = (a) => all.filter((c) => isChild(c) && parentOf.get(termOf(c)) === termOf(a));
     const card = (a) => {
       const p = byPane.get(a.pane);
+      const helpers = helpersOf(a), parent = isChild(a) ? all.find((x) => termOf(x) === parentOf.get(termOf(a))) : null;
+      const bg = this.background?.[termOf(a)], blue = t.ansi4;
       const color = { working: t.working, blocked: t.blocked, done: t.done, idle: t.dim }[a.status] ?? t.dim;
       const title = names[a.pane] || clean(a.title) || a.program?.name || a.address;
       const child = isChild(a), hidden = background.get(termOf(a)) ?? [];
       const { pct, cost } = this.context.terminals?.[termOf(a)] ?? {};
       const pctColor = pct >= 80 ? t.ansi1 : pct >= 50 ? t.ansi3 : t.ansi2;
+      // Three lines on every card so heights match: name, the agent's own status, then background work
+      // (shells, monitors, background agents) when there is any.
       return v_flex().id(`card-${a.address}`).w(CARD_W).h(CARD_H).flex_none().px(8).py(6).gap(4).rounded(4)
         .bg(a.focused ? t.raised : t.surface).border(1).border_color(a.focused ? t.accent : a.status === "blocked" ? t.blocked : t.border)
         .when(child && !a.focused, (el) => el.border_l(2).border_color(t.dim))
@@ -148,11 +215,66 @@ export const agentsViews = {
           .child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(p?.branch ?? where(p?.cwd)))
           .when(typeof pct === "number", (el) => el.child(h_flex().flex_none().gap(4).items_center()
             .child(div().w(28).flex_none().h(4).rounded(2).bg(t.border).child(div().h_full().rounded(2).bg(pctColor).w(Math.max(1, Math.min(28, pct * 0.28)))))
-            .child(div().text_color(pctColor).child(`${Math.round(pct)}%`)))));
+            .child(div().text_color(pctColor).child(`${Math.round(pct)}%`)))))
+        .child(h_flex().h(15).gap(6).items_center().min_w(0).text_size(11).text_color(blue)
+          .when(Boolean(bg) || helpers.length > 0, (el) => el
+            .when(Boolean(bg) || helpers.some((h) => h.status === "working"), (el) => el.child(svg("mods/workspace-chrome/spinner.svg").size(10).flex_none().spin(2400)))
+            .child(div().flex_1().min_w(0).truncate().child([
+              bg ? `background: ${bgText(bg)}` : null,
+              helpers.length ? `${helpers.length} helper${helpers.length === 1 ? "" : "s"}${helpers.some((h) => h.tab !== a.tab) ? ` in ${helpers[0].tab_name}` : ""}` : null,
+            ].filter(Boolean).join(" · "))))
+          .when(!bg && !helpers.length && Boolean(parent), (el) => el.text_color(t.dim)
+            .child(div().flex_1().min_w(0).truncate().child(`helper of ${names[parent.pane] || clean(parent.title)}`))));
     };
-    const cards = h_flex().flex_wrap().gap(GAP).p(GAP)
-      .when(list.length === 0, (el) => el.child(div().p(4).text_size(12).text_color(t.dim).child("No agents running")))
-      .children(list.map(card));
+    this.helperCount = all.filter(isChild).length;
+    // One group per tab, labelled when there's more than one tab, so helpers opened in another tab read as a set.
+    const groups = [];
+    for (const a of list) {
+      const g = groups.find((x) => x.tab === a.tab);
+      if (g) g.items.push(a); else groups.push({ tab: a.tab, name: a.tab_name, items: [a] });
+    }
+    const perRow = Math.max(1, Math.floor((this.width - GAP * 2 + GAP) / (CARD_W + GAP)));
+    const pillsPerRow = Math.max(1, Math.floor((this.width - GAP * 2 + GAP) / (PILL_W + GAP)));
+    const labelled = groups.length > 1;
+    // Every tab after the first (where you work) starts folded into one-line pills; its header unfolds it.
+    this.openTabs ??= {};
+    const foldable = (g) => labelled && g !== groups[0];
+    const folded = (g) => foldable(g) && !this.openTabs[g.tab];
+    this.cardsHeight = groups.reduce((h, g) => {
+      const rows = Math.ceil(g.items.length / (folded(g) ? pillsPerRow : perRow));
+      const rowH = folded(g) ? PILL_H : CARD_H;
+      return h + (labelled ? TAB_LABEL : 0) + GAP * 2 + rows * rowH + (rows - 1) * GAP;
+    }, 0) || CARD_H + GAP * 2;
+    const pill = (a) => {
+      const bg = this.background?.[termOf(a)], color = { working: t.working, blocked: t.blocked, done: t.done, idle: t.dim }[a.status] ?? t.dim;
+      const { pct } = this.context.terminals?.[termOf(a)] ?? {};
+      return h_flex().id(`pill-${a.address}`).w(PILL_W).h(PILL_H).flex_none().px(8).gap(6).items_center().rounded(PILL_H / 2)
+        .bg(a.focused ? t.raised : t.surface).border(1).border_color(a.focused ? t.accent : a.status === "blocked" ? t.blocked : t.border)
+        .hover((s) => s.bg(t.hover)).cursor_pointer().text_size(11)
+        .on_click((_e, cx) => { this.openTabs[a.tab] = true; cx.notify(); })
+        .tooltip(bg ? `background: ${bgText(bg)}` : WORD[a.status] ?? a.status)
+        .child(a.status === "working" ? svg("mods/workspace-chrome/spinner.svg").size(10).flex_none().text_color(color).spin(900)
+          : div().size(7).flex_none().rounded(4).bg(color))
+        .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(names[a.pane] || clean(a.title) || a.address))
+        .when(Boolean(bg), (el) => el.child(div().size(6).flex_none().rounded(3).bg(t.ansi4)))
+        .when(typeof pct === "number", (el) => el.child(div().flex_none().text_color(t.dim).child(`${Math.round(pct)}%`)));
+    };
+    const cards = v_flex()
+      .when(list.length === 0, (el) => el.child(div().p(GAP + 4).text_size(12).text_color(t.dim).child("No agents running")))
+      .children(groups.map((g) => v_flex()
+        .when(labelled, (el) => {
+          // A tab of helpers says whose they are, and folds or unfolds on click.
+          const owners = [...new Set(g.items.filter(isChild).map((c) => all.find((x) => termOf(x) === parentOf.get(termOf(c)))).filter(Boolean)
+            .map((x) => names[x.pane] || clean(x.title)))];
+          const helpersTab = foldable(g);
+          const label = `${g.name} tab · ${g.items.length} agent${g.items.length === 1 ? "" : "s"}${owners.length ? ` · helpers of ${owners.join(", ")}` : ""}`;
+          return el.child(h_flex().id(`tab-label-${g.tab}`).h(TAB_LABEL).px(GAP + 2).gap(4).items_end().text_size(10.5).font_semibold().text_color(t.dim)
+            .when(helpersTab, (el) => el.cursor_pointer().hover((s) => s.text_color(t.foreground))
+              .on_click((_e, cx) => { this.openTabs[g.tab] = !this.openTabs[g.tab]; cx.notify(); })
+              .child(svg(`mods/squirrel-panel/${folded(g) ? "chevron-right" : "chevron-down"}.svg`).size(10)))
+            .child(label));
+        })
+        .child(h_flex().flex_wrap().gap(GAP).p(GAP).children(g.items.map(folded(g) ? pill : card)))));
     return v_flex().child(usageStrip(t, this.context.accounts ?? {}, this.usage ?? {}) ?? div()).child(cards);
   },
 };

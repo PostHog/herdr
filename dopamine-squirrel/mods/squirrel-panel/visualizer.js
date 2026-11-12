@@ -212,6 +212,5 @@ export function drawSim(sim, dim) {
   const fade = Math.max(0, Math.min(1, sim.age / 0.6, (sim.ttl - sim.age) / 0.6));
   return [
     div().absolute().inset_0().opacity(fade).children(sim.scene.draw(sim.state, sim.pal, sim.time, sim.w, sim.h)),
-    div().absolute().right(3).bottom(2).text_size(9).text_color(dim).child(`${sim.name} · ${sim.pal.name}`),
   ];
 }

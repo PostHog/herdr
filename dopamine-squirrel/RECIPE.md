@@ -21,6 +21,7 @@ Laid out for a vertical monitor; works on a wide one too. [README.md](README.md)
 
 - Tabs on the left, hidden while you only have one. `+`, Changes, GitHub, standup, search, settings on the right.
 - **GitHub badge**: the number of PRs waiting on your review that you haven't triaged. Click it for the Reviews view.
+- **Fact-check button** (Slack icon): opens a pane below with Claude (Opus, high effort) primed to fact-check the Slack link or screenshot you paste next. It answers "Paste it." and waits.
 - **Standup button** (megaphone): opens a pane below running Claude with your standup skill. A second click jumps to that pane.
 - **Glow**: soft neon bands drifting behind the bar, 7 s per colour, with a rim of the normal bar colour. `glow.js`.
 - `cmd-w` asks before closing a pane, so a stray key never kills an agent.
@@ -28,8 +29,10 @@ Laid out for a vertical monitor; works on a wide one too. [README.md](README.md)
 
 ### Running agents (`mods/squirrel-panel/agents.js`)
 
-- One card per agent: CC or GPT badge, pane name, status, branch, session cost and a context % bar. Click a card to focus it.
-- A sub-agent (a terminal another agent started) sits right after its parent with `↳`. One without a pane shows as "+N in background" on the parent; click it to give it a pane.
+- One card per agent, all the same height: CC or GPT badge, pane name and session cost; then status, branch and a context % bar; then a third line for background work. Click a card to focus it.
+- **Background work**: Herdr reports an agent as idle while its shells, monitors or background agents still run. The panel reads Claude's footer ("· 1 shell, 1 monitor") every 10 s and shows it on the third line with a slow blue spinner.
+- **Helpers**: cards group by tab. Every tab after the first starts folded into one-line pills (status, name, a blue dot for background work, context %); click its header or any pill to unfold them into cards. A helper says "helper of <parent>", its parent counts its helpers, and a tab of helpers is labelled with whose they are. The parent is the terminal that started it with `hc run`. For helpers opened another way (`herdr-app do tab.new`, `pane.split`, `terminal.open`), the panel finds the agent whose Claude transcript holds the command that launched it and labels the helper (`squirrel.parent`).
+- A helper without a pane shows as "+N in background" on its parent; click it to give it a pane.
 - **Plan limits strip**: one line per Claude subscription, with the same columns on each: 5-hour, week, per-model weeks such as Fable, and usage credits, each with when it resets. `usage.js` reads Claude Code's own `/usage` screen every 10 minutes: it starts a hidden Claude session in an empty folder, types `/usage`, reads the screen and closes the session. That sends nothing to the model. Between reads, the statusline keeps 5-hour and week current after every reply.
 - The panel sizes itself to the rows of cards.
 
@@ -46,8 +49,11 @@ Laid out for a vertical monitor; works on a wide one too. [README.md](README.md)
 ### My PRs (`mods/squirrel-panel/my-prs.js`)
 
 - Three tables on one column grid: **In review** (your open PRs in any repo), **Merge queue** (where each one stands in Trunk, from the Trunk bot's comment) and **Recently merged** (the last 7 days).
+- **Cloud tasks**: PRs opened by your PostHog cloud tasks (a bot authors them) join this table with a `cloud` tag that opens the task, and leave Reviews. `mods/squirrel-topbar/cloud.js` reads them from PostHog's tasks API with the key `posthog-cli login` saves; without it, nothing changes.
 - The REVIEWS column counts approvals, open threads and comments from others, so non-blocking notes on an approved PR don't get missed. Click an open PR's row to read them: open threads first, then the latest comments, each linking to GitHub.
-- **Add to queue** and **Remove** run `trunk merge` and `trunk merge cancel` from your PostHog checkout. The first click arms the button; a second within 4 s runs it. Needs `trunk login` once.
+- **RFR** next to a draft's chip marks it ready for review (`gh pr ready`). Every action refreshes the board.
+- **CI failed** chip: opens a pane below running Claude (Opus, high effort) in the PR's checkout. It fixes what's obvious without pushing, or stops and summarises what needs your call. A second click jumps to that pane.
+- **Add to queue** shows only on approved PRs whose CI isn't failing. **Add to queue** and **Remove** run `trunk merge` and `trunk merge cancel` from your PostHog checkout. Add runs at once and shows "Added ✓"; Remove asks for a second click within 4 s. Needs `trunk login` once.
 - The empty cells of merged rows are a visualizer: two live simulations (flow fields, a spectrum analyser, warp stars, orbs, rain, fireworks, Game of Life, random walkers, plasma) with random palettes, swapping every 9 to 17 s. `visualizer.js`.
 
 ### The rest

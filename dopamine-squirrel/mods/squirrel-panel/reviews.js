@@ -30,7 +30,7 @@ export const reviewViews = {
 
   // One Claude pane per PR: a second click focuses it instead of starting another. If that pane was
   // closed, the click resumes its conversation (claude --resume in the folder it ran in).
-  review(pr, cx) {
+  review(pr, cx, ownPrompt) {
     const existing = this.reviewPane(pr);
     if (existing) { run("tab.select", { id: existing.tab }); run("pane.focus", { pane: existing.pane }); return; }
     if (this.starting[pr.url]) return;
@@ -38,7 +38,7 @@ export const reviewViews = {
     cx.notify();
     const before = new Set(panes().map((p) => p.pane));
     const skill = settings().reviewSkill, past = (shared(REVIEW_SESSIONS) ?? {})[pr.url];
-    const prompt = `Load my ${skill} skill from the PostHog MCP (learn project:${skill}) and use it on ${pr.url}`;
+    const prompt = ownPrompt ?? `Load my ${skill} skill from the PostHog MCP (learn project:${skill}) and use it on ${pr.url}`;
     const argv = past?.sessionId
       ? ["/bin/sh", "-c", 'cd "$1" 2>/dev/null; exec claude --resume "$2"', "sh", past.cwd ?? home(), past.sessionId]
       : ["claude", prompt];

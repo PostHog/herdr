@@ -1,6 +1,6 @@
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex, ScrollHandle } from "gpui-base";
-import { spaces, panes, run, openOverlay, theme, window, shared, setShared, layout, updates, nextCommand, home } from "herdr";
+import { spaces, panes, run, openOverlay, theme, window, shared, setShared, layout, updates, nextCommand, home, hc, exec } from "herdr";
 import { fetchGh, GH_EVERY_MS } from "./github.js";
 import { glow } from "./glow.js";
 import { loadSettings, squirrelSettings } from "./settings.js";
@@ -31,6 +31,7 @@ export default class SquirrelTopbar extends View {
       for (;;) {
         const c = await nextCommand();
         if (c === "gh_refresh" || c?.name === "gh_refresh") fetchGh();
+        if (c === "fact_check" || c?.name === "fact_check") this.factCheck(cx);
         for (const v of ["agents", "reviews", "mine"]) {
           if (c === `show_${v}` || c?.name === `show_${v}`) { setShared("squirrel.view", v); run("layout.show", { id: "agents-panel" }); }
         }
@@ -91,6 +92,36 @@ export default class SquirrelTopbar extends View {
   }
 
   // One click starts the standup: Claude (standupCommand) with the standup skill from the PostHog MCP. A second click focuses that pane.
+  // Fact-check: a pane below with Claude (Opus, high effort) and the fact-check request typed into its input,
+  // not sent, ending in "Here it is: " so you paste the Slack link or screenshot and press Enter.
+  // Herdr can only paste from the clipboard, so this borrows it and puts your text back after.
+  factCheck(cx) {
+    const template = "Fact-check this before I send it. Verify each claim against the code, docs, PRs or data you can reach "
+      + "(read Slack links with the Slack tools). Tell me plainly if I'm wrong, overstating, missing context, or about to look "
+      + "like a retard. Verdict first, then corrected wording ready to paste into Slack: Slack formatting (*bold*, _italic_, "
+      + "`code`, bullets) is fine, but no blockquote bars or other terminal-only gutter characters. Be clear, concise and direct. Here it is: ";
+    const checkout = squirrelSettings().posthogCheckout.replace(/^~/, home());
+    const before = new Set(panes().map((p) => p.pane));
+    run("pane.split", { direction: "down", argv: ["/bin/sh", "-c", 'cd "$1" 2>/dev/null || cd; exec claude --model opus --effort high -n "Fact check"', "sh", checkout] });
+    cx.spawn(async (cx) => {
+      let pane = null;
+      for (let i = 0; i < 50 && !pane; i++) { pane = panes().find((p) => !before.has(p.pane)); if (!pane) await cx.sleep(100); }
+      if (!pane?.terminal) return;
+      // Wait for Claude's input box before pasting.
+      for (let i = 0; i < 40; i++) {
+        const r = await hc(["read", pane.terminal, "--lines", "0"]).catch(() => null);
+        if (/auto mode|shift\+tab|\? for shortcuts|❯/.test(r?.stdout ?? "")) break;
+        await cx.sleep(250);
+      }
+      const saved = await exec("pbpaste", []).catch(() => null);
+      await exec("/bin/sh", ["-c", 'printf "%s" "$1" | pbcopy', "sh", template]).catch(() => null);
+      run("pane.focus", { pane: pane.pane });
+      run("terminal.paste");
+      await cx.sleep(400);
+      await exec("/bin/sh", ["-c", 'printf "%s" "$1" | pbcopy', "sh", saved?.stdout ?? ""]).catch(() => null);
+    });
+  }
+
   standup(cx) {
     const existing = panes().find((p) => p.pane === shared("squirrel.standup-pane"));
     if (existing) { run("tab.select", { id: existing.tab }); run("pane.focus", { pane: existing.pane }); return; }
@@ -185,6 +216,9 @@ export default class SquirrelTopbar extends View {
       .when(enabled.includes("files"), el => el.child(panelButton("files", "Files", "mods/files/file.svg")))
       .when(enabled.includes("changes"), el => el.child(panelButton("changes", "Changes", "mods/changes/changes.svg")))
       .child(this.ghBadge(t, stop))
+      .child(div().id("fact-check").size(26).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.ansi5)
+        .hover(s => s.bg(t.hover)).tooltip("Fact-check something before you say it").on_mouse_down("left", stop).on_click((_e, cx) => this.factCheck(cx))
+        .child(image("mods/squirrel-topbar/slack-logo.svg").size(15)))
       .child(div().id("standup").size(26).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.ansi3)
         .hover(s => s.bg(t.hover)).tooltip("Start today's standup").on_mouse_down("left", stop).on_click((_e, cx) => this.standup(cx))
         .child(this.standupStarting ? svg("mods/workspace-chrome/spinner.svg").size(14).spin(900) : svg("mods/squirrel-topbar/megaphone.svg").size(15)))

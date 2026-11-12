@@ -10,13 +10,13 @@ Jake Ruth's opinionated, ADHD-proof Herdr setup: one top bar and one panel for e
 
 ![Top bar](screenshots/top-bar.gif)
 
-Review count, one-click standup, and a slow neon glow (sped up here).
+Review count, a fact-check button (paste a Slack link or screenshot, Claude checks it before you hit send), one-click standup, and a slow neon glow (sped up here).
 
 ## Running agents · `cmd-1`
 
 ![Running agents](screenshots/agents.png)
 
-Every agent with its cost and context %, plus your Claude plan limits (5h, week, Fable, credits) for each subscription.
+Every agent with its cost, context %, and what it's running in the background (shells, monitors, helpers), grouped by tab. Helpers say whose they are. On top, your Claude plan limits (5h, week, Fable, credits) for each subscription.
 
 ## Reviews · `cmd-2`
 
@@ -49,6 +49,7 @@ These assume Jake's setup. Change them in `~/.config/herdr-app/squirrel.json`, o
 - **CC review button:** Jake's `explaining-prs` skill from the PostHog MCP.
 - **Merge queue:** PostHog's Trunk queue and a `PostHog/posthog` checkout.
 - **Plan limits:** Jake's two Claude subscriptions.
+- **Cloud-task PRs in My PRs:** PostHog cloud tasks, read with your `posthog-cli login`.
 
 ---
 
@@ -60,6 +61,7 @@ Setting this up or taking a part of it? [RECIPE.md](RECIPE.md) has setup, every 
 | --- | --- |
 | Top bar | `mods/squirrel-topbar/main.js` |
 | GitHub fetching (every 5 min, all repos) | `mods/squirrel-topbar/github.js` |
+| PRs from PostHog cloud tasks | `mods/squirrel-topbar/cloud.js` |
 | Neon glow | `mods/squirrel-topbar/glow.js` |
 | Agent cards, context %, cost | `mods/squirrel-panel/agents.js`, `statusline.sh` |
 | Plan limits (`/usage` every 10 min) | `mods/squirrel-panel/usage.js` |
@@ -75,4 +77,4 @@ What changes colour, since screenshots can't show it:
 - Context % and plan limit bars: green, yellow from 50%, red from 80%.
 - WAITING turns red after 48 hours. Clicked PR links turn purple.
 - A WATCH PR that comes back gets an amber edge and a `↻` tag.
-- Merge buttons turn green (add) or red (remove) while waiting for the confirming click.
+- Remove turns red while waiting for its confirming click.

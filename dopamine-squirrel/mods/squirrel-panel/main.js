@@ -3,10 +3,10 @@
 // fetches the PR lists into shared "squirrel.github" every 5 minutes.
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { agents, run, theme, shared, setShared } from "herdr";
+import { agents, panes, terminals, run, theme, shared, setShared } from "herdr";
 import { VIEW, GITHUB, TRIAGED, ROW, HEADER, COLS, MAX_ROWS, CARD_W, CARD_H, GAP, ago } from "./shared.js";
 import { stepSim } from "./visualizer.js";
-import { readContext, agentsViews, usageHeight } from "./agents.js";
+import { readContext, readBackground, pruneContext, linkParents, agentsViews, usageHeight } from "./agents.js";
 import { readUsage } from "./usage.js";
 import { tableParts } from "./table.js";
 import { reviewViews } from "./reviews.js";
@@ -19,6 +19,16 @@ export default class SquirrelPanel extends View {
       for (;;) {
         const next = await readContext();
         this.rememberReviewSessions(next.terminals);
+        const ids = agents().map((a) => panes().find((p) => p.pane === a.pane)?.terminal).filter(Boolean);
+        const all = terminals();
+        await pruneContext(new Set(all.filter((x) => x.state === "live").map((x) => x.address)));
+        this.linkTries ??= {};
+        const known = new Map(all.map((x) => [x.address, x.parent ?? x.labels?.["squirrel.parent"] ?? null]));
+        const untagged = agents().map((a) => ({ id: panes().find((p) => p.pane === a.pane)?.terminal, name: (a.title ?? "").replace(/^[^\p{L}\p{N}]+/u, "").trim() }))
+          .filter((u) => u.id && !known.get(u.id) && (this.linkTries[u.id] = (this.linkTries[u.id] ?? 0) + 1) <= 6);
+        if (untagged.length) await linkParents(untagged, ids.map((id) => ({ id, transcript: next.terminals[id]?.transcript })));
+        const bg = await readBackground(ids);
+        if (JSON.stringify(bg) !== JSON.stringify(this.background ?? {})) { this.background = bg; cx.notify(); }
         if (JSON.stringify(next) !== JSON.stringify(this.context)) { this.context = next; cx.notify(); }
         await cx.sleep(10000);
       }
@@ -47,6 +57,7 @@ export default class SquirrelPanel extends View {
     this.starting = {};
     this.queueBusy = {};
     this.queueError = {};
+    this.queueAdded = {};
     this.confirm = {};
     this.expanded = {};
     this.leaving = {};
@@ -81,7 +92,8 @@ export default class SquirrelPanel extends View {
       const perRow = Math.max(1, Math.floor((this.width - GAP * 2 + GAP) / (CARD_W + GAP)));
       const rows = Math.max(1, Math.ceil(agents().length / perRow));
       const strip = usageHeight(this.context.accounts ?? {}, this.usage ?? {});
-      if (this.width) this.fit("agents", HEADER + strip + GAP * 2 + rows * CARD_H + (rows - 1) * GAP + 2);
+
+      if (this.width) this.fit("agents", HEADER + strip + (this.cardsHeight ?? GAP * 2 + rows * CARD_H + (rows - 1) * GAP) + 2);
     }
     else {
       const v = view === "reviews" ? this.reviewsView(t, gh) : this.mineView(t, gh);

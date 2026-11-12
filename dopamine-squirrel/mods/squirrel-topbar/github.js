@@ -1,6 +1,7 @@
 // Fetches the PRs Dopamine Squirrel shows, with the gh CLI, across every repo the gh login can see.
 import { shared, setShared, exec } from "herdr";
 import { squirrelSettings } from "./settings.js";
+import { cloudTaskPrs } from "./cloud.js";
 
 const mergedDays = () => squirrelSettings().mergedDays;
 
@@ -16,12 +17,14 @@ const PR_FIELDS = `number title url isDraft createdAt updatedAt additions deleti
       reviewThreads(first: 100) { nodes { isResolved } }
       reviewRequests(first: 30) { nodes { requestedReviewer { __typename ... on User { login } ... on Team { name } } } }`;
 // Three small queries instead of one big one: the combined query took ~10s, GitHub's GraphQL limit, and failed with 502s.
+// What My PRs reads for each PR: the shared fields, Trunk's sticky comment and unresolved threads.
+const MINE_FIELDS = () => `${PR_FIELDS} trunk: comments(first: 10) { nodes { author { login } body updatedAt } }
+      threads: reviewThreads(first: 50) { nodes { isResolved path comments(first: 1) { nodes { author { __typename login } createdAt bodyText url } } } }`;
 const GH_QUERIES = {
   reviews: () => `query { viewer { login } list: search(query: "is:pr is:open archived:false review-requested:@me", type: ISSUE, first: 100) {
     issueCount nodes { ... on PullRequest { ${PR_FIELDS} } } } }`,
   mine: () => `query { viewer { login } list: search(query: "is:pr is:open archived:false author:@me", type: ISSUE, first: 100) {
-    issueCount nodes { ... on PullRequest { ${PR_FIELDS} trunk: comments(first: 10) { nodes { author { login } body updatedAt } }
-      threads: reviewThreads(first: 50) { nodes { isResolved path comments(first: 1) { nodes { author { __typename login } createdAt bodyText url } } } } } } } }`,
+    issueCount nodes { ... on PullRequest { ${MINE_FIELDS()} } } } }`,
   merged: () => `query { viewer { login } list: search(query: "is:pr is:merged author:@me merged:>=${new Date(Date.now() - mergedDays() * 864e5).toISOString().slice(0, 10)}", type: ISSUE, first: 30) {
     issueCount nodes { ... on PullRequest { number title url createdAt mergedAt additions deletions repository { nameWithOwner } commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } } } } }`,
 };
@@ -148,6 +151,26 @@ export async function fetchGh() {
       additions: n.additions, deletions: n.deletions, ci: n.commits.nodes[0]?.commit?.statusCheckRollup?.state ?? null }))
     .sort((a, b) => Date.parse(b.mergedAt) - Date.parse(a.mergedAt)));
   next.mergedDays = mergedDays();
+  // PRs your PostHog cloud tasks opened (a bot authors them): add them to My PRs, tagged, and out of Reviews.
+  const cloud = await cloudTaskPrs().catch(() => []);
+  const cloudUrls = new Set(cloud.map((c) => c.url));
+  const missing = cloud.filter((c) => !(next.mine ?? []).some((p) => p.url === c.url));
+  if (missing.length) {
+    const parts = missing.map((c, i) => {
+      const [, owner, name, number] = /github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/.exec(c.url) ?? [];
+      return owner ? `p${i}: repository(owner: "${owner}", name: "${name}") { pullRequest(number: ${number}) { ${MINE_FIELDS()} } }` : "";
+    }).filter(Boolean);
+    const d = parts.length ? await ghGraphql(`query { viewer { login } ${parts.join("\n")} }`).catch(() => null) : null;
+    for (const key of Object.keys(d ?? {}).filter((k) => /^p\d+$/.test(k))) {
+      const n = d[key]?.pullRequest;
+      if (n?.number) (next.mine ??= []).push(toPr(n, d.viewer.login, notes));
+    }
+  }
+  for (const p of next.mine ?? []) {
+    const c = cloud.find((x) => x.url === p.url);
+    if (c) { p.cloud = true; p.taskUrl = c.taskUrl; }
+  }
+  if (cloudUrls.size) next.prs = (next.prs ?? []).filter((p) => !cloudUrls.has(p.url));
   const capped = (reviews.status === "fulfilled" && reviews.value.list.issueCount > 100) || (mine.status === "fulfilled" && mine.value.list.issueCount > 100);
   if (!failed.length) next.at = Date.now();
   next.error = failed.length ? `GitHub failed (${failed.join("; ")}), showing older data` : capped ? "more than 100 PRs, list is cut off" : null;
