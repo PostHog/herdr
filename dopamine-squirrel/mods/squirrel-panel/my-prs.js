@@ -44,7 +44,7 @@ export const myPrViews = {
     this.ciStarting[pr.url] = true;
     cx.notify();
     const checkout = pr.repo === "PostHog/posthog" ? settings().posthogCheckout.replace(/^~/, home()) : home();
-    const prompt = `CI is failing on my PR ${pr.url}. Find out why. If the fix is clear and common sense, make it on the PR's branch and tell me what you changed, but don't push. If it needs human judgment or taste, stop and give me a short summary of the failure and the options.`;
+    const prompt = `CI is failing on my PR ${pr.url}. Find out why. If the fix is clear and common sense, make it on the PR's branch, then push to the PR's branch (never force-push) and tell me what you changed. If it needs human judgment or taste, stop and give me a short summary of the failure and the options.`;
     const before = new Set(panes().map((p) => p.pane));
     run("pane.split", { direction: "down", argv: ["/bin/sh", "-c", 'cd "$1" 2>/dev/null; exec claude --model opus --effort high "$2"', "sh", checkout, prompt] });
     cx.spawn(async (cx) => {
