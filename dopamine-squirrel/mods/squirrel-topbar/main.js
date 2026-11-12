@@ -103,7 +103,8 @@ export default class SquirrelTopbar extends View {
       "For now, reply only: Paste it.",
     ].join(" ");
     const checkout = squirrelSettings().posthogCheckout.replace(/^~/, home());
-    run("pane.split", { direction: "down", argv: ["/bin/sh", "-c", 'cd "$1" 2>/dev/null || cd; exec claude --model opus --effort high -n "Fact check" "$2"', "sh", checkout, prompt] });
+    run("pane.split", { direction: "down", argv: ["/bin/sh", "-c", 'cd "$1" 2>/dev/null || cd; exec claude --model opus --effort high -n "Fact check" "$2"', "sh", checkout,
+      squirrelSettings().factCheckPrompt ?? prompt] });
   }
 
   standup(cx) {
