@@ -1,0 +1,114 @@
+{
+  "id": "root",
+  "type": "column",
+  "titlebar": "none",
+  "traffic_lights": [
+    12,
+    12
+  ],
+  "background": "canvas",
+  "colors": {
+    "background": "#000000"
+  },
+  "terminal_padding": [
+    6,
+    6
+  ],
+  "children": [
+    {
+      "id": "tabs",
+      "type": "block",
+      "size": {
+        "px": 40
+      },
+      "window_drag": true,
+      "content": {
+        "mod": "squirrel-topbar"
+      }
+    },
+    {
+      "id": "agents-panel",
+      "type": "block",
+      "size": {
+        "px": 100
+      },
+      "min": 40,
+      "max": 600,
+      "content": {
+        "mod": "squirrel-panel"
+      }
+    },
+    {
+      "id": "work-body",
+      "type": "row",
+      "divider": {
+        "width": 1,
+        "color": "border"
+      },
+      "children": [
+        {
+          "id": "main",
+          "type": "block",
+          "content": {
+            "tab": "active",
+            "pane": {
+              "gap": 0,
+              "radius": 0,
+              "background": "background",
+              "lone": false,
+              "border": {
+                "width": 1,
+                "color": "border"
+              },
+              "focus": {
+                "width": 1,
+                "color": "accent"
+              },
+              "header": {
+                "content": {
+                  "mod": "squirrel-pane-header"
+                },
+                "height": 28,
+                "position": "top",
+                "reveal": "always"
+              }
+            }
+          }
+        },
+        {
+          "id": "panel",
+          "type": "column",
+          "hidden": true,
+          "size": {
+            "px": 368
+          },
+          "min": 280,
+          "max": 900,
+          "children": [
+            {
+              "id": "panel-body",
+              "type": "stack",
+              "active": "files",
+              "children": [
+                {
+                  "id": "files",
+                  "type": "block",
+                  "content": {
+                    "mod": "files"
+                  }
+                },
+                {
+                  "id": "changes",
+                  "type": "block",
+                  "content": {
+                    "mod": "changes"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
