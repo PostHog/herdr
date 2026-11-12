@@ -6,7 +6,8 @@ import { h_flex, v_flex } from "gpui-base";
 import { agents, run, theme, shared, setShared } from "herdr";
 import { VIEW, GITHUB, TRIAGED, ROW, HEADER, COLS, MAX_ROWS, CARD_W, CARD_H, GAP, ago } from "./shared.js";
 import { stepSim } from "./visualizer.js";
-import { readContext, agentsViews, USAGE_H } from "./agents.js";
+import { readContext, agentsViews, usageHeight } from "./agents.js";
+import { readUsage } from "./usage.js";
 import { tableParts } from "./table.js";
 import { reviewViews } from "./reviews.js";
 import { myPrViews } from "./my-prs.js";
@@ -19,6 +20,15 @@ export default class SquirrelPanel extends View {
         const next = await readContext();
         if (JSON.stringify(next) !== JSON.stringify(this.context)) { this.context = next; cx.notify(); }
         await cx.sleep(10000);
+      }
+    });
+    // /usage for each Claude subscription, every 10 minutes (usage.js).
+    this.usage = {};
+    cx.spawn(async (cx) => {
+      for (;;) {
+        const next = await readUsage().catch(() => null);
+        if (next && Object.keys(next).length) { this.usage = next; cx.notify(); }
+        await cx.sleep(10 * 60 * 1000);
       }
     });
     this.width = 0;
@@ -69,7 +79,7 @@ export default class SquirrelPanel extends View {
       // Cards wrap; size the panel to however many rows they take at this width.
       const perRow = Math.max(1, Math.floor((this.width - GAP * 2 + GAP) / (CARD_W + GAP)));
       const rows = Math.max(1, Math.ceil(agents().length / perRow));
-      const strip = Object.values(this.context.accounts ?? {}).some((l) => Object.keys(l).length) ? USAGE_H : 0;
+      const strip = usageHeight(this.context.accounts ?? {}, this.usage ?? {});
       if (this.width) this.fit("agents", HEADER + strip + GAP * 2 + rows * CARD_H + (rows - 1) * GAP + 2);
     }
     else {

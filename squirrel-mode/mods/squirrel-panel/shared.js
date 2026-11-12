@@ -16,7 +16,7 @@ export const CARD_W = 240, CARD_H = 56, GAP = 6;
 export const now = () => Date.now();
 
 // squirrel-topbar loads ~/.config/herdr-app/squirrel.json into shared state; these are the defaults.
-export const DEFAULTS = { reviewSkill: "explaining-prs", posthogCheckout: "~/code/posthog" };
+export const DEFAULTS = { reviewSkill: "explaining-prs", posthogCheckout: "~/code/posthog", claudeProfiles: [{ name: "claude", configDir: "~/.claude" }] };
 export const settings = () => ({ ...DEFAULTS, ...(shared(SETTINGS) ?? {}) });
 
 export function ago(ms) {

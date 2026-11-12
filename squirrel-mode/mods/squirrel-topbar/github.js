@@ -29,7 +29,7 @@ const GH_QUERIES = {
 async function ghGraphql(query) {
   let last = "";
   for (let attempt = 0; attempt < 3; attempt++) {
-    if (attempt) await new Promise((done) => setTimeout(done, 2000 * attempt));
+    if (attempt) await exec("/bin/sleep", [String(2 * attempt)]).catch(() => null);
     const r = await exec("gh", ["api", "graphql", "-f", `query=${query}`], { timeout: 60000 }).catch((e) => ({ code: 1, stderr: String(e?.message ?? e) }));
     if (r.code === 0) return JSON.parse(r.stdout).data;
     last = r.stderr.split("\n").filter((l) => l && !l.startsWith("*")).pop() || `gh exited ${r.code}`;

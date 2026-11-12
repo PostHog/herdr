@@ -37,33 +37,55 @@ export async function readContext() {
   return { terminals, accounts };
 }
 
-const WINDOW_NAMES = { five_hour: "5h", seven_day: "week" };
-function resetsIn(epochSeconds) {
-  const m = Math.max(0, (epochSeconds * 1000 - Date.now()) / 60000);
-  return m < 60 ? `${Math.round(m)}m` : m < 60 * 24 ? `${Math.round(m / 60)}h` : `${Math.round(m / 60 / 24)}d`;
+// One line per Claude subscription, with the same columns on every line. /usage (usage.js, every
+// 10 minutes) gives every window, Fable and credits included; the statusline (after every reply)
+// keeps 5h and week live in between.
+function accountLines(accounts, usage) {
+  const dirs = new Set([...Object.keys(usage), ...Object.keys(accounts).filter((d) => Object.keys(accounts[d]).length)]);
+  return [...dirs].map((dir) => {
+    const live = accounts[dir] ?? {}, windows = {};
+    for (const w of usage[dir]?.windows ?? []) windows[w.label] = { ...w };
+    // /usage leaves out the 5-hour window until something is used in it.
+    if (usage[dir] && !windows["5h"]) windows["5h"] = { label: "5h", pct: 0, resetsAt: null };
+    for (const [key, label] of [["five_hour", "5h"], ["seven_day", "week"]]) {
+      const v = live[key];
+      if (v) windows[label] = { label, pct: v.used_percentage, resetsAt: v.resets_at * 1000 };
+    }
+    return { dir, windows };
+  }).filter((a) => Object.keys(a.windows).length);
 }
 
-// One line per Claude subscription: its 5-hour and weekly plan use, and when each resets.
-export function usageStrip(t, accounts) {
-  const names = settings().accountNames ?? {};
-  const label = (dir) => names[dir] ?? dir.replace(/^.*\/\.?/, "");
-  const entries = Object.entries(accounts).filter(([, limits]) => Object.keys(limits).length);
-  if (!entries.length) return null;
-  const bar = (pct) => {
-    const color = pct >= 80 ? t.ansi1 : pct >= 50 ? t.ansi3 : t.ansi2;
-    return h_flex().gap(5).items_center().flex_none()
-      .child(div().w(60).flex_none().h(5).rounded(3).bg(t.border).child(div().h_full().rounded(3).bg(color).w(Math.max(1, Math.min(60, pct * 0.6)))))
-      .child(div().text_color(color).child(`${Math.round(pct)}%`));
+const inTime = (ms) => {
+  const m = Math.max(0, (ms - Date.now()) / 60000);
+  return m < 60 ? `in ${Math.round(m)}m` : m < 60 * 24 ? `in ${Math.round(m / 60)}h` : `in ${Math.round(m / 60 / 24)}d`;
+};
+
+export function usageStrip(t, accounts, usage = {}) {
+  const profiles = settings().claudeProfiles ?? [];
+  const label = (dir) => profiles.find((p) => p.configDir && p.configDir.replace(/^~/, home()).replace(/\/$/, "") === dir)?.name ?? dir.replace(/^.*\/\.?/, "");
+  const lines = accountLines(accounts, usage);
+  if (!lines.length) return null;
+  // 5h and week first, credits last, any per-model weeks (Fable…) between.
+  const extra = [...new Set(lines.flatMap((l) => Object.keys(l.windows)))].filter((k) => !["5h", "week", "credits"].includes(k)).sort();
+  const columns = ["5h", "week", ...extra, "credits"];
+  const cell = (key, w) => {
+    const color = !w || w.off ? t.dim : w.pct >= 80 ? t.ansi1 : w.pct >= 50 ? t.ansi3 : t.ansi2;
+    return h_flex().w(USAGE_CELL).flex_none().gap(6).items_center()
+      .child(div().w(42).flex_none().truncate().text_color(t.dim).child(key))
+      .child(div().w(56).flex_none().h(5).rounded(3).bg(t.border)
+        .when(Boolean(w) && !w.off, (el) => el.child(div().h_full().rounded(3).bg(color).w(Math.max(1, Math.min(56, w.pct * 0.56))))))
+      .child(div().w(34).flex_none().text_color(color).child(!w ? "—" : w.off ? "off" : `${Math.round(w.pct)}%`))
+      .child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(!w || w.off ? "" : w.spent ?? (w.resetsAt ? inTime(w.resetsAt) : "")));
   };
-  return h_flex().flex_none().h(USAGE_H).px(GAP + 2).gap(18).items_center().text_size(11).text_color(t.muted).border_b(1).border_color(t.border)
-    .children(entries.map(([dir, limits]) => h_flex().gap(10).items_center().flex_none()
-      .child(div().font_semibold().text_color(t.foreground).child(label(dir)))
-      .children(Object.entries(limits).map(([window, v]) => h_flex().gap(5).items_center().flex_none()
-        .child(div().text_color(t.dim).child(WINDOW_NAMES[window] ?? window))
-        .child(bar(v.used_percentage))
-        .child(div().text_color(t.dim).child(`resets in ${resetsIn(v.resets_at)}`))))));
+  return v_flex().flex_none().px(GAP + 4).py(2).text_size(11).text_color(t.muted).border_b(1).border_color(t.border)
+    .children(lines.map(({ dir, windows }) => h_flex().h(USAGE_H).gap(12).items_center().min_w(0).overflow_hidden()
+      .child(div().w(64).flex_none().truncate().font_semibold().text_color(t.foreground).child(label(dir)))
+      .children(columns.map((key) => cell(key, windows[key])))));
 }
-export const USAGE_H = 28;
+
+const USAGE_CELL = 240;
+export const usageHeight = (accounts, usage) => { const n = accountLines(accounts, usage).length; return n ? n * USAGE_H + 4 : 0; };
+export const USAGE_H = 24;
 
 const WORD = { working: "working", blocked: "needs you", done: "done", idle: "idle" };
 const clean = (s) => (s ?? "").replace(/^[^\p{L}\p{N}]+/u, "").trim();
@@ -130,6 +152,6 @@ export const agentsViews = {
     const cards = h_flex().flex_wrap().gap(GAP).p(GAP)
       .when(list.length === 0, (el) => el.child(div().p(4).text_size(12).text_color(t.dim).child("No agents running")))
       .children(list.map(card));
-    return v_flex().child(usageStrip(t, this.context.accounts ?? {}) ?? div()).child(cards);
+    return v_flex().child(usageStrip(t, this.context.accounts ?? {}, this.usage ?? {}) ?? div()).child(cards);
   },
 };

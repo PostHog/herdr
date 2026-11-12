@@ -34,7 +34,7 @@ Take the whole thing, or point your agent at one part below and ask for just tha
 
 - One card per agent: CC or GPT badge, pane name, status, branch, session cost and a context % bar. Click a card to focus it.
 - A sub-agent (a terminal another agent started) sits right after its parent with `↳`. One without a pane shows as "+N in background" on the parent; click it to give it a pane.
-- **Plan limits strip**: one line per Claude subscription (each Claude config folder), with 5-hour and weekly use and when each resets.
+- **Plan limits strip**: one line per Claude subscription, with the same columns on each: 5-hour, week, per-model weeks such as Fable, and usage credits, each with when it resets. `usage.js` reads Claude Code's own `/usage` screen every 10 minutes: it starts a hidden Claude session in an empty folder, types `/usage`, reads the screen and closes the session. That sends nothing to the model. Between reads, the statusline keeps 5-hour and week current after every reply.
 - The panel sizes itself to the rows of cards.
 
 ### Reviews (`mods/squirrel-panel/reviews.js`)
@@ -86,18 +86,21 @@ Take the whole thing, or point your agent at one part below and ask for just tha
   "standupCommand": ["env", "CLAUDE_CONFIG_DIR=~/.claude-personal", "claude"],
   "posthogCheckout": "~/code/posthog",
   "mergedDays": 7,
-  "accountNames": { "/Users/you/.claude": "work", "/Users/you/.claude-personal": "personal" }
+  "claudeProfiles": [
+    { "name": "work", "configDir": "~/.claude" },
+    { "name": "personal", "configDir": "~/.claude-personal" }
+  ]
 }
 ```
 
 - `reviewSkill`, `standupSkill`: project skills the CC and standup buttons ask Claude to load from the PostHog MCP.
 - `standupCommand`: how the standup pane starts Claude. Defaults to `["claude"]`; the example uses a second Claude subscription.
 - `posthogCheckout`: where `trunk` runs. Uses that checkout's flox `trunk` when there is one, else `trunk` on your PATH.
-- `accountNames`: labels for the plan limits strip, keyed by Claude config folder.
+- `claudeProfiles`: the Claude subscriptions the plan limits strip reads, by config folder. Defaults to `~/.claude`, named "claude". The first `/usage` read in a profile trusts the empty folder `~/.config/herdr-app/data/squirrel/usage` for it.
 
 ## Claude status
 
-Context %, session cost and plan limits come from Claude Code's statusline input. Set `statusLine` in each Claude config you use (`~/.claude/settings.json`, and any other `CLAUDE_CONFIG_DIR`):
+Context % and session cost come from Claude Code's statusline input, and so do live 5-hour and weekly limits between `/usage` reads. Set `statusLine` in each Claude config you use (`~/.claude/settings.json`, and any other `CLAUDE_CONFIG_DIR`):
 
 ```json
 "statusLine": { "type": "command", "command": "sh ~/.config/herdr-app/mods/squirrel-panel/statusline.sh", "padding": 0 }
