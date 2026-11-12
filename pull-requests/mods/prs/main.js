@@ -331,6 +331,7 @@ export default class Prs extends View {
     });
     this.wasAttending = true;
     this.wasOnPage = pageShown();
+    this.seenOpenRequest = requested?.at ?? null;
     cx.timer.every(1500, (cx) => {
       if (this.leader) this.publishStatus();
       if (this.leader) this.refreshOnReturn(cx);
@@ -371,9 +372,11 @@ export default class Prs extends View {
   refreshOnReturn(cx) {
     const attending = Boolean(window()?.active);
     const onPage = pageShown();
-    const returned = attending && (!this.wasAttending || (onPage && !this.wasOnPage));
+    const openRequest = shared("prs.page.request")?.at ?? null;
+    const returned = attending && (!this.wasAttending || (onPage && !this.wasOnPage) || openRequest !== this.seenOpenRequest);
     this.wasAttending = attending;
     this.wasOnPage = onPage;
+    this.seenOpenRequest = openRequest;
     if (!returned) return;
     const now = Date.now();
     if (now - (this.mineStartedAt ?? 0) > STALE_AFTER_MS) this.loadMine(cx);

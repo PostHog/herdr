@@ -49,7 +49,7 @@ The panel sits under the agents list. In the `Pull-Requests` layout, `cmd-shift-
   - They're checked on each refresh while Herdr is open, at most 5 runs per PR per hour.
   - The first refresh after install only records state, so nothing fires on existing PRs.
 - **Refresh:** GitHub every 90 s for your PRs and 180 s for reviews, Trunk every 45 s, agent runs every 20 s.
-  - Coming back also refreshes: when Herdr's window becomes active again (say, after fixing something on GitHub), or when the full page is opened, PRs and reviews are fetched right away if their last fetch started more than 20 s ago.
+  - Coming back also refreshes: when Herdr's window becomes active again (say, after fixing something on GitHub), or when the full page is opened (in the layout or as a dialog), PRs and reviews are fetched right away if their last fetch started more than 20 s ago.
   - A failed refresh keeps the last good data and turns the refresh icon yellow; the error line shows after three failures in a row.
   - Only the sidebar copy fetches, notifies and runs workflows. The page copy reads what it shares through `shared()` and asks it to refresh.
 - **Stack depth:** in the Trunk repo, when `stack-depth / Stack depth` is a PR's only failing check, it's taken out of the check counts and the next step reads "Stack too deep" (or "Stack depth not checked"), since the stack's shape is what's wrong, not the code. The PR isn't ready to merge and needs attention, and workflows see neither checks passed nor checks failed. If that lookup fails, the whole refresh fails and the last good data stays.
