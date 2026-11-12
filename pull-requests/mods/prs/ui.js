@@ -17,6 +17,26 @@ const TONES = { ok: "ansi2", bad: "ansi1", warn: "ansi3", run: "working", merged
 
 export const tone = (t, name) => t[TONES[name] ?? name] ?? (name === "run" ? t.ansi4 : t.muted);
 
+const HEX_COLOR = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i;
+
+function mix(from, to, amount) {
+  const a = HEX_COLOR.exec(from ?? "");
+  const b = HEX_COLOR.exec(to ?? "");
+  if (!a || !b) return null;
+  const channel = (index) => Math.round(parseInt(a[index], 16) * (1 - amount) + parseInt(b[index], 16) * amount).toString(16).padStart(2, "0");
+  return `#${channel(1)}${channel(2)}${channel(3)}`;
+}
+
+const SECONDARY_TEXT_LIFT = 0.45;
+
+export function readable(t) {
+  return {
+    ...t,
+    muted: mix(t.muted, t.foreground, SECONDARY_TEXT_LIFT) ?? t.muted,
+    dim: mix(t.dim, t.foreground, SECONDARY_TEXT_LIFT) ?? t.muted,
+  };
+}
+
 export const TEXT = { title: 12.5, meta: 11, chip: 11, section: 10.5 };
 
 export function button(t, id, label, onClick, options = {}) {
