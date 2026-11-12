@@ -15,7 +15,37 @@ function trunk(args) {
 const SECTION_GAP = 9;
 
 // My PRs: three tables on one column grid (in review, merge queue, recently merged) and the visualizer.
+const CI_PANES = "squirrel.ci-panes";
+
 export const myPrViews = {
+  // A failing CI chip opens Claude (Opus, high effort) in a pane below, in the PR's checkout, to fix what is
+  // obvious or bring back what needs your call. A second click jumps to that pane.
+  fixCi(pr, cx) {
+    const paneId = (shared(CI_PANES) ?? {})[pr.url], existing = paneId && panes().find((p) => p.pane === paneId);
+    if (existing) { run("tab.select", { id: existing.tab }); run("pane.focus", { pane: existing.pane }); return; }
+    this.ciStarting ??= {};
+    if (this.ciStarting[pr.url]) return;
+    this.ciStarting[pr.url] = true;
+    cx.notify();
+    const checkout = pr.repo === "PostHog/posthog" ? settings().posthogCheckout.replace(/^~/, home()) : home();
+    const prompt = `CI is failing on my PR ${pr.url}. Find out why. If the fix is clear and common sense, make it on the PR's branch and tell me what you changed, but don't push. If it needs human judgment or taste, stop and give me a short summary of the failure and the options.`;
+    const before = new Set(panes().map((p) => p.pane));
+    run("pane.split", { direction: "down", argv: ["/bin/sh", "-c", 'cd "$1" 2>/dev/null; exec claude --model opus --effort high "$2"', "sh", checkout, prompt] });
+    cx.spawn(async (cx) => {
+      for (let i = 0; i < 50; i++) {
+        const added = panes().find((p) => !before.has(p.pane));
+        if (added) {
+          setShared(CI_PANES, { ...(shared(CI_PANES) ?? {}), [pr.url]: added.pane });
+          setShared(NAMES, { ...(shared(NAMES) ?? {}), [added.pane]: `CI #${pr.number}` });
+          break;
+        }
+        await cx.sleep(100);
+      }
+      delete this.ciStarting[pr.url];
+      cx.notify();
+    });
+  },
+
   // Trunk merge queue buttons: Add runs `trunk merge` at once; Remove asks for a second click within 4s.
   queue(p, action, cx) {
     const key = p.url;
@@ -61,7 +91,8 @@ export const myPrViews = {
     const queueAction = (p) => {
       const q = trunkOf(p), active = ["submitted", "waiting", "queued", "testing"].includes(q?.state);
       if (active) return "remove";
-      return p.repo === "PostHog/posthog" && !p.draft && q?.state !== "merged" ? "add" : null;
+      const landable = p.review === "APPROVED" && !["FAILURE", "ERROR"].includes(p.ci);
+      return p.repo === "PostHog/posthog" && !p.draft && landable && q?.state !== "merged" ? "add" : null;
     };
 
     const reviewBits = (p) => [
@@ -141,7 +172,12 @@ export const myPrViews = {
         .when(kind !== "merged", (el) => el.cursor_pointer().on_click((_e, cx) => { this.expanded[key] = !open; cx.notify(); }))
         .child(c.cell(W.repo, repoName(p), t.muted))
         .child(kind === "review" ? c.review(p) : kind === "queue" ? c.chip(W.status, qLabel, qColor) : div().w(W.status).flex_none())
-        .child(kind === "merged" ? div().w(W.ci).flex_none() : c.ci(p))
+        .child(kind === "merged" ? div().w(W.ci).flex_none()
+          : ["FAILURE", "ERROR"].includes(p.ci) ? div().id(`ci-${p.url}`).flex_none().cursor_pointer().tooltip("Open Claude on the failing CI")
+            .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+            .on_click((_e, cx) => { cx.stop_propagation(); this.fixCi(p, cx); })
+            .child(this.ciStarting?.[p.url] ? c.chip(W.ci, "Opening…", c.red) : c.ci(p))
+          : c.ci(p))
         .child(c.link(p, W.pr))
         .child(h_flex().flex_1().min_w(0).gap(5).items_center()
           .when(Boolean(p.cloud), (el) => el.child(div().id(`cloud-${p.url}`).flex_none().px(5).h(16).flex().items_center().rounded(3)
