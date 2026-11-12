@@ -1,5 +1,5 @@
 {
-  "layout:Squirrel-Mode": {
+  "layout:Dopamine-Squirrel": {
     "cmd-b": "layout.toggle:agents-panel",
     "cmd-1": "squirrel-topbar.show_agents",
     "cmd-2": "squirrel-topbar.show_reviews",

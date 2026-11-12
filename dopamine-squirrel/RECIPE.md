@@ -1,14 +1,14 @@
-# Squirrel Mode
+# Dopamine Squirrel
 
 Jake Ruth's opinionated, ADHD-proof Herdr setup: one top bar and one panel that hold everything that might pull your attention (agents, review requests, your PRs, the merge queue), so nothing slips and nothing nags.
 Take the whole thing, or point your agent at one part below and ask for just that.
 
-![Squirrel Mode](preview.png)
+![Dopamine Squirrel](preview.png)
 
 ## Set it up
 
-1. `./install.sh enable squirrel-mode`, then switch to the layout: `herdr-app do layout.switch '{"name":"Squirrel-Mode"}'`.
-2. Merge `squirrel-mode/keys.json` into `~/.config/herdr-app/keys.json` by hand. Its bindings only apply while this layout shows.
+1. `./install.sh enable dopamine-squirrel`, then switch to the layout: `herdr-app do layout.switch '{"name":"Dopamine-Squirrel"}'`.
+2. Merge `dopamine-squirrel/keys.json` into `~/.config/herdr-app/keys.json` by hand. Its bindings only apply while this layout shows.
 3. `gh auth login`. Every GitHub view uses the gh CLI and covers every repo your login can see.
 4. Optional, for context %, cost and plan limits: set Claude Code's `statusLine` to this piece's script (see [Claude status](#claude-status)).
 5. Optional: personal settings in `~/.config/herdr-app/squirrel.json` (see [Settings](#settings)).
@@ -62,7 +62,7 @@ Take the whole thing, or point your agent at one part below and ask for just tha
 - `mods/squirrel-pane-header/`: pane headers with the pane's name, folder, and split, zoom and close buttons.
 - `mods/squirrel-rename/`: `cmd-r` names the focused pane. Herdr only names tabs, so names live in shared state.
 - `mods/squirrel-new-menu/`: the `+` menu.
-- `layouts/Squirrel-Mode.json`: the top bar, the panel under it (`agents-panel`), then panes with Herdr's Files and Changes column on the right. No spaces list: this setup lives in one space.
+- `layouts/Dopamine-Squirrel.json`: the top bar, the panel under it (`agents-panel`), then panes with Herdr's Files and Changes column on the right. No spaces list: this setup lives in one space.
 
 ## Keys
 

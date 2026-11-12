@@ -1,5 +1,5 @@
 #!/bin/sh
-# Claude Code statusLine command for Squirrel Mode. Saves the status Claude passes in (context
+# Claude Code statusLine command for Dopamine Squirrel. Saves the status Claude passes in (context
 # window, cost, plan limits) under the Herdr terminal it runs in, tagged with the Claude config
 # folder so each subscription's limits stay apart. Then it runs the command saved in
 # data/squirrel/next-command, if any (your own statusline, or another piece's), so it can be chained.

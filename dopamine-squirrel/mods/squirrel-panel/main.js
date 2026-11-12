@@ -1,4 +1,4 @@
-// Squirrel Mode's panel under the top bar (cmd-b toggles it, cmd-1/2/3 pick a view).
+// Dopamine Squirrel's panel under the top bar (cmd-b toggles it, cmd-1/2/3 pick a view).
 // Views: Running agents (agents.js), Reviews (reviews.js) and My PRs (my-prs.js). squirrel-topbar
 // fetches the PR lists into shared "squirrel.github" every 5 minutes.
 import { View, div } from "gpui-kit";

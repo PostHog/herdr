@@ -1,4 +1,4 @@
-// Fetches the PRs Squirrel Mode shows, with the gh CLI, across every repo the gh login can see.
+// Fetches the PRs Dopamine Squirrel shows, with the gh CLI, across every repo the gh login can see.
 import { shared, setShared, exec } from "herdr";
 import { squirrelSettings } from "./settings.js";
 
@@ -38,11 +38,29 @@ async function ghGraphql(query) {
   throw new Error(last);
 }
 
+// Drops <!-- … --> blocks. An unclosed one drops the rest, so no partial marker is left behind.
+// Repeats until nothing changes, since removing one block can join two halves into a new marker.
+function withoutComments(body) {
+  for (;;) {
+    let out = "", i = 0;
+    for (;;) {
+      const start = body.indexOf("<!--", i);
+      if (start < 0) { out += body.slice(i); break; }
+      out += body.slice(i, start);
+      const end = body.indexOf("-->", start + 4);
+      if (end < 0) break;
+      i = end + 3;
+    }
+    if (out === body) return out;
+    body = out;
+  }
+}
+
 // Trunk's merge-queue bot keeps one comment per PR up to date; its first line is the queue state.
 function trunkState(n) {
   const c = (n.trunk?.nodes ?? []).find((x) => x.author?.login === "trunk-io");
   if (!c) return null;
-  const text = c.body.replace(/<!--[\s\S]*?-->/g, "").trim();
+  const text = withoutComments(c.body).trim();
   const first = text.split("\n")[0].replace(/\[([^\]]*)\]\([^)]*\)/g, "$1").trim();
   const state = /managed by Trunk/.test(first) ? "none"
     : /Merged successfully/i.test(first) ? "merged"
