@@ -11,11 +11,11 @@ Its Settings dialog adds real token counts for each Claude Code session in Herdr
 - The left sidebar, 268 px wide, as in Herdr's main layout: the brand bar, spaces and agents, then the usage strip (a 140 px block), then the footer.
   The rest of the window is Herdr's main layout unchanged.
 - The strip is a card in the theme's `surface` color with a 1 px `border`, 8 px corners.
-  Its header says "Claude usage", how long ago the numbers last changed ("3m ago") and a settings icon.
+  Its header says "Claude usage", how long ago the numbers last changed ("3m ago") and a settings icon. In a narrow sidebar the title truncates, so the time and the icon always fit.
 - Under it, one row per limit: "5h", "week", and "spend" behind a gateway with a spend limit.
-  Each row has a 5 px bar, the percentage, and a line under it with the reset time ("resets 11:20 pm", "resets Mon 4:00 pm", "resets in 42m").
+  Each row has a 5 px bar, the percentage, and a line under it with the reset time ("resets 11:20pm", "resets Mon 4pm", "resets in 42m"). The line stays on one line: in a narrow sidebar it ends in "…", and its tooltip has the full time ("Resets Mon 4:00 pm").
 - Bar colors come from the theme: `accent` below the warn level, `working` from the warn level (80% by default), `blocked` from the urgent level (95%).
-- After an hour with no change, the rows dim. After a window resets with no new reply, its row shows "--" and "reset at 11:20 pm".
+- After an hour with no change, the rows dim. After a window resets with no new reply, its row shows "--" and "reset at 11:20pm".
 - When a refresh fails, the rows dim and the header says "couldn't refresh" in the `working` color, with the error as its tooltip.
 - Instead of the rows, the strip says what's missing, with a button when one helps:
   - "Connect Claude Code to see your plan limits here." [Connect]
