@@ -1,0 +1,13 @@
+{
+  "layout:Dopamine-Squirrel": {
+    "cmd-b": "layout.toggle:agents-panel",
+    "cmd-1": "squirrel-topbar.show_agents",
+    "cmd-2": "squirrel-topbar.show_reviews",
+    "cmd-3": "squirrel-topbar.show_mine",
+    "cmd-t": { "command": "pane.split", "args": { "direction": "down", "argv": ["claude"] } },
+    "cmd-shift-d": { "command": "pane.split", "args": { "direction": "down", "argv": ["claude"] } },
+    "cmd-shift-t": "tab.new",
+    "cmd-r": "mod.open:squirrel-rename",
+    "cmd-w": "squirrel-topbar.close_pane"
+  }
+}
