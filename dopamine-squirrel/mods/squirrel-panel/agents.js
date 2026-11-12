@@ -87,7 +87,7 @@ export function usageStrip(t, accounts, usage = {}) {
 const USAGE_CELL = 240;
 export const usageHeight = (accounts, usage) => { const n = accountLines(accounts, usage).length; return n ? n * USAGE_H + 4 : 0; };
 export const USAGE_H = 24;
-const TAB_LABEL = 18;
+const TAB_LABEL = 18, PILL_W = 210, PILL_H = 24;
 
 // Background work Herdr doesn't report: Claude prints what's still running (shells, monitors,
 // background agents) in its footer, e.g. "· 1 shell, 1 monitor". Read the bottom of each agent's
@@ -196,22 +196,46 @@ export const agentsViews = {
       if (g) g.items.push(a); else groups.push({ tab: a.tab, name: a.tab_name, items: [a] });
     }
     const perRow = Math.max(1, Math.floor((this.width - GAP * 2 + GAP) / (CARD_W + GAP)));
+    const pillsPerRow = Math.max(1, Math.floor((this.width - GAP * 2 + GAP) / (PILL_W + GAP)));
     const labelled = groups.length > 1;
+    // A tab of nothing but helpers starts folded into one-line pills; its header unfolds it into cards.
+    this.openTabs ??= {};
+    const folded = (g) => labelled && g.items.every(isChild) && !this.openTabs[g.tab];
     this.cardsHeight = groups.reduce((h, g) => {
-      const rows = Math.ceil(g.items.length / perRow);
-      return h + (labelled ? TAB_LABEL : 0) + GAP * 2 + rows * CARD_H + (rows - 1) * GAP;
+      const rows = Math.ceil(g.items.length / (folded(g) ? pillsPerRow : perRow));
+      const rowH = folded(g) ? PILL_H : CARD_H;
+      return h + (labelled ? TAB_LABEL : 0) + GAP * 2 + rows * rowH + (rows - 1) * GAP;
     }, 0) || CARD_H + GAP * 2;
+    const pill = (a) => {
+      const bg = this.background?.[termOf(a)], color = { working: t.working, blocked: t.blocked, done: t.done, idle: t.dim }[a.status] ?? t.dim;
+      const { pct } = this.context.terminals?.[termOf(a)] ?? {};
+      return h_flex().id(`pill-${a.address}`).w(PILL_W).h(PILL_H).flex_none().px(8).gap(6).items_center().rounded(PILL_H / 2)
+        .bg(a.focused ? t.raised : t.surface).border(1).border_color(a.focused ? t.accent : a.status === "blocked" ? t.blocked : t.border)
+        .hover((s) => s.bg(t.hover)).cursor_pointer().text_size(11)
+        .on_click(() => { run("tab.select", { id: a.tab }); run("pane.focus", { pane: a.pane }); })
+        .tooltip(bg ? `background: ${bgText(bg)}` : WORD[a.status] ?? a.status)
+        .child(a.status === "working" ? svg("mods/workspace-chrome/spinner.svg").size(10).flex_none().text_color(color).spin(900)
+          : div().size(7).flex_none().rounded(4).bg(color))
+        .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(names[a.pane] || clean(a.title) || a.address))
+        .when(Boolean(bg), (el) => el.child(div().size(6).flex_none().rounded(3).bg(t.ansi4)))
+        .when(typeof pct === "number", (el) => el.child(div().flex_none().text_color(t.dim).child(`${Math.round(pct)}%`)));
+    };
     const cards = v_flex()
       .when(list.length === 0, (el) => el.child(div().p(GAP + 4).text_size(12).text_color(t.dim).child("No agents running")))
       .children(groups.map((g) => v_flex()
         .when(labelled, (el) => {
-          // A tab of helpers says whose they are.
+          // A tab of helpers says whose they are, and folds or unfolds on click.
           const owners = [...new Set(g.items.filter(isChild).map((c) => all.find((x) => termOf(x) === parentOf.get(termOf(c)))).filter(Boolean)
             .map((x) => names[x.pane] || clean(x.title)))];
-          const label = owners.length && g.items.every(isChild) ? `${g.name} tab · helpers of ${owners.join(", ")}` : `${g.name} tab`;
-          return el.child(div().h(TAB_LABEL).px(GAP + 2).flex().items_end().text_size(10.5).font_semibold().text_color(t.dim).child(label));
+          const helpersTab = g.items.every(isChild);
+          const label = owners.length && helpersTab ? `${g.name} tab · helpers of ${owners.join(", ")}` : `${g.name} tab`;
+          return el.child(h_flex().id(`tab-label-${g.tab}`).h(TAB_LABEL).px(GAP + 2).gap(4).items_end().text_size(10.5).font_semibold().text_color(t.dim)
+            .when(helpersTab, (el) => el.cursor_pointer().hover((s) => s.text_color(t.foreground))
+              .on_click((_e, cx) => { this.openTabs[g.tab] = !this.openTabs[g.tab]; cx.notify(); })
+              .child(svg(`mods/squirrel-panel/${folded(g) ? "chevron-right" : "chevron-down"}.svg`).size(10)))
+            .child(label));
         })
-        .child(h_flex().flex_wrap().gap(GAP).p(GAP).children(g.items.map(card)))));
+        .child(h_flex().flex_wrap().gap(GAP).p(GAP).children(g.items.map(folded(g) ? pill : card)))));
     return v_flex().child(usageStrip(t, this.context.accounts ?? {}, this.usage ?? {}) ?? div()).child(cards);
   },
 };
