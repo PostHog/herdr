@@ -48,6 +48,7 @@ Laid out for a vertical monitor; works on a wide one too. [README.md](README.md)
 ### My PRs (`mods/squirrel-panel/my-prs.js`)
 
 - Three tables on one column grid: **In review** (your open PRs in any repo), **Merge queue** (where each one stands in Trunk, from the Trunk bot's comment) and **Recently merged** (the last 7 days).
+- **Cloud tasks**: PRs opened by your PostHog cloud tasks (a bot authors them) join this table with a `cloud` tag that opens the task, and leave Reviews. `mods/squirrel-topbar/cloud.js` reads them from PostHog's tasks API with the key `posthog-cli login` saves; without it, nothing changes.
 - The REVIEWS column counts approvals, open threads and comments from others, so non-blocking notes on an approved PR don't get missed. Click an open PR's row to read them: open threads first, then the latest comments, each linking to GitHub.
 - **Add to queue** and **Remove** run `trunk merge` and `trunk merge cancel` from your PostHog checkout. Add runs at once and shows "Added ✓"; Remove asks for a second click within 4 s. Needs `trunk login` once.
 - The empty cells of merged rows are a visualizer: two live simulations (flow fields, a spectrum analyser, warp stars, orbs, rain, fireworks, Game of Life, random walkers, plasma) with random palettes, swapping every 9 to 17 s. `visualizer.js`.

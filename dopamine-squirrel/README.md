@@ -49,6 +49,7 @@ These assume Jake's setup. Change them in `~/.config/herdr-app/squirrel.json`, o
 - **CC review button:** Jake's `explaining-prs` skill from the PostHog MCP.
 - **Merge queue:** PostHog's Trunk queue and a `PostHog/posthog` checkout.
 - **Plan limits:** Jake's two Claude subscriptions.
+- **Cloud-task PRs in My PRs:** PostHog cloud tasks, read with your `posthog-cli login`.
 
 ---
 
@@ -60,6 +61,7 @@ Setting this up or taking a part of it? [RECIPE.md](RECIPE.md) has setup, every 
 | --- | --- |
 | Top bar | `mods/squirrel-topbar/main.js` |
 | GitHub fetching (every 5 min, all repos) | `mods/squirrel-topbar/github.js` |
+| PRs from PostHog cloud tasks | `mods/squirrel-topbar/cloud.js` |
 | Neon glow | `mods/squirrel-topbar/glow.js` |
 | Agent cards, context %, cost | `mods/squirrel-panel/agents.js`, `statusline.sh` |
 | Plan limits (`/usage` every 10 min) | `mods/squirrel-panel/usage.js` |
