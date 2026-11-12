@@ -4,6 +4,7 @@ import { readyToMerge } from "./github.js";
 import { gh } from "./github.js";
 import { mergePr } from "./actions.js";
 import { startReview, startFixSession, fixPrompt } from "./agents.js";
+import { setKept } from "./keeper.js";
 
 export const TRIGGERS = [
   { id: "pr_opened", label: "PR opened" },
@@ -30,6 +31,7 @@ export const ACTION_KINDS = [
   { id: "merge", label: "Merge or send to the merge queue" },
   { id: "agent_review", label: "Run an agent review (read-only)" },
   { id: "fix_session", label: "Open a Claude fix session" },
+  { id: "keep_healthy", label: "Keep the PR healthy" },
 ];
 
 const MAX_RUNS_PER_PR_PER_HOUR = 5;
@@ -104,6 +106,10 @@ async function runAction(action, pr) {
     case "fix_session":
       await startFixSession(pr, fixPrompt(pr));
       return { ok: true, message: "Fix session opened." };
+    case "keep_healthy":
+      if (!pr.mine) return { ok: false, message: "The keeper only looks after your own PRs." };
+      await setKept(pr, true);
+      return { ok: true, message: "Keeping it healthy." };
     default:
       return { ok: false, message: `Unknown action ${action.kind}` };
   }

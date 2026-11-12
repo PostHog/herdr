@@ -5,7 +5,7 @@ Each top-level folder with a `RECIPE.md` is one piece. You pick the pieces you w
 
 | Piece | What it is |
 | --- | --- |
-| [`pull-requests`](pull-requests/README.md) | A PR panel for Herdr's sidebar: your PRs, the Trunk merge queue and your reviews. The `Pull-Requests` layout adds a full-page PR workspace (`cmd-shift-g`) with review ranking, workflows, and agent fixes and reviews on this computer or a Herdr machine. It uses `flat-spaces`, a spaces list that doesn't fold worktree spaces under their repo. |
+| [`pull-requests`](pull-requests/README.md) | A PR panel for Herdr's sidebar: your PRs, the Trunk merge queue and your reviews. The `Pull-Requests` layout adds a full-page PR workspace (`cmd-shift-g`) with review ranking, workflows, Keep healthy (an agent that keeps your chosen PRs mergeable), and agent fixes and reviews on this computer or a Herdr machine. It uses `flat-spaces`, a spaces list that doesn't fold worktree spaces under their repo. |
 | [`claude-usage`](claude-usage/RECIPE.md) | Herdr's main layout plus a strip with your live Claude plan limits, and token counts per session. |
 
 ## Install

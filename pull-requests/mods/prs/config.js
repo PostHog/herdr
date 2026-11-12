@@ -7,7 +7,8 @@ export const DEFAULT_CONFIG = {
   runner: { machine: null },
   checkouts: {},
   trunk: { repo: "PostHog/posthog", machine: null },
-  models: { review: "claude-sonnet-5-5", judge: "claude-opus-5-5" },
+  models: { review: "claude-sonnet-5-5", judge: "claude-opus-5-5", keeper: "claude-opus-5-5" },
+  keep: { mode: "dry-run", select: "manual", label: "keep-healthy", land: false, quietMinutes: 10, maxConcurrent: 1, dailyRuns: 6 },
   notifications: true,
   status: { services: DEFAULT_SERVICES },
 };

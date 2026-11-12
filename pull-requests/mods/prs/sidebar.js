@@ -7,6 +7,7 @@ import { CLAUDE_ICON } from "./claude.js";
 import { ago, tone, actionButton, badge, gateStrip, titleText, TEXT } from "./ui.js";
 import { readiness } from "./sheet.js";
 import { mergesThroughQueue } from "./actions.js";
+import { keepStatus } from "./keeper.js";
 
 const ICON = (name) => `mods/prs/icons/${name}.svg`;
 
@@ -132,6 +133,7 @@ export function statusLine(view, t, pr, { scope = "mine", group = null, buttons 
   const { next, entry } = scope === "mine" ? nextFor(view, pr, group) : { next: null, entry: null };
   const ci = pr.checks.failed ? stat(t, "fail", `${pr.checks.passed}/${pr.checks.total}`, "bad") : null;
   const priority = scope !== "mine" ? priorityBadge(t, pr) : null;
+  const keeper = scope === "mine" ? keepStatus(pr) : null;
   return h_flex()
     .gap(7)
     .items_center()
@@ -144,6 +146,7 @@ export function statusLine(view, t, pr, { scope = "mine", group = null, buttons 
     .when(pr.approvals > 0, (el) => el.child(stat(t, "approved", String(pr.approvals), "ok")))
     .when(pr.threads.total > 0, (el) => el.child(stat(t, "comment", String(pr.threads.total), "warn")))
     .when(Boolean(pr.watching && !pr.mine), (el) => el.child(stat(t, "eye", "watching", "info")))
+    .when(Boolean(keeper), (el) => el.child(div().id(`prs-keep-${pr.repo}-${pr.number}`).tooltip(keeper.label).child(stat(t, "bot", keeper.label.replace(/^Keeper: /, ""), keeper.tone))))
     .when(buttons, (el) => el.child(div().flex_1()).children(rowButtons(view, t, pr, { scope, next, entry, group, plain: true })));
 }
 

@@ -13,6 +13,7 @@ import { fetchServices, isIncident, queueService, statusOverview } from "./statu
 import { sidebarHeader, sidebarMine, sidebarReviews, sidebarRail, statusLine, prIcon, progressLine, stackHeader, gatesFor, splitByNeed, isQuiet, rowButtons, nextFor, needsYou, workRank } from "./sidebar.js";
 import { visualAsks, stackGroups, withoutDraftStacks, step, queueFor, withTrunkQueue } from "./steps.js";
 import { openClaude, CLAUDE_ICON } from "./claude.js";
+import { reconcile, toggleKept, isKept, keepMode, KEEP_MODES, KEEP_SELECTS } from "./keeper.js";
 import { ago, button, iconButton, glyphButton, textIconButton, chip, badge, section, empty, field, menuItem, SPINNER, tone, TEXT, tint, avatar, countPill, codePill, gateStrip, titleText, readable } from "./ui.js";
 import { readiness, groupChecks, rowMatches, tallyChecks, tallyText, tallyLabel, worstBucket, mergeStateNote, changeShape, parseMarkdown } from "./sheet.js";
 
@@ -180,6 +181,10 @@ export const NAMED = {
     await toggleWatch(pr);
     return { ok: true, quiet: true };
   }),
+  keep: (pr) => act(pr, "keep", isKept(pr) ? `Stopped keeping #${pr.number} healthy` : `Keeping #${pr.number} healthy`, async () => {
+    await toggleKept(pr);
+    return keepMode() === "off" ? { ok: true, message: "The keeper is off in Settings, so nothing happens until you turn it on." } : { ok: true, quiet: true };
+  }),
   hide: (pr) => act(pr, "hide", "Hide", async () => {
     await toggleHidden(pr);
     return { ok: true, quiet: true };
@@ -225,6 +230,7 @@ function menuEntries(pr, scope) {
     ...(pr.mine && isTrunkPr(pr) ? [["dequeue", "Remove from merge queue…"]] : []),
     ["updateBranch", "Update branch"],
     ["rerunFailed", "Rerun failed checks"],
+    ...(pr.mine ? [["keep", isKept(pr) ? "Stop keeping healthy" : "Keep healthy"]] : []),
     ["watch", pr.watching ? "Stop watching" : "Watch"],
   ];
 }
@@ -397,6 +403,9 @@ export default class Prs extends View {
         setShared("prs.cache.mine", this.mine);
         this.loadTrunkData(cx);
         await processSnapshot({ viewer: this.mine.viewer, prs: this.mine.prs, reviews: this.reviews });
+        try {
+          await reconcile({ prs: this.mine.prs, trunk: this.trunk });
+        } catch {}
       } catch (error) {
         this.mineFailures++;
         if (!this.mine || this.mineFailures >= FAILURES_BEFORE_ERROR) this.mineError = String(error?.message ?? error);
@@ -1307,6 +1316,8 @@ export default class Prs extends View {
       trunkRepo: InputState.new({ placeholder: "owner/repo, empty turns Trunk off", value: c.trunk?.repo ?? "" }),
       review: InputState.new({ placeholder: "Model for the lenses", value: c.models?.review ?? "" }),
       judge: InputState.new({ placeholder: "Model for the judge", value: c.models?.judge ?? "" }),
+      keeper: InputState.new({ placeholder: "Model for keeper fix runs", value: c.models?.keeper ?? "" }),
+      keepLabel: InputState.new({ placeholder: "Label that opts a PR in", value: c.keep?.label ?? "" }),
       checkouts: {},
       draft: JSON.parse(JSON.stringify(c)),
       detected: {},
@@ -1330,7 +1341,8 @@ export default class Prs extends View {
     const form = this.settingsForm;
     const draft = form.draft;
     draft.trunk = { ...draft.trunk, repo: form.trunkRepo.value().trim() || null };
-    draft.models = { review: form.review.value().trim() || "claude-sonnet-5-5", judge: form.judge.value().trim() || "claude-opus-5-5" };
+    draft.models = { review: form.review.value().trim() || "claude-sonnet-5-5", judge: form.judge.value().trim() || "claude-opus-5-5", keeper: form.keeper.value().trim() || "claude-opus-5-5" };
+    draft.keep = { ...draft.keep, label: form.keepLabel.value().trim() || "keep-healthy" };
     draft.checkouts = {};
     for (const repo of draft.repos) {
       const value = form.checkouts[repo]?.value().trim();
@@ -1400,8 +1412,27 @@ export default class Prs extends View {
         ))),
       card("Trunk merge queue", "The repo whose merge queue is Trunk's, and the machine whose Trunk CLI is logged in (`trunk login`). It needs a checkout of that repo there.",
         v_flex().gap(8).child(this.input(t, form.trunkRepo)).child(this.machinePicker(t, "prs-set-trunk", draft.trunk?.machine, (name) => (draft.trunk = { ...draft.trunk, machine: name }))).when(Boolean(this.trunk?.error), (el) => el.child(div().text_size(11.5).text_color(tone(t, "warn")).child(`Last check: ${this.trunk.error}`)))),
-      card("Agent models", "Agent reviews run four lenses on the first model, then a judge on the second.",
-        v_flex().gap(6).child(this.input(t, form.review)).child(this.input(t, form.judge))),
+      card("Agent models", "Agent reviews run four lenses on the first model, then a judge on the second. Keeper fix runs use the third.",
+        v_flex().gap(6).child(this.input(t, form.review)).child(this.input(t, form.judge)).child(this.input(t, form.keeper))),
+      card("Keep healthy", "Watches the PRs you pick, on every refresh while Herdr is open. It updates branches that are only behind, reruns failed checks once per commit, and sends a headless Claude run for conflicts, failures, requested changes and bot threads. It stands down while Trunk has the PR or your own Claude tab is open on it, and pauses when a run leaves the same blockers. Dry run logs what it would do on the Workflows page.",
+        v_flex()
+          .gap(8)
+          .child(h_flex().gap(4).flex_wrap().children(KEEP_MODES.map((mode) => chip(t, `prs-set-keep-${mode.id}`, mode.label, (draft.keep?.mode ?? "dry-run") === mode.id, (_e, cx) => {
+            draft.keep = { ...draft.keep, mode: mode.id };
+            cx.notify();
+          }))))
+          .child(h_flex().gap(4).flex_wrap().children(KEEP_SELECTS.map((select) => chip(t, `prs-set-keepsel-${select.id}`, select.label, (draft.keep?.select ?? "manual") === select.id, (_e, cx) => {
+            draft.keep = { ...draft.keep, select: select.id };
+            cx.notify();
+          }))))
+          .when((draft.keep?.select ?? "manual") === "label", (el) => el.child(this.input(t, form.keepLabel)))
+          .child(h_flex().gap(4).flex_wrap().child(chip(t, "prs-set-keepland-off", "Stop at ready", !draft.keep?.land, (_e, cx) => {
+            draft.keep = { ...draft.keep, land: false };
+            cx.notify();
+          })).child(chip(t, "prs-set-keepland-on", "Merge or queue when ready", Boolean(draft.keep?.land), (_e, cx) => {
+            draft.keep = { ...draft.keep, land: true };
+            cx.notify();
+          })))),
       card("Notifications", "Approved, changes requested, checks failing, visual changes to approve, merged, queue failed, and new direct review requests.",
         h_flex().gap(4).child(chip(t, "prs-set-notify-on", "On", draft.notifications !== false, (_e, cx) => {
           draft.notifications = true;
@@ -1441,6 +1472,7 @@ export default class Prs extends View {
           .child(div().text_size(13).font_semibold().child("No workflows yet"))
           .child(div().text_size(12).text_color(t.muted).child(about))
           .child(button(t, "prs-wf-first", "New workflow", () => this.newWorkflow(), { small: true, primary: true })),
+        ...this.keeperRows(t),
       ];
     }
     const rows = [div().px(8).pt(8).pb(4).text_size(11.5).text_color(t.dim).child(about)];
@@ -1469,12 +1501,23 @@ export default class Prs extends View {
           .child(div().truncate().text_size(11).text_color(t.dim).child(`When ${workflow.triggers.map((id) => TRIGGERS.find((trigger) => trigger.id === id)?.label ?? id).join(" or ")} → ${workflow.actions.map((action) => ACTION_KINDS.find((kind) => kind.id === action.kind)?.label ?? action.kind).join(", ")}`)),
       );
     }
+    rows.push(...this.keeperRows(t));
     const log = (store().workflowLog ?? []).slice(0, 15);
     if (log.length) {
       rows.push(section(t, "Recent runs"));
       for (const [index, entry] of log.entries()) {
         rows.push(div().id(`prs-wflog-${index}`).px(8).py(3).truncate().text_size(11).text_color(t.dim).child(`${ago(entry.at)} · ${entry.name} · ${entry.pr} · ${entry.event} · ${entry.results.join("; ") || "no actions"}`));
       }
+    }
+    return rows;
+  }
+
+  keeperRows(t) {
+    const mode = keepMode();
+    const kept = (this.mine?.prs ?? []).filter((pr) => isKept(pr));
+    const rows = [section(t, "Keep healthy"), div().px(8).pb(4).text_size(11.5).text_color(t.dim).child(`${KEEP_MODES.find((item) => item.id === mode)?.label ?? mode} · ${kept.length} PR${kept.length === 1 ? "" : "s"} kept. Change it in Settings.`)];
+    for (const [index, entry] of (store().keepLog ?? []).slice(0, 20).entries()) {
+      rows.push(div().id(`prs-keeplog-${index}`).px(8).py(3).truncate().text_size(11).text_color(t.dim).tooltip(entry.detail ?? entry.label).child(`${ago(entry.at)} · ${entry.pr} · ${entry.label}${entry.detail ? ` · ${entry.detail}` : ""}`));
     }
     return rows;
   }
@@ -1693,6 +1736,7 @@ export default class Prs extends View {
       .bg(t.surface)
       .children(ordered.map(([id, label, onClick]) => button(t, `prs-sheet-${id}`, label, onClick, { primary: id === primary })))
       .child(div().flex_1())
+      .when(Boolean(pr.mine), (el) => el.child(button(t, "prs-sheet-keep", isKept(pr) ? "Keeping healthy" : "Keep healthy", () => NAMED.keep(pr), { ghost: true, icon: "bot" })))
       .child(button(t, "prs-sheet-watch", pr.watching ? "Unwatch" : "Watch", () => NAMED.watch(pr), { ghost: true, icon: "eye" }))
       .child(button(t, "prs-sheet-copy", "Copy link", () => NAMED.copyLink(pr), { ghost: true, icon: "copy" }));
   }
