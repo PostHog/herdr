@@ -9,7 +9,7 @@ import { processSnapshot, TRIGGERS, ACTION_KINDS } from "./automation.js";
 import { loadConfig, config, updateConfig, configPath, machineLabel } from "./config.js";
 import { forgetCheckouts, checkoutFor } from "./runner.js";
 import { loadTrunk, dequeue, resetTrunk } from "./trunk.js";
-import { fetchServices, queueService, statusOverview } from "./status.js";
+import { fetchServices, isIncident, queueService, statusOverview } from "./status.js";
 import { sidebarHeader, sidebarMine, sidebarReviews, sidebarRail, statusLine, prIcon, progressLine, stackHeader, gatesFor, splitByNeed, isQuiet, rowButtons, nextFor, needsYou, workRank } from "./sidebar.js";
 import { visualAsks, stackGroups, withoutDraftStacks, step, queueFor, withTrunkQueue } from "./steps.js";
 import { openClaude, CLAUDE_ICON } from "./claude.js";
@@ -30,6 +30,8 @@ const QUICK_ACTIONS_WIDTH = SUGGESTED_WIDTH + 144;
 const CONTENT_MAX_WIDTH = 1280;
 const GATE_WIDTH = 72;
 const NAV_WIDTH = 230;
+const STATUS_TILE_MIN = 220;
+const STATUS_TILE_GAP = 10;
 const statusWidth = (gate) => gate * 5 + 12;
 const GATE_HEADERS = ["CHECKS", "REVIEW", "THREADS", "CONFLICTS", "QUEUE"];
 const ICON = (name) => `mods/prs/icons/${name}.svg`;
@@ -1105,55 +1107,142 @@ export default class Prs extends View {
     const services = this.allServices();
     if (!this.serviceStatus) return [empty(t, "Reading the status pages…")];
     const overview = statusOverview(services);
-    const levelColor = (level) => (level === "unknown" ? t.dim : tone(t, level));
-    const tile = (service, index) => {
-      const troubled = service.level === "warn" || service.level === "bad";
-      return v_flex()
-        .id(`prs-status-${index}`)
-        .w(264)
-        .flex_none()
-        .p(12)
-        .gap(6)
-        .rounded(10)
-        .border_1()
-        .border_color(troubled ? levelColor(service.level) : t.border)
-        .bg(t.surface)
-        .when(Boolean(service.url), (el) => el.cursor_pointer().hover((s) => s.bg(t.hover)).on_click(() => openUrl(service.url)))
-        .child(
-          h_flex()
-            .gap(8)
-            .items_center()
-            .child(div().w(8).h(8).rounded(4).flex_none().bg(levelColor(service.level)))
-            .child(div().flex_1().min_w(0).truncate().text_size(13).font_semibold().child(service.name))
-            .when(Boolean(service.url), (el) => el.child(svg("mods/prs/icons/external.svg").size(12).flex_none().text_color(t.dim))),
-        )
-        .child(div().text_size(12).text_color(troubled ? levelColor(service.level) : t.muted).child(service.description))
-        .children(service.incidents.slice(0, 2).map((incident, at) =>
-          div()
-            .id(`prs-status-${index}-i${at}`)
-            .text_size(11.5)
-            .text_color(t.foreground)
-            .cursor_pointer()
-            .hover((s) => s.text_color(t.muted))
-            .on_click((_e, cx) => {
-              cx.stop_propagation();
-              openUrl(incident.url);
-            })
-            .child(`${incident.name}${incident.since ? ` · ${ago(incident.since)}` : ""}`),
-        ));
-    };
+    const troubled = overview.sorted.filter(isIncident);
+    const calm = overview.sorted.filter((service) => !isIncident(service));
+    const header = h_flex()
+      .px(8)
+      .pt(14)
+      .pb(12)
+      .gap(8)
+      .items_center()
+      .when(troubled.length > 0, (el) => el.child(svg("mods/prs/icons/alert.svg").size(15).flex_none().text_color(tone(t, overview.level))))
+      .child(div().flex_1().text_size(14).font_semibold().text_color(troubled.length ? tone(t, overview.level) : t.foreground).child(overview.title))
+      .child(div().flex_none().text_size(11.5).text_color(t.dim).child(`Checked ${ago(new Date(this.serviceStatus.at).toISOString())}`));
     return [
-      h_flex()
-        .px(8)
-        .pt(14)
-        .pb(12)
-        .gap(8)
-        .items_center()
-        .when(overview.troubled.length > 0, (el) => el.child(svg("mods/prs/icons/alert.svg").size(15).flex_none().text_color(tone(t, overview.level))))
-        .child(div().flex_1().text_size(14).font_semibold().text_color(overview.troubled.length ? tone(t, overview.level) : t.foreground).child(overview.title))
-        .child(div().flex_none().text_size(11.5).text_color(t.dim).child(`Checked ${ago(new Date(this.serviceStatus.at).toISOString())}`)),
-      h_flex().px(8).gap(10).flex_wrap().items_start().children(overview.sorted.map(tile)),
+      header,
+      ...troubled.map((service, index) => this.incidentCard(t, service, index)),
+      ...this.statusGrid(t, calm),
     ];
+  }
+
+  incidentCard(t, service, index) {
+    const color = tone(t, service.level);
+    const incidents = service.incidents.slice(0, 3);
+    const affected = (incident) => (incident.affected.length ? incident.affected : service.components.map((component) => component.name)).slice(0, 6);
+    const sentence = (text) => text.charAt(0).toUpperCase() + text.slice(1);
+    const when = (incident) => [
+      incident.since ? `Started ${ago(incident.since)}` : null,
+      incident.updated && incident.updated !== incident.since ? `updated ${ago(incident.updated)}` : null,
+    ].filter(Boolean).join(" · ");
+    return v_flex()
+      .id(`prs-status-incident-${index}`)
+      .mx(8)
+      .mb(12)
+      .rounded(12)
+      .border_1()
+      .border_color(color)
+      .bg(t.surface)
+      .overflow_hidden()
+      .child(
+        h_flex()
+          .px(18)
+          .pt(16)
+          .pb(14)
+          .gap(12)
+          .items_center()
+          .child(h_flex().relative().size(32).flex_none().items_center().justify_center().rounded(8).child(tint(color, 8)).child(svg("mods/prs/icons/alert.svg").size(16).text_color(color)))
+          .child(v_flex().flex_1().min_w(0).gap(2)
+            .child(div().truncate().text_size(14).font_semibold().child(service.name))
+            .child(div().truncate().text_size(12).text_color(color).child(service.description)))
+          .when(Boolean(service.url), (el) => el.child(
+            h_flex()
+              .id(`prs-status-incident-${index}-page`)
+              .flex_none()
+              .h(26)
+              .px(9)
+              .gap(6)
+              .items_center()
+              .rounded(6)
+              .text_size(11.5)
+              .text_color(t.muted)
+              .cursor_pointer()
+              .hover((s) => s.bg(t.hover).text_color(t.foreground))
+              .on_click(() => openUrl(service.url))
+              .child("Status page")
+              .child(svg("mods/prs/icons/external.svg").size(12).text_color(t.dim)),
+          )),
+      )
+      .when(!incidents.length && service.components.length > 0, (el) => el.child(
+        h_flex().px(18).pb(16).pl(62).gap(6).flex_wrap().children(service.components.map((component) => codePill(t, component.name))),
+      ))
+      .children(incidents.map((incident, at) =>
+        v_flex()
+          .id(`prs-status-incident-${index}-${at}`)
+          .pl(62)
+          .pr(18)
+          .py(14)
+          .gap(8)
+          .border_t_1()
+          .border_color(t.border)
+          .cursor_pointer()
+          .hover((s) => s.bg(t.hover))
+          .on_click(() => openUrl(incident.url))
+          .child(
+            h_flex()
+              .gap(8)
+              .items_center()
+              .child(div().min_w(0).truncate().text_size(13).font_semibold().child(incident.name))
+              .when(Boolean(incident.impact) && incident.impact !== "none", (el) => el.child(countPill(t, sentence(incident.impact), color)))
+              .when(Boolean(incident.status), (el) => el.child(countPill(t, sentence(incident.status))))
+              .child(div().flex_1())
+              .when(Boolean(when(incident)), (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(when(incident)))),
+          )
+          .when(Boolean(incident.latest), (el) => el.child(div().max_w(760).text_size(12.5).text_color(t.muted).child(incident.latest)))
+          .when(affected(incident).length > 0, (el) => el.child(h_flex().gap(6).flex_wrap().children(affected(incident).map((name) => codePill(t, name))))),
+      ))
+      .when(service.incidents.length > incidents.length, (el) => el.child(div().pl(62).pr(18).py(10).border_t_1().border_color(t.border).text_size(11).text_color(t.dim).child(`${service.incidents.length - incidents.length} more on the status page`)));
+  }
+
+  statusGrid(t, services) {
+    if (!services.length) return [];
+    const width = Math.min(CONTENT_MAX_WIDTH, (this.width || CONTENT_MAX_WIDTH + NAV_WIDTH) - NAV_WIDTH) - 40;
+    const perRow = Math.max(1, Math.floor((width + STATUS_TILE_GAP) / (STATUS_TILE_MIN + STATUS_TILE_GAP)));
+    const levelColor = (level) => (level === "unknown" ? t.dim : tone(t, level));
+    const tile = (service, index) => v_flex()
+      .id(`prs-status-${index}`)
+      .flex_1()
+      .min_w(0)
+      .h(64)
+      .px(12)
+      .justify_center()
+      .gap(4)
+      .rounded(10)
+      .border_1()
+      .border_color(t.border)
+      .bg(t.surface)
+      .when(Boolean(service.url), (el) => el.cursor_pointer().hover((s) => s.bg(t.hover)).on_click(() => openUrl(service.url)))
+      .child(
+        h_flex()
+          .gap(8)
+          .items_center()
+          .child(div().w(8).h(8).rounded(4).flex_none().bg(levelColor(service.level)))
+          .child(div().flex_1().min_w(0).truncate().text_size(13).font_semibold().child(service.name))
+          .when(Boolean(service.url), (el) => el.child(svg("mods/prs/icons/external.svg").size(12).flex_none().text_color(t.dim))),
+      )
+      .child(div().truncate().text_size(12).text_color(service.level === "info" ? levelColor(service.level) : t.muted).child(service.maintenance[0]?.name ?? service.description));
+    const rows = [];
+    for (let start = 0; start < services.length; start += perRow) {
+      const slice = services.slice(start, start + perRow);
+      rows.push(h_flex()
+        .px(8)
+        .mb(STATUS_TILE_GAP)
+        .gap(STATUS_TILE_GAP)
+        .children([
+          ...slice.map((service, at) => tile(service, start + at)),
+          ...Array.from({ length: perRow - slice.length }, () => div().flex_1().min_w(0)),
+        ]));
+    }
+    return rows;
   }
 
   findPr(repo, number, title) {

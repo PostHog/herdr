@@ -14,17 +14,32 @@ const LEVEL_RANK = { bad: 0, warn: 1, info: 2, unknown: 3, ok: 4 };
 const SEVERE_IMPACT = /major|critical|outage/i;
 
 const words = (value) => String(value ?? "").replace(/_/g, " ").toLowerCase();
+const UPDATE_LIMIT = 480;
+
+const updateTime = (update) => Date.parse(update.display_at ?? update.created_at ?? "") || 0;
+const latestUpdate = (updates) => [...(updates ?? [])].sort((a, b) => updateTime(b) - updateTime(a))[0] ?? null;
+
+function summarize(text) {
+  const flat = String(text ?? "").replace(/\s+/g, " ").trim();
+  return flat.length > UPDATE_LIMIT ? `${flat.slice(0, UPDATE_LIMIT - 1).trimEnd()}…` : flat;
+}
 
 export function parseSummary(service, body) {
   const indicator = body?.status?.indicator;
   const pageStatus = body?.page?.status;
-  const incidents = (body?.incidents ?? body?.activeIncidents ?? []).map((incident) => ({
-    name: incident.name ?? "Incident",
-    status: words(incident.status),
-    impact: words(incident.impact),
-    url: incident.shortlink ?? incident.url ?? service.url,
-    since: incident.created_at ?? incident.started ?? null,
-  }));
+  const incidents = (body?.incidents ?? body?.activeIncidents ?? []).map((incident) => {
+    const latest = latestUpdate(incident.incident_updates);
+    return {
+      name: incident.name ?? "Incident",
+      status: words(incident.status),
+      impact: words(incident.impact),
+      url: incident.shortlink ?? incident.url ?? service.url,
+      since: incident.created_at ?? incident.started ?? null,
+      updated: latest?.display_at ?? latest?.created_at ?? incident.updated_at ?? null,
+      latest: summarize(latest?.body),
+      affected: (incident.components ?? []).map((component) => component.name).filter(Boolean),
+    };
+  });
   const components = (body?.components ?? [])
     .filter((component) => component.status && component.status !== "operational" && !component.group)
     .map((component) => ({ name: component.name, status: words(component.status) }));
