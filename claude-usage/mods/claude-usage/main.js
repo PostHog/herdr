@@ -73,6 +73,7 @@ export default class ClaudeUsage extends View {
     this.original = "";
     this.data = null;
     this.rows = null;
+    this.rowsError = null;
     this.totals = new Totals();
     this.transcripts = new Map();
     this.busy = {};
@@ -186,7 +187,9 @@ export default class ClaudeUsage extends View {
     cx.spawn(async (cx) => {
       try {
         const dir = configDir(this.auth);
+        const prev = new Map((this.rows ?? []).map((r) => [r.address, r]));
         const rows = [];
+        let failed = 0;
         for (const a of agents().filter((a) => a.app === "claude-code" && !a.address.includes("/"))) {
           try {
             const sid = await sessionOf(a.address, dir);
@@ -200,10 +203,13 @@ export default class ClaudeUsage extends View {
             const t = await this.totals.of(transcript);
             rows.push({ address: a.address, name: a.tab_name, space: a.space_name, status: a.status, ...t, model: modelName(t.model, this.data?.sessions.get(sid)?.model) });
           } catch {
-            continue;
+            failed++;
+            const old = prev.get(a.address);
+            if (old) rows.push({ ...old, name: a.tab_name, space: a.space_name, status: a.status });
           }
         }
         this.rows = rows;
+        this.rowsError = failed ? `Couldn't read ${failed === 1 ? "1 session" : `${failed} sessions`}. Trying again.` : null;
       } finally {
         this.busy.sessions = false;
         cx.notify();
@@ -468,7 +474,8 @@ export default class ClaudeUsage extends View {
     return [
       v_flex().gap(10).child(this.heading(t, "Plan limits")).child(limitsBox),
       v_flex().gap(4).child(this.heading(t, "Sessions on this computer")).child(v_flex().pt(6).child(head).children(rows))
-        .when(!rows.length, (el) => el.child(div().py(8).text_size(12).text_color(t.muted).child(empty)))
+        .when(!rows.length && !this.rowsError, (el) => el.child(div().py(8).text_size(12).text_color(t.muted).child(empty)))
+        .when(Boolean(this.rowsError), (el) => el.child(div().py(8).text_size(12).text_color(t.blocked).child(this.rowsError)))
         .child(div().pt(6).text_size(12).text_color(t.muted).child("Token counts come from each session's own transcript, subagents included. A click on a row opens its tab.")),
       v_flex().gap(10).child(this.heading(t, "Alerts"))
         .child(h_flex().gap(20).items_center().flex_wrap()

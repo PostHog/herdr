@@ -208,7 +208,14 @@ const READ = [
   'tail -c +"$2" "$1" | head -c "$3"',
 ].join("\n");
 
-const fresh = () => ({ offset: 0, skip: false, seen: new Set(), output: 0, input: 0, cacheRead: 0, model: null });
+const LINE_END = [
+  'n="$(tail -c +"$2" "$1" | head -n 1 | wc -c | tr -d " ")" || exit 3',
+  '[ -n "$n" ] && [ "$n" -gt 0 ] || exit 3',
+  '[ "$(tail -c +"$(($2 + n - 1))" "$1" | head -c 1 | wc -l | tr -d " ")" = 1 ] || exit 4',
+  'printf "%s\\n" "$n"',
+].join("\n");
+
+const fresh = () => ({ offset: 0, seen: new Set(), output: 0, input: 0, cacheRead: 0, model: null });
 
 export class Totals {
   constructor() {
@@ -268,23 +275,24 @@ export class Totals {
       if (!body) break;
       const end = body.lastIndexOf("\n");
       if (end < 0) {
-        if (size - s.offset > CHUNK) {
-          s.offset += CHUNK;
-          s.skip = true;
-          continue;
-        }
-        break;
+        if (size - s.offset <= CHUNK) break;
+        const n = await this.lineLength(file, s.offset);
+        if (!n) break;
+        s.offset += n;
+        continue;
       }
-      let text = body.slice(0, end + 1);
+      const text = body.slice(0, end + 1);
       s.offset += utf8Len(text);
-      if (s.skip) {
-        text = text.slice(text.indexOf("\n") + 1);
-        s.skip = false;
-      }
       for (const line of text.split("\n")) this.take(s, line);
       if (s.offset >= size) break;
     }
     return s;
+  }
+
+  async lineLength(file, offset) {
+    const r = await exec("/bin/sh", ["-c", LINE_END, "sh", file, String(offset + 1)]).catch(() => null);
+    const n = r?.code === 0 ? Number(r.stdout.trim()) : 0;
+    return Number.isInteger(n) && n > 0 ? n : 0;
   }
 
   take(s, line) {
