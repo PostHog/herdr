@@ -97,14 +97,14 @@ export default class SquirrelTopbar extends View {
     const prompt = [
       "Fact-check mode. My next message will be a Slack link or a screenshot of something I wrote or am about to say.",
       "Check it before I send it: verify each claim against the code, docs, PRs or data you can reach (read Slack links with the Slack tools).",
-      "Tell me plainly if I'm wrong, overstating, missing context, or would look uninformed, and suggest corrected wording.",
+      "Tell me plainly if I'm wrong, overstating, missing context, or about to look like a retard, and suggest corrected wording.",
       "Verdict first, then the fixes. Be clear, concise and direct.",
       "Give any suggested wording as plain text ready to paste into Slack: no blockquote, no markdown, no gutter characters.",
       "For now, reply only: Paste it.",
     ].join(" ");
     const checkout = squirrelSettings().posthogCheckout.replace(/^~/, home());
     run("pane.split", { direction: "down", argv: ["/bin/sh", "-c", 'cd "$1" 2>/dev/null || cd; exec claude --model opus --effort high -n "Fact check" "$2"', "sh", checkout,
-      squirrelSettings().factCheckPrompt ?? prompt] });
+      prompt] });
   }
 
   standup(cx) {

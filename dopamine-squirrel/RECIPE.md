@@ -94,7 +94,6 @@ Laid out for a vertical monitor; works on a wide one too. [README.md](README.md)
 
 - `reviewSkill`, `standupSkill`: project skills the CC and standup buttons ask Claude to load from the PostHog MCP.
 - `standupCommand`: how the standup pane starts Claude. Defaults to `["claude"]`; the example uses a second Claude subscription.
-- `factCheckPrompt`: your own wording for the fact-check button's prompt.
 - `posthogCheckout`: where `trunk` runs. Uses that checkout's flox `trunk` when there is one, else `trunk` on your PATH.
 - `claudeProfiles`: the Claude subscriptions the plan limits strip reads, by config folder. Defaults to `~/.claude`, named "claude". The first `/usage` read in a profile trusts the empty folder `~/.config/herdr-app/data/squirrel/usage` for it.
 
