@@ -64,7 +64,12 @@ export const myPrViews = {
       return p.repo === "PostHog/posthog" && !p.draft && q?.state !== "merged" ? "add" : null;
     };
 
-    const commentsText = (p) => p.commentCount ? `${p.commentCount} comment${p.commentCount === 1 ? "" : "s"}` : "";
+    const reviewBits = (p) => [
+      p.approvals ? [`✓${p.approvals}`, c.green, `${p.approvals} approved`] : null,
+      p.openThreads ? [`${p.openThreads} open`, c.yellow, `${p.openThreads} open threads`] : null,
+      p.commentCount ? [`💬${p.commentCount}`, t.accent, `${p.commentCount} comments from others`] : null,
+      p.newActivity ? [`${p.newActivity} new`, t.accent, `${p.newActivity} new since you last looked`] : null,
+    ].filter(Boolean);
     // All three tables share one column grid; text columns are sized to their longest value.
     const repoName = (p) => p.repo.replace(/^PostHog\//, "");
     const sizeText = (p) => `+${p.additions} −${p.deletions}`;
@@ -72,10 +77,8 @@ export const myPrViews = {
     const fit = (texts, label, perChar = 6.6) => Math.ceil(Math.max(label.length * 6.2, ...texts.map((x) => x.length * perChar))) + 6;
     const W = {
       repo: fit(rowsAll.map(repoName), "REPO"), status: 116, ci: 70, pr: fit(rowsAll.map((p) => `#${p.number}`), "PR", 7.2),
-      note: Math.min(220, Math.max(0, ...[
-        ...list.map((p) => (p.approvals ? `${p.approvals} approved  ` : "") + (p.openThreads ? `${p.openThreads} open threads  ` : "") + commentsText(p)),
-        ...inQueue.map((p) => this.queueError[p.url] ?? trunkOf(p)?.text ?? ""),
-      ].map((x) => x.trim() ? x.length * 6.4 + 6 : 0), 76)), act: 52, age: 36, when: 52, size: fit(rowsAll.map(sizeText), "SIZE", 6.4), cc: 28,
+      // Sized to the longest review summary; Trunk's longer message truncates at that width (full text on hover).
+      note: Math.min(170, Math.max(64, ...list.map((p) => reviewBits(p).reduce((w, [text]) => w + text.length * 6.6 + 8, 0)))), age: 36, when: 52, size: fit(rowsAll.map(sizeText), "SIZE", 6.4), cc: 28,
       merge: [...list, ...inQueue].some(queueAction) ? 96 : 0,
     };
 
@@ -96,10 +99,8 @@ export const myPrViews = {
           : confirming ? "Click to confirm" : action === "add" ? "Add to queue" : "Remove");
     };
     const note = (p, kind) => {
-      if (kind === "review") return h_flex().w(W.note).flex_none().gap(8).text_size(11).min_w(0)
-        .when(p.approvals > 0, (el) => el.child(div().flex_none().text_color(c.green).child(`${p.approvals} approved`)))
-        .when(p.openThreads > 0, (el) => el.child(div().flex_none().text_color(c.yellow).child(`${p.openThreads} open threads`)))
-        .when(p.commentCount > 0, (el) => el.child(div().flex_none().text_color(t.accent).child(commentsText(p))));
+      if (kind === "review") return h_flex().w(W.note).flex_none().gap(6).text_size(11).min_w(0).overflow_hidden()
+        .children(reviewBits(p).map(([text, color, tip], i) => div().id(`bit-${p.url}-${i}`).flex_none().text_color(color).tooltip(tip).child(text)));
       if (kind === "queue") {
         const q = trunkOf(p), error = this.queueError[p.url];
         return div().id(`trunk-note-${p.url}`).w(W.note).flex_none().truncate().text_size(11).text_color(error ? c.red : t.dim)
@@ -148,7 +149,6 @@ export const myPrViews = {
             .on_click((_e, cx) => { cx.stop_propagation(); cx.open_url(p.taskUrl); }).child("cloud")))
           .child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(t.foreground).child(p.title)))
         .child(note(p, kind))
-        .child(c.cell(W.act, p.newActivity ? `${p.newActivity} new` : "", t.accent))
         .child(c.cell(W.age, ago(Date.parse(p.created))))
         .child(c.cell(W.when, when ? ago(Date.parse(when)) : "", kind === "merged" ? c.green : t.dim))
         .child(c.size(p, W.size))
@@ -157,7 +157,7 @@ export const myPrViews = {
     };
     const header = (title, noteLabel, whenLabel, sticky) => h_flex().flex_none().h(COLS).px(sticky ? 10 : 6).gap(8).items_center().border_b(1).border_color(t.border)
       .child(c.head(W.repo, "REPO")).child(c.head(W.status, "STATUS")).child(c.head(W.ci, "CI")).child(c.head(W.pr, "PR")).child(c.headFlex(title))
-      .child(c.head(W.note, noteLabel)).child(c.head(W.act, "ACTIVITY")).child(c.head(W.age, "AGE")).child(c.head(W.when, whenLabel))
+      .child(c.head(W.note, noteLabel)).child(c.head(W.age, "AGE")).child(c.head(W.when, whenLabel))
       .child(c.head(W.size, "SIZE")).child(c.head(W.cc, "CC", true)).when(W.merge > 0, (el) => el.child(c.head(W.merge, "MERGE", true)));
     // A clear break between the three tables.
     const divider = () => div().h(SECTION_GAP).flex().items_center().child(div().w_full().h(2).bg(t.border));
