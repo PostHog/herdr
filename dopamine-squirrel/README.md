@@ -24,9 +24,9 @@ PostHog skills load only through the PostHog MCP. Outside PostHog, point those s
 
 ## Top bar
 
-![Top bar](screenshots/top-bar.png)
+![Top bar, with the glow sped up 4x](screenshots/top-bar.gif)
 
-Tabs (hidden when there's only one), a GitHub badge with how many reviews wait on you, a one-click standup, and a slow neon glow behind it all. `cmd-w` asks before closing a pane.
+Tabs (hidden when there's only one), a GitHub badge with how many reviews wait on you, a one-click standup, and a slow neon glow behind it all: soft bands drift sideways and fade through neon colours, 7 seconds per colour (the GIF runs 4x faster). `cmd-w` asks before closing a pane.
 
 **Grab it:** `mods/squirrel-topbar/`. Glow only: `glow.js`. PR fetching only: `github.js`.
 
@@ -57,9 +57,21 @@ Every PR waiting on you or your teams, newest first, the ones that name you on t
 Your open PRs in every repo, where each stands in the Trunk merge queue, and what merged this week.
 - **REVIEWS column:** counts approvals, open threads and comments, so non-blocking notes don't get lost. Click a row to read them.
 - **Merge queue:** Add to queue and Remove buttons, each needing a second click to confirm.
-- **Visualizer:** the merged rows play a random generative visualizer.
+- **Visualizer:** the merged rows play a random generative visualizer. It switches scene and palette every 9 to 17 seconds.
+
+![The visualizer behind recently merged PRs](screenshots/visualizer.gif)
 
 **Grab it:** `mods/squirrel-panel/my-prs.js`. The visualizer alone: `visualizer.js`.
+
+## What changes colour
+
+The screenshots are frozen, so here's what moves:
+- **Status chips:** green when approved or passing, yellow when waiting or running, red when failing or changes are requested.
+- **Context % bars and plan limits:** green, then yellow from 50%, then red from 80%.
+- **WAITING column:** turns red after a review request has waited 48 hours.
+- **PR links:** turn purple once you've clicked them.
+- **Returned PRs:** a WATCH PR that comes back gets an amber edge and a `↻` tag.
+- **Merge buttons:** turn green (add) or red (remove) while waiting for your confirming click.
 
 ## Small things
 
