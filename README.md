@@ -6,6 +6,7 @@ Each top-level folder with a `RECIPE.md` is one piece. You pick the pieces you w
 | Piece | What it is |
 | --- | --- |
 | [`pull-requests`](pull-requests/README.md) | A PR panel for Herdr's sidebar: your PRs, the Trunk merge queue and your reviews. The `Pull-Requests` layout adds a full-page PR workspace (`cmd-shift-g`) with review ranking, workflows, and agent fixes and reviews on this computer or a Herdr machine. It uses `flat-spaces`, a spaces list that doesn't fold worktree spaces under their repo. |
+| [`claude-usage`](claude-usage/RECIPE.md) | Herdr's main layout plus a strip with your live Claude plan limits, and token counts per session. |
 
 ## Install
 
@@ -28,6 +29,9 @@ For the merge queue it also needs Trunk: a `PostHog/posthog` checkout, and `trun
 Without Trunk, the rest of the panel works and the Status page says what's missing.
 
 Agent fixes and reviews also need `claude` on the machine they run on. Settings, on the full page, sets the repos (`owner/*` covers a whole org), where agents and Trunk run, and each repo's checkout. Merge `pull-requests/keys.json` (`cmd-shift-g`) into yours by hand.
+
+The `claude-usage` piece needs Claude Code logged in with a Claude subscription.
+Its Connect button changes your Claude Code `statusLine` setting to a wrapper that keeps your own statusline, and Disconnect puts the setting back.
 
 ## Update
 
