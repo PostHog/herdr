@@ -3,10 +3,10 @@
 // fetches the PR lists into shared "squirrel.github" every 5 minutes.
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { agents, run, theme, shared, setShared } from "herdr";
+import { agents, panes, run, theme, shared, setShared } from "herdr";
 import { VIEW, GITHUB, TRIAGED, ROW, HEADER, COLS, MAX_ROWS, CARD_W, CARD_H, GAP, ago } from "./shared.js";
 import { stepSim } from "./visualizer.js";
-import { readContext, agentsViews, usageHeight } from "./agents.js";
+import { readContext, readBackground, agentsViews, usageHeight } from "./agents.js";
 import { readUsage } from "./usage.js";
 import { tableParts } from "./table.js";
 import { reviewViews } from "./reviews.js";
@@ -19,6 +19,9 @@ export default class SquirrelPanel extends View {
       for (;;) {
         const next = await readContext();
         this.rememberReviewSessions(next.terminals);
+        const ids = agents().map((a) => panes().find((p) => p.pane === a.pane)?.terminal).filter(Boolean);
+        const bg = await readBackground(ids);
+        if (JSON.stringify(bg) !== JSON.stringify(this.background ?? {})) { this.background = bg; cx.notify(); }
         if (JSON.stringify(next) !== JSON.stringify(this.context)) { this.context = next; cx.notify(); }
         await cx.sleep(10000);
       }
@@ -81,7 +84,8 @@ export default class SquirrelPanel extends View {
       const perRow = Math.max(1, Math.floor((this.width - GAP * 2 + GAP) / (CARD_W + GAP)));
       const rows = Math.max(1, Math.ceil(agents().length / perRow));
       const strip = usageHeight(this.context.accounts ?? {}, this.usage ?? {});
-      if (this.width) this.fit("agents", HEADER + strip + GAP * 2 + rows * CARD_H + (rows - 1) * GAP + 2);
+
+      if (this.width) this.fit("agents", HEADER + strip + (this.cardsHeight ?? GAP * 2 + rows * CARD_H + (rows - 1) * GAP) + 2);
     }
     else {
       const v = view === "reviews" ? this.reviewsView(t, gh) : this.mineView(t, gh);
@@ -97,7 +101,7 @@ export default class SquirrelPanel extends View {
         cx?.notify();
       })
       .child(h_flex().flex_none().h(HEADER).px(6).gap(4).items_center().border_b(1).border_color(t.border)
-        .child(tab("agents", `Running agents (${agents().length})`))
+        .child(tab("agents", this.helperCount ? `Running agents (${agents().length - this.helperCount} + ${this.helperCount} helpers)` : `Running agents (${agents().length})`))
         .child(tab("reviews", `Reviews (${reviewCount})`))
         .child(tab("mine", `My PRs (${(gh.mine ?? []).length})`))
         .child(div().flex_1())

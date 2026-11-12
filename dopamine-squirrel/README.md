@@ -16,7 +16,7 @@ Review count, one-click standup, and a slow neon glow (sped up here).
 
 ![Running agents](screenshots/agents.png)
 
-Every agent with its cost and context %, plus your Claude plan limits (5h, week, Fable, credits) for each subscription.
+Every agent with its cost, context %, and what it's running in the background (shells, monitors, helpers), grouped by tab. Helpers say whose they are. On top, your Claude plan limits (5h, week, Fable, credits) for each subscription.
 
 ## Reviews · `cmd-2`
 
