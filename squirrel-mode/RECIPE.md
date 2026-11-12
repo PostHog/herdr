@@ -45,7 +45,7 @@ Take the whole thing, or point your agent at one part below and ask for just tha
 - Columns: review status, CI, PR link (turns purple once clicked), title with tags, author, WAITING (red after 48 h), last update, new comments since your last review, size.
 - Blue dot: you haven't reviewed it. Ring: new commits since your review. `mentioned`: someone @-mentioned you.
 - Click a row (not the link) to unfold who it waits on and the last few human comments.
-- **CC**: opens a pane below running Claude with your review skill on that PR. A second click jumps to that pane.
+- **CC**: opens a pane below running Claude with your review skill on that PR. A second click jumps to that pane. If you closed that pane, the click resumes the same conversation (`claude --resume`), so a PR that comes back picks up where you left off.
 - **DONE**: hide it for good. **WATCH**: hide it until new commits, a new comment or a new request, then it comes back on top with an amber `↻` tag. The row shows the tick, then fades out. Ticking the last one plays confetti (`mods/squirrel-confetti/`).
 - At most 10 rows show; the rest scroll under a sticky header.
 
@@ -112,6 +112,6 @@ Context % and session cost come from Claude Code's statusline input, and so do l
 
 ## For agents changing this
 
-- Shared state keys: `squirrel.github` (PR lists, written by the top bar), `squirrel.triaged`, `squirrel.visited`, `squirrel.view`, `squirrel.pane-names`, `squirrel.review-panes`, `squirrel.standup-pane`, `squirrel.settings`.
+- Shared state keys: `squirrel.github` (PR lists, written by the top bar), `squirrel.triaged`, `squirrel.visited`, `squirrel.view`, `squirrel.pane-names`, `squirrel.review-panes`, `squirrel.review-sessions`, `squirrel.standup-pane`, `squirrel.settings`.
 - The top bar owns fetching. The panel only reads `squirrel.github`, so a different fetcher can feed it.
 - Panel views are mixins on one `View`: `agents.js`, `reviews.js`, `my-prs.js`, with `table.js` for the shared cells and `shared.js` for constants.

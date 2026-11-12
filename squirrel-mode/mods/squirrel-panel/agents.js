@@ -26,7 +26,8 @@ export async function readContext() {
     if (tab < 0) continue;
     try {
       const saved = JSON.parse(line.slice(tab + 1)), status = saved.status ?? saved;
-      terminals[line.slice(0, tab)] = { pct: contextPercent(status), cost: status?.cost?.total_cost_usd ?? null };
+      terminals[line.slice(0, tab)] = { pct: contextPercent(status), cost: status?.cost?.total_cost_usd ?? null,
+        sessionId: status?.session_id ?? null, cwd: status?.workspace?.current_dir ?? status?.cwd ?? null };
       const account = (accounts[saved.config_dir ?? "~/.claude"] ??= {});
       for (const [window, v] of Object.entries(status?.rate_limits ?? {})) {
         const have = account[window];

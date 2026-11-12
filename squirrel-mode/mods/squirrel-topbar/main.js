@@ -23,6 +23,8 @@ function find(node, id) {
 export default class SquirrelTopbar extends View {
   init(_props, cx) {
     cx.spawn(async (cx) => { for (;;) { await loadSettings(); await fetchGh(); await cx.sleep(GH_EVERY_MS); } });
+    // squirrel.json edits show up within 30 seconds.
+    cx.spawn(async (cx) => { for (;;) { await cx.sleep(30000); await loadSettings(); } });
     cx.spawn(async (cx) => { for (;;) { await cx.sleep(50); cx.notify(); } });
     // cmd-w lands here: closing a pane asks first, so a stray keypress never kills an agent.
     cx.spawn(async () => {

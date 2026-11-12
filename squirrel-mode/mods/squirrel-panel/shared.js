@@ -8,6 +8,7 @@ export const GITHUB = "squirrel.github";
 export const TRIAGED = "squirrel.triaged";
 export const REVIEW_PANES = "squirrel.review-panes";
 export const VISITED = "squirrel.visited";
+export const REVIEW_SESSIONS = "squirrel.review-sessions";
 export const SETTINGS = "squirrel.settings";
 
 export const ROW = 28, HEADER = 28, COLS = 22, MAX_ROWS = 10, LINE = 18;

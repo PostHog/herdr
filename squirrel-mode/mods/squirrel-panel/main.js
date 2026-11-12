@@ -18,6 +18,7 @@ export default class SquirrelPanel extends View {
     cx.spawn(async (cx) => {
       for (;;) {
         const next = await readContext();
+        this.rememberReviewSessions(next.terminals);
         if (JSON.stringify(next) !== JSON.stringify(this.context)) { this.context = next; cx.notify(); }
         await cx.sleep(10000);
       }

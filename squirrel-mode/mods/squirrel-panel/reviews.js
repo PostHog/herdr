@@ -1,6 +1,7 @@
 import { div, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { agents, panes, terminals, run, theme, setAgentOrder, shared, setShared, home, exec } from "herdr";
+import { REVIEW_SESSIONS } from "./shared.js";
 import { NAMES, VIEW, GITHUB, TRIAGED, REVIEW_PANES, VISITED, ROW, HEADER, COLS, MAX_ROWS, LINE, STALE_MS, CARD_W, CARD_H, GAP, now, settings, ago, order, newest } from "./shared.js";
 
 const LEAVE_MS = 550;
@@ -13,6 +14,22 @@ export const reviewViews = {
   },
 
   // One Claude pane per PR: a second click focuses it instead of starting another.
+  // Remembers the Claude session behind each review pane (from the statusline), so a closed review
+  // can be resumed later instead of starting over.
+  rememberReviewSessions(terminals) {
+    const panesByPr = shared(REVIEW_PANES) ?? {}, saved = shared(REVIEW_SESSIONS) ?? {};
+    let changed = false;
+    for (const [url, paneId] of Object.entries(panesByPr)) {
+      const term = panes().find((p) => p.pane === paneId)?.terminal, live = term && terminals[term];
+      if (!live?.sessionId || saved[url]?.sessionId === live.sessionId) continue;
+      saved[url] = { sessionId: live.sessionId, cwd: live.cwd };
+      changed = true;
+    }
+    if (changed) setShared(REVIEW_SESSIONS, { ...saved });
+  },
+
+  // One Claude pane per PR: a second click focuses it instead of starting another. If that pane was
+  // closed, the click resumes its conversation (claude --resume in the folder it ran in).
   review(pr, cx) {
     const existing = this.reviewPane(pr);
     if (existing) { run("tab.select", { id: existing.tab }); run("pane.focus", { pane: existing.pane }); return; }
@@ -20,9 +37,12 @@ export const reviewViews = {
     this.starting[pr.url] = true;
     cx.notify();
     const before = new Set(panes().map((p) => p.pane));
-    const skill = settings().reviewSkill;
+    const skill = settings().reviewSkill, past = (shared(REVIEW_SESSIONS) ?? {})[pr.url];
     const prompt = `Load my ${skill} skill from the PostHog MCP (learn project:${skill}) and use it on ${pr.url}`;
-    run("pane.split", { direction: "down", argv: ["claude", prompt] });
+    const argv = past?.sessionId
+      ? ["/bin/sh", "-c", 'cd "$1" 2>/dev/null; exec claude --resume "$2"', "sh", past.cwd ?? home(), past.sessionId]
+      : ["claude", prompt];
+    run("pane.split", { direction: "down", argv });
     cx.spawn(async (cx) => {
       for (let i = 0; i < 50; i++) {
         const added = panes().find((p) => !before.has(p.pane));
