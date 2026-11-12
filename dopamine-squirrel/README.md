@@ -1,82 +1,78 @@
 # Dopamine Squirrel 🐿️
 
-Jake Ruth's opinionated, ADHD-proof Herdr setup. Everything that might pull your attention (agents, review requests, your PRs, the merge queue) lives in one top bar and one panel, so nothing slips and nothing nags.
+Jake Ruth's opinionated, ADHD-proof Herdr setup: one top bar and one panel for everything that pulls your attention. Built for a vertical monitor, fine on a wide one. Always growing; take the parts you like.
 
-- **Built for a vertical monitor:** a bar on top, the panel under it, panes stacked below. It works on a wide screen too.
-- **Pick the parts you like:** scroll through, and each section names the files behind it, so you can point your agent at just that part.
-- **Always growing:** I keep adding to it.
-
-Install the whole thing with `./install.sh enable dopamine-squirrel`. Setup, settings and keys are in [RECIPE.md](RECIPE.md).
-
-## ⚠️ Personal to Jake: set these up or skip them
-
-Some buttons are wired to my own tools. They're settings, not code, but out of the box they assume my setup:
-
-| Part | What it expects | How to make it yours |
-| --- | --- | --- |
-| Standup button (megaphone) | My `standup` skill in the PostHog MCP's project skill store, run in my second Claude subscription | `standupSkill`, `standupCommand` in `squirrel.json` |
-| Review button (CC) on Reviews | My `explaining-prs` skill in the PostHog MCP's project skill store | `reviewSkill` |
-| Merge queue table and buttons | PostHog's Trunk merge queue, a `PostHog/posthog` checkout, `trunk login` | `posthogCheckout`, or ignore the table |
-| Plan limits strip | My two Claude subscriptions | `claudeProfiles` |
-| Context % and cost on cards | Claude Code's statusline pointed at this piece's script | [Claude status](RECIPE.md#claude-status) |
-
-PostHog skills load only through the PostHog MCP. Outside PostHog, point those settings at skills you have, or ignore the buttons. Everything else works anywhere with `gh auth login`.
+```sh
+./install.sh enable dopamine-squirrel
+```
 
 ## Top bar
 
-![Top bar, with the glow sped up 4x](screenshots/top-bar.gif)
+![Top bar](screenshots/top-bar.gif)
 
-Tabs (hidden when there's only one), a GitHub badge with how many reviews wait on you, a one-click standup, and a slow neon glow behind it all: soft bands drift sideways and fade through neon colours, 7 seconds per colour (the GIF runs 4x faster). `cmd-w` asks before closing a pane.
+Review count, one-click standup, and a slow neon glow (sped up here).
 
-**Grab it:** `mods/squirrel-topbar/`. Glow only: `glow.js`. PR fetching only: `github.js`.
-
-## Running agents (`cmd-1`)
+## Running agents · `cmd-1`
 
 ![Running agents](screenshots/agents.png)
 
-A card per agent with its status, branch, session cost and context %. Sub-agents sit after their parent. Above the cards, one line per Claude subscription: 5-hour, week, Fable and credits, with when each resets.
+Every agent with its cost and context %, plus your Claude plan limits (5h, week, Fable, credits) for each subscription.
 
-**Grab it:** `mods/squirrel-panel/agents.js` for the cards, `usage.js` for plan limits, `statusline.sh` for context % and cost.
-
-## Reviews (`cmd-2`)
+## Reviews · `cmd-2`
 
 ![Reviews](screenshots/reviews.png)
 
-Every PR waiting on you or your teams, newest first, the ones that name you on top.
-- **Triage:** DONE hides a PR for good. WATCH hides it until it changes, then brings it back.
-- **CC:** opens Claude on the PR with your review skill. If you closed that pane, it resumes the same conversation.
-- **Row:** click it to see who it waits on and the latest comments.
-- **Empty queue:** clear the last one and you get confetti.
+PRs waiting on you. **DONE** hides one for good, **WATCH** hides it until it changes. **CC** opens Claude on the PR, or resumes your last review of it. Clear the queue for confetti.
 
-**Grab it:** `mods/squirrel-panel/reviews.js`, `table.js`, `mods/squirrel-confetti/`.
+## My PRs · `cmd-3`
 
-## My PRs (`cmd-3`)
+![My PRs](screenshots/my-prs.gif)
 
-![My PRs](screenshots/my-prs.png)
+Your open PRs in any repo, the Trunk merge queue, and what merged this week, with a visualizer for the wins. Click a row to read its comments.
 
-Your open PRs in every repo, where each stands in the Trunk merge queue, and what merged this week.
-- **REVIEWS column:** counts approvals, open threads and comments, so non-blocking notes don't get lost. Click a row to read them.
-- **Merge queue:** Add to queue and Remove buttons, each needing a second click to confirm.
-- **Visualizer:** the merged rows play a random generative visualizer. It switches scene and palette every 9 to 17 seconds.
+## Keys
 
-![The visualizer behind recently merged PRs](screenshots/visualizer.gif)
+| | |
+| --- | --- |
+| `cmd-1` `cmd-2` `cmd-3` | Running agents, Reviews, My PRs |
+| `cmd-b` | Show or hide the panel |
+| `cmd-t` `cmd-shift-d` | New pane, straight into Claude |
+| `cmd-shift-t` | New tab |
+| `cmd-r` | Rename a pane |
+| `cmd-w` | Close a pane (asks first) |
 
-**Grab it:** `mods/squirrel-panel/my-prs.js`. The visualizer alone: `visualizer.js`.
+## Heads up: some of this is Jake's
 
-## What changes colour
+These assume Jake's setup. Change them in `~/.config/herdr-app/squirrel.json`, or skip them.
 
-The screenshots are frozen, so here's what moves:
-- **Status chips:** green when approved or passing, yellow when waiting or running, red when failing or changes are requested.
-- **Context % bars and plan limits:** green, then yellow from 50%, then red from 80%.
-- **WAITING column:** turns red after a review request has waited 48 hours.
-- **PR links:** turn purple once you've clicked them.
-- **Returned PRs:** a WATCH PR that comes back gets an amber edge and a `↻` tag.
-- **Merge buttons:** turn green (add) or red (remove) while waiting for your confirming click.
+- **Standup button:** Jake's `standup` skill from the PostHog MCP, in his second Claude subscription.
+- **CC review button:** Jake's `explaining-prs` skill from the PostHog MCP.
+- **Merge queue:** PostHog's Trunk queue and a `PostHog/posthog` checkout.
+- **Plan limits:** Jake's two Claude subscriptions.
 
-## Small things
+---
 
-- **Pane names:** `cmd-r` renames a pane, and the name shows in its header.
-- **Claude panes:** `cmd-t` and `cmd-shift-d` open a pane straight into Claude.
-- **Panel:** `cmd-b` shows or hides it, and it sizes itself to its content.
+## For agents
 
-**Grab it:** `mods/squirrel-pane-header/`, `mods/squirrel-rename/`, `keys.json`.
+Setting this up or taking a part of it? [RECIPE.md](RECIPE.md) has setup, every setting, the Claude statusline and how the pieces talk to each other.
+
+| Part | Files |
+| --- | --- |
+| Top bar | `mods/squirrel-topbar/main.js` |
+| GitHub fetching (every 5 min, all repos) | `mods/squirrel-topbar/github.js` |
+| Neon glow | `mods/squirrel-topbar/glow.js` |
+| Agent cards, context %, cost | `mods/squirrel-panel/agents.js`, `statusline.sh` |
+| Plan limits (`/usage` every 10 min) | `mods/squirrel-panel/usage.js` |
+| Reviews, triage, CC button | `mods/squirrel-panel/reviews.js`, `table.js` |
+| My PRs, merge queue | `mods/squirrel-panel/my-prs.js` |
+| Visualizer | `mods/squirrel-panel/visualizer.js` |
+| Confetti | `mods/squirrel-confetti/` |
+| Pane headers, rename | `mods/squirrel-pane-header/`, `mods/squirrel-rename/` |
+| Layout, keys | `layouts/Dopamine-Squirrel.json`, `keys.json` |
+
+What changes colour, since screenshots can't show it:
+- Status chips: green when approved or passing, yellow when waiting or running, red when failing or changes are requested.
+- Context % and plan limit bars: green, yellow from 50%, red from 80%.
+- WAITING turns red after 48 hours. Clicked PR links turn purple.
+- A WATCH PR that comes back gets an amber edge and a `↻` tag.
+- Merge buttons turn green (add) or red (remove) while waiting for the confirming click.
