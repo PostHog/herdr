@@ -102,7 +102,7 @@ export default class SquirrelPanel extends View {
         cx?.notify();
       })
       .child(h_flex().flex_none().h(HEADER).px(6).gap(4).items_center().border_b(1).border_color(t.border)
-        .child(tab("agents", this.helperCount ? `Running agents (${agents().length - this.helperCount} + ${this.helperCount} helpers)` : `Running agents (${agents().length})`))
+        .child(tab("agents", `Running agents (${agents().length})`))
         .child(tab("reviews", `Reviews (${reviewCount})`))
         .child(tab("mine", `My PRs (${(gh.mine ?? []).length})`))
         .child(div().flex_1())

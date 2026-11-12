@@ -198,9 +198,10 @@ export const agentsViews = {
     const perRow = Math.max(1, Math.floor((this.width - GAP * 2 + GAP) / (CARD_W + GAP)));
     const pillsPerRow = Math.max(1, Math.floor((this.width - GAP * 2 + GAP) / (PILL_W + GAP)));
     const labelled = groups.length > 1;
-    // A tab of nothing but helpers starts folded into one-line pills; its header unfolds it into cards.
+    // Every tab after the first (where you work) starts folded into one-line pills; its header unfolds it.
     this.openTabs ??= {};
-    const folded = (g) => labelled && g.items.every(isChild) && !this.openTabs[g.tab];
+    const foldable = (g) => labelled && g !== groups[0];
+    const folded = (g) => foldable(g) && !this.openTabs[g.tab];
     this.cardsHeight = groups.reduce((h, g) => {
       const rows = Math.ceil(g.items.length / (folded(g) ? pillsPerRow : perRow));
       const rowH = folded(g) ? PILL_H : CARD_H;
@@ -227,8 +228,8 @@ export const agentsViews = {
           // A tab of helpers says whose they are, and folds or unfolds on click.
           const owners = [...new Set(g.items.filter(isChild).map((c) => all.find((x) => termOf(x) === parentOf.get(termOf(c)))).filter(Boolean)
             .map((x) => names[x.pane] || clean(x.title)))];
-          const helpersTab = g.items.every(isChild);
-          const label = owners.length && helpersTab ? `${g.name} tab · helpers of ${owners.join(", ")}` : `${g.name} tab`;
+          const helpersTab = foldable(g);
+          const label = `${g.name} tab · ${g.items.length} agent${g.items.length === 1 ? "" : "s"}${owners.length ? ` · helpers of ${owners.join(", ")}` : ""}`;
           return el.child(h_flex().id(`tab-label-${g.tab}`).h(TAB_LABEL).px(GAP + 2).gap(4).items_end().text_size(10.5).font_semibold().text_color(t.dim)
             .when(helpersTab, (el) => el.cursor_pointer().hover((s) => s.text_color(t.foreground))
               .on_click((_e, cx) => { this.openTabs[g.tab] = !this.openTabs[g.tab]; cx.notify(); })
