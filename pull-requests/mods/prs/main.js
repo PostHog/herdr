@@ -1257,7 +1257,7 @@ export default class Prs extends View {
         .gap(STATUS_TILE_GAP)
         .children([
           ...slice.map((service, at) => tile(service, start + at)),
-          ...Array.from({ length: perRow - slice.length }, () => div().flex_1().min_w(0)),
+          ...Array.from({ length: perRow - slice.length }, () => div().flex_1().min_w(0).px(12).border_1().border_color(t.background)),
         ]));
     }
     return rows;
