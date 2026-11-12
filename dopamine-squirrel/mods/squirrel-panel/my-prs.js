@@ -54,6 +54,7 @@ export const myPrViews = {
       return p.repo === "PostHog/posthog" && !p.draft && q?.state !== "merged" ? "add" : null;
     };
 
+    const commentsText = (p) => p.commentCount ? `${p.commentCount} comment${p.commentCount === 1 ? "" : "s"}` : "";
     // All three tables share one column grid; text columns are sized to their longest value.
     const repoName = (p) => p.repo.replace(/^PostHog\//, "");
     const sizeText = (p) => `+${p.additions} −${p.deletions}`;
@@ -62,7 +63,7 @@ export const myPrViews = {
     const W = {
       repo: fit(rowsAll.map(repoName), "REPO"), status: 116, ci: 70, pr: fit(rowsAll.map((p) => `#${p.number}`), "PR", 7.2),
       note: Math.min(220, Math.max(0, ...[
-        ...list.map((p) => (p.approvals ? `${p.approvals} approved  ` : "") + (p.openThreads ? `${p.openThreads} open threads` : "")),
+        ...list.map((p) => (p.approvals ? `${p.approvals} approved  ` : "") + (p.openThreads ? `${p.openThreads} open threads  ` : "") + commentsText(p)),
         ...inQueue.map((p) => this.queueError[p.url] ?? p.trunk?.text ?? ""),
       ].map((x) => x.trim() ? x.length * 6.4 + 6 : 0), 76)), act: 52, age: 36, when: 52, size: fit(rowsAll.map(sizeText), "SIZE", 6.4), cc: 28,
       merge: [...list, ...inQueue].some(queueAction) ? 96 : 0,
@@ -86,7 +87,8 @@ export const myPrViews = {
     const note = (p, kind) => {
       if (kind === "review") return h_flex().w(W.note).flex_none().gap(8).text_size(11).min_w(0)
         .when(p.approvals > 0, (el) => el.child(div().flex_none().text_color(c.green).child(`${p.approvals} approved`)))
-        .when(p.openThreads > 0, (el) => el.child(div().flex_none().text_color(c.yellow).child(`${p.openThreads} open threads`)));
+        .when(p.openThreads > 0, (el) => el.child(div().flex_none().text_color(c.yellow).child(`${p.openThreads} open threads`)))
+        .when(p.commentCount > 0, (el) => el.child(div().flex_none().text_color(t.accent).child(commentsText(p))));
       if (kind === "queue") {
         const q = p.trunk, error = this.queueError[p.url];
         return div().id(`trunk-note-${p.url}`).w(W.note).flex_none().truncate().text_size(11).text_color(error ? c.red : t.dim)
@@ -97,10 +99,34 @@ export const myPrViews = {
       }
       return div().w(W.note).flex_none();
     };
+    // Click an open PR's row to read its open threads and the latest comments from others.
+    let extra = 0;
+    const details = (p) => {
+      const line = (a, tagText) => h_flex().id(`mine-act-${p.number}-${a.at}`).gap(6).min_w(0).cursor_pointer().hover((s) => s.text_color(t.foreground))
+        .on_click((_e, cx) => { cx.stop_propagation(); cx.open_url(a.url); })
+        .child(div().flex_none().w(110).truncate().text_color(t.muted).child(a.who))
+        .child(div().flex_none().w(36).text_color(t.dim).child(ago(Date.parse(a.at))))
+        .when(Boolean(tagText), (el) => el.child(c.tag(tagText, c.yellow, false)))
+        .when(Boolean(a.state && a.state !== "COMMENTED"), (el) => el.child(c.tag(a.state === "APPROVED" ? "approved" : "changes", a.state === "APPROVED" ? c.green : c.red)))
+        .child(div().flex_1().min_w(0).truncate().text_color(t.muted).child(a.path ? `${a.path.split("/").pop()}: ${a.text}` : a.text));
+      const lines = [
+        ...(p.threads ?? []).map((a) => line(a, "open")),
+        ...(p.activity ?? []).map((a) => line(a, null)),
+      ];
+      if (!lines.length) lines.push(div().text_color(t.dim).child("No comments yet"));
+      extra += 10 + lines.length * LINE;
+      return v_flex().pl(16).pr(12).pb(6).pt(2).gap(2).text_size(11.5).children(lines);
+    };
     const row = (p, kind) => {
+      const key = `mine:${p.url}`, open = kind !== "merged" && Boolean(this.expanded[key]);
+      return v_flex().child(rowLine(p, kind, key, open)).when(open, (el) => el.child(details(p)));
+    };
+    const rowLine = (p, kind, key, open) => {
       const [qLabel, qColor] = QUEUE[p.trunk?.state ?? "none"];
       const when = kind === "merged" ? p.mergedAt : kind === "queue" ? p.trunk?.at : p.updated;
       return h_flex().id(`${kind}-${p.url}`).h(ROW).px(6).gap(8).items_center().min_w(0).rounded(4).hover((s) => s.bg(t.hover))
+        .when(open, (el) => el.bg(t.surface))
+        .when(kind !== "merged", (el) => el.cursor_pointer().on_click((_e, cx) => { this.expanded[key] = !open; cx.notify(); }))
         .child(c.cell(W.repo, repoName(p), t.muted))
         .child(kind === "review" ? c.review(p) : kind === "queue" ? c.chip(W.status, qLabel, qColor) : div().w(W.status).flex_none())
         .child(kind === "merged" ? div().w(W.ci).flex_none() : c.ci(p))
@@ -138,6 +164,6 @@ export const myPrViews = {
           .child(div().absolute().top(0).right(6).w(rightW).h(H).rounded(4).overflow_hidden().bg("#00000055").children(drawSim(this.sims?.right, t.dim))));
       });
     const rows = Math.max(list.length, 1) + Math.max(inQueue.length, 1) + Math.max(merged.length, 1);
-    return { columns: header("IN REVIEW", "REVIEWS", "UPD", true), body, content: rows * ROW + 2 * (COLS + 10) };
+    return { columns: header("IN REVIEW", "REVIEWS", "UPD", true), body, content: rows * ROW + 2 * (COLS + 10) + extra };
   },
 };

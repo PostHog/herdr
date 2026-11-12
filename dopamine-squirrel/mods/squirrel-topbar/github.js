@@ -20,7 +20,8 @@ const GH_QUERIES = {
   reviews: () => `query { viewer { login } list: search(query: "is:pr is:open archived:false review-requested:@me", type: ISSUE, first: 100) {
     issueCount nodes { ... on PullRequest { ${PR_FIELDS} } } } }`,
   mine: () => `query { viewer { login } list: search(query: "is:pr is:open archived:false author:@me", type: ISSUE, first: 100) {
-    issueCount nodes { ... on PullRequest { ${PR_FIELDS} trunk: comments(first: 10) { nodes { author { login } body updatedAt } } } } } }`,
+    issueCount nodes { ... on PullRequest { ${PR_FIELDS} trunk: comments(first: 10) { nodes { author { login } body updatedAt } }
+      threads: reviewThreads(first: 50) { nodes { isResolved path comments(first: 1) { nodes { author { __typename login } createdAt bodyText url } } } } } } } }`,
   merged: () => `query { viewer { login } list: search(query: "is:pr is:merged author:@me merged:>=${new Date(Date.now() - mergedDays() * 864e5).toISOString().slice(0, 10)}", type: ISSUE, first: 30) {
     issueCount nodes { ... on PullRequest { number title url createdAt mergedAt additions deletions repository { nameWithOwner } commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } } } } }`,
 };
@@ -95,6 +96,12 @@ function toPr(n, me, notes) {
   const note = notes.get(`${n.repository.nameWithOwner}#${n.number}`);
   return {
     headAt: head?.committedDate ?? n.createdAt, requestedAt,
+    // My PRs only (the query asks for threads there): comments still waiting on an answer or a resolve.
+    threads: (n.threads?.nodes ?? []).filter((x) => !x.isResolved && x.comments.nodes[0]).map((x) => {
+      const c = x.comments.nodes[0];
+      return { who: c.author?.login ?? "ghost", at: c.createdAt, text: c.bodyText.replace(/\s+/g, " ").slice(0, 200), url: c.url, path: x.path };
+    }),
+    commentCount: activity.length,
     activity: activity.slice(-4).map((a) => ({ ...a, text: a.text.replace(/\s+/g, " ").slice(0, 200), mentionsMe: a.text.includes(`@${me}`) })),
     newActivity: activity.filter((a) => Date.parse(a.at) > since).length,
     mentioned: activity.some((a) => a.text.includes(`@${me}`)),
