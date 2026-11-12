@@ -28,8 +28,10 @@ Laid out for a vertical monitor; works on a wide one too. [README.md](README.md)
 
 ### Running agents (`mods/squirrel-panel/agents.js`)
 
-- One card per agent: CC or GPT badge, pane name, status, branch, session cost and a context % bar. Click a card to focus it.
-- A sub-agent (a terminal another agent started) sits right after its parent with `↳`. One without a pane shows as "+N in background" on the parent; click it to give it a pane.
+- One card per agent, all the same height: CC or GPT badge, pane name and session cost; then status, branch and a context % bar; then a third line for background work. Click a card to focus it.
+- **Background work**: Herdr reports an agent as idle while its shells, monitors or background agents still run. The panel reads Claude's footer ("· 1 shell, 1 monitor") every 10 s and shows it on the third line with a slow blue spinner.
+- **Helpers**: cards group by tab. A tab of nothing but helpers starts folded into one-line pills (status, name, a blue dot for background work, context %); click its header or any pill to unfold them into cards. A helper says "helper of <parent>", its parent counts its helpers, and a tab of helpers is labelled with whose they are. The parent is the terminal that started it with `hc run`, or a `squirrel.parent` label for helpers opened another way (`hc label <t> squirrel.parent=$HC_TERMINAL_ID`).
+- A helper without a pane shows as "+N in background" on its parent; click it to give it a pane.
 - **Plan limits strip**: one line per Claude subscription, with the same columns on each: 5-hour, week, per-model weeks such as Fable, and usage credits, each with when it resets. `usage.js` reads Claude Code's own `/usage` screen every 10 minutes: it starts a hidden Claude session in an empty folder, types `/usage`, reads the screen and closes the session. That sends nothing to the model. Between reads, the statusline keeps 5-hour and week current after every reply.
 - The panel sizes itself to the rows of cards.
 
@@ -47,7 +49,7 @@ Laid out for a vertical monitor; works on a wide one too. [README.md](README.md)
 
 - Three tables on one column grid: **In review** (your open PRs in any repo), **Merge queue** (where each one stands in Trunk, from the Trunk bot's comment) and **Recently merged** (the last 7 days).
 - The REVIEWS column counts approvals, open threads and comments from others, so non-blocking notes on an approved PR don't get missed. Click an open PR's row to read them: open threads first, then the latest comments, each linking to GitHub.
-- **Add to queue** and **Remove** run `trunk merge` and `trunk merge cancel` from your PostHog checkout. The first click arms the button; a second within 4 s runs it. Needs `trunk login` once.
+- **Add to queue** and **Remove** run `trunk merge` and `trunk merge cancel` from your PostHog checkout. Add runs at once and shows "Added ✓"; Remove asks for a second click within 4 s. Needs `trunk login` once.
 - The empty cells of merged rows are a visualizer: two live simulations (flow fields, a spectrum analyser, warp stars, orbs, rain, fireworks, Game of Life, random walkers, plasma) with random palettes, swapping every 9 to 17 s. `visualizer.js`.
 
 ### The rest

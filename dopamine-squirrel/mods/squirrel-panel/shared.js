@@ -13,7 +13,7 @@ export const SETTINGS = "squirrel.settings";
 
 export const ROW = 28, HEADER = 28, COLS = 22, MAX_ROWS = 10, LINE = 18;
 export const STALE_MS = 48 * 3600 * 1000;
-export const CARD_W = 240, CARD_H = 56, GAP = 6;
+export const CARD_W = 240, CARD_H = 74, GAP = 6;
 export const now = () => Date.now();
 
 // squirrel-topbar loads ~/.config/herdr-app/squirrel.json into shared state; these are the defaults.
