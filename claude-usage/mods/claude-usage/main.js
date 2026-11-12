@@ -20,18 +20,21 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 
 const prefs = () => ({ ...DEFAULTS, ...(shared(PREFS) ?? {}) });
 
-function clock(d) {
+function clock(d, long = false) {
   const h = d.getHours();
-  return `${h % 12 || 12}:${String(d.getMinutes()).padStart(2, "0")} ${h < 12 ? "am" : "pm"}`;
+  const m = String(d.getMinutes()).padStart(2, "0");
+  const ap = h < 12 ? "am" : "pm";
+  if (long) return `${h % 12 || 12}:${m} ${ap}`;
+  return `${h % 12 || 12}${m === "00" ? "" : `:${m}`}${ap}`;
 }
 
-function resetText(sec) {
+function resetText(sec, long = false) {
   const at = sec * 1000;
   const left = at - Date.now();
-  if (left <= 0) return `reset at ${clock(new Date(at))}`;
+  if (left <= 0) return `reset at ${clock(new Date(at), long)}`;
   if (left < 3600000) return `resets in ${Math.max(1, Math.round(left / 60000))}m`;
   const d = new Date(at);
-  return `resets ${d.toDateString() === new Date().toDateString() ? "" : `${DAYS[d.getDay()]} `}${clock(d)}`;
+  return `resets ${d.toDateString() === new Date().toDateString() ? "" : `${DAYS[d.getDay()]} `}${clock(d, long)}`;
 }
 
 function until(sec) {
@@ -343,10 +346,10 @@ export default class ClaudeUsage extends View {
       .bg(t.surface).border_1().border_color(t.border).cursor_pointer()
       .on_click(() => this.openSettings("usage"))
       .child(h_flex().h(16).line_height("16px").items_center().gap(8)
-        .child(div().flex_1().text_size(11).font_medium().text_color(t.muted).child("Claude usage"))
-        .when(s.kind === "ok" && stale, (el) => el.child(div().id("cu-stale").text_size(11).text_color(t.working).tooltip(this.failed || this.authError).child("couldn't refresh")))
-        .when(s.kind === "ok" && !stale && Boolean(seen?.at), (el) => el.child(div().text_size(11).text_color(t.muted).child(ago(Date.now() - seen.at))))
-        .child(div().id("cu-gear").cursor_pointer().text_color(t.muted).hover((st) => st.text_color(t.foreground))
+        .child(div().flex_1().min_w(0).truncate().text_size(11).font_medium().text_color(t.muted).child("Claude usage"))
+        .when(s.kind === "ok" && stale, (el) => el.child(div().id("cu-stale").flex_none().text_size(11).text_color(t.working).tooltip(this.failed || this.authError).child("couldn't refresh")))
+        .when(s.kind === "ok" && !stale && Boolean(seen?.at), (el) => el.child(div().flex_none().text_size(11).text_color(t.muted).child(ago(Date.now() - seen.at))))
+        .child(div().id("cu-gear").flex_none().cursor_pointer().text_color(t.muted).hover((st) => st.text_color(t.foreground))
           .tooltip("Usage settings")
           .on_click((e, cx) => {
             cx.stop_propagation();
@@ -368,7 +371,9 @@ export default class ClaudeUsage extends View {
             .child(div().w(34).flex_none().text_size(12).text_color(t.muted).child(w.label))
             .child(this.bar(t, reset ? 0 : v.used, 5))
             .child(div().w(34).flex_none().text_right().text_size(12).text_color(reset ? t.muted : v.used >= prefs().warn ? this.color(t, v.used) : t.foreground).child(reset ? "--" : `${Math.round(v.used)}%`)))
-          .child(div().pl(42).h(14).line_height("14px").text_size(11).text_color(t.muted).child(resetText(v.resets))));
+          .child(div().id(`cu-reset-${w.key}`).pl(42).h(14).line_height("14px").truncate().text_size(11).text_color(t.muted)
+            .tooltip(resetText(v.resets, true).replace(/^r/, "R"))
+            .child(resetText(v.resets))));
       }
     }
     return this.sized(v_flex().id("cu-root").size_full().justify_end().px(10).pb(8).child(card));
