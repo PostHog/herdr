@@ -130,7 +130,9 @@ export const myPrViews = {
       merge: [...list, ...inQueue].some(queueAction) ? 96 : 0,
     };
 
-    const ccButton = (p) => this.iconButton(`mine-review-${p.url}`, "mods/squirrel-panel/open-pane.svg", (_e, cx) => this.review(p, cx), t,
+    // On your own PR, CC works through the reviewers' comments rather than explaining the PR.
+    const handlePrompt = (p) => `Handle the review on my PR ${p.url}: read every open thread and comment. Fix what's clear and common sense, and reply on the thread saying what you changed. For anything that needs my judgment or taste, ask me first. Be clear, concise and direct.`;
+    const ccButton = (p) => this.iconButton(`mine-review-${p.url}`, "mods/squirrel-panel/open-pane.svg", (_e, cx) => this.review(p, cx, handlePrompt(p)), t,
       { spin: this.starting[p.url], color: this.reviewPane(p) ? t.accent : t.muted });
     const queueButton = (p) => {
       const key = p.url, action = queueAction(p);
