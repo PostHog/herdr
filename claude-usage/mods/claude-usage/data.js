@@ -63,13 +63,46 @@ export async function auth() {
 export const configDir = (a) => a?.configDirectory || `${home()}/.claude`;
 export const projectsDir = (a) => a?.projectsDirectory || `${configDir(a)}/projects`;
 
+const tee = () => `{ [ -f ${shq(tapPath())} ] && sh ${shq(tapPath())} --tee || cat; }`;
+const opening = () => `${tee()} | {\n`;
+const CLOSING = "\n}";
+const tapOnly = () => `${tee()} >/dev/null`;
+const legacyOpening = () => `[ -f ${shq(tapPath())} ] && exec sh ${shq(tapPath())}`;
+
+export const wrap = (command) => (command ? `${opening()}${command}${CLOSING}` : tapOnly());
+
+export function unwrap(command, dir) {
+  if (typeof command !== "string") return null;
+  const text = command.trimEnd();
+  if (text === tapOnly()) return "";
+  if (text.startsWith(opening()) && text.endsWith(CLOSING) && text.length > opening().length + CLOSING.length) {
+    return text.slice(opening().length, -CLOSING.length);
+  }
+  if (text.startsWith(legacyOpening())) {
+    let rest = text.slice(legacyOpening().length);
+    const arg = ` ${shq(backupDir(dir))}`;
+    if (rest.startsWith(arg)) rest = rest.slice(arg.length);
+    if (rest.startsWith("; ")) return rest.slice(2);
+  }
+  return null;
+}
+
+async function legacySaved(dir) {
+  const text = (await readTextFile(`${backupDir(dir)}/original-statusline.json`)) ?? (await readTextFile(`${dataDir()}/original-statusline.json`));
+  return parse(text);
+}
+
 export async function connection(dir) {
   const path = `${dir}/settings.json`;
   const text = await readTextFile(path);
   const settings = text == null ? {} : parse(text);
   if (!settings || typeof settings !== "object" || Array.isArray(settings)) return { path, error: `${path} is not valid JSON` };
   const command = settings.statusLine?.command;
-  return { path, text, settings, connected: typeof command === "string" && command.includes("/mods/claude-usage/tap.sh") };
+  const connected = typeof command === "string" && command.includes("/mods/claude-usage/tap.sh");
+  let own = connected ? unwrap(command, dir) : null;
+  const legacy = own != null && command.trimEnd() !== tapOnly() && !command.startsWith(opening());
+  if (legacy && own === "true" && (await legacySaved(dir))?.command !== "true") own = "";
+  return { path, text, settings, connected, command: own, legacy };
 }
 
 const REPLACE = [
@@ -104,12 +137,10 @@ const pretty = (o) => `${JSON.stringify(o, null, 2)}\n`;
 
 export const backupDir = (dir) => `${dataDir()}/configs/${String(dir).replace(/[^A-Za-z0-9_-]/g, "_")}`;
 
-async function backup(dir, name) {
-  return (await readTextFile(`${backupDir(dir)}/${name}`)) ?? (await readTextFile(`${dataDir()}/${name}`));
-}
-
-export async function originalCommand(dir) {
-  return (await backup(dir, "original-command")) ?? "";
+async function forgetLegacy(dir) {
+  const b = backupDir(dir);
+  for (const name of ["original-command", "original-statusline.json"]) await fs.unlink(`${b}/${name}`).catch(() => null);
+  await fs.rmdir(b).catch(() => null);
 }
 
 export async function connect(dir) {
@@ -118,30 +149,27 @@ export async function connect(dir) {
   if (c.connected) return;
   const original = c.settings.statusLine ?? null;
   const command = original?.type === "command" && typeof original.command === "string" ? original.command : "";
-  await ensureDataDir();
-  const b = backupDir(dir);
-  await fs.mkdir(b, { recursive: true });
-  await fs.writeFile(`${b}/original-statusline.json`, JSON.stringify(original));
-  await fs.writeFile(`${b}/original-command`, command);
-  const tap = shq(tapPath());
-  const statusLine = { ...(original ?? {}), type: "command", command: `[ -f ${tap} ] && exec sh ${tap} ${shq(b)}; ${command || "true"}` };
+  const statusLine = { ...(original ?? {}), type: "command", command: wrap(original ? command || "true" : "") };
   await writeThrough(c.path, c.text, pretty({ ...c.settings, statusLine }));
+}
+
+export async function upgrade(dir) {
+  const c = await connection(dir);
+  if (c.error || !c.legacy) return;
+  await writeThrough(c.path, c.text, pretty({ ...c.settings, statusLine: { ...c.settings.statusLine, command: wrap(c.command) } }));
+  await forgetLegacy(dir);
 }
 
 export async function disconnect(dir) {
   const c = await connection(dir);
   if (c.error) throw new Error(c.error);
   if (!c.connected) return;
-  const saved = await backup(dir, "original-statusline.json");
-  let original = parse(saved);
-  if (saved == null) {
-    const command = await originalCommand(dir);
-    original = command ? { type: "command", command } : null;
-  }
+  if (c.command == null) throw new Error(`Your statusline command in ${c.path} no longer has the shape Connect wrote. Remove tap.sh from it by hand.`);
   const next = { ...c.settings };
-  if (original) next.statusLine = original;
+  if (c.command) next.statusLine = { ...c.settings.statusLine, command: c.command };
   else delete next.statusLine;
   await writeThrough(c.path, c.text, pretty(next));
+  await forgetLegacy(dir);
 }
 
 export async function clearReports() {

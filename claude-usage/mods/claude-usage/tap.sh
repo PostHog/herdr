@@ -9,6 +9,10 @@ if [ -n "$sid" ]; then
     { printf '%s' "$payload" > "$tmp" && mv -f "$tmp" "$dir/sessions/$sid.json"; } || rm -f "$tmp"
   fi
 fi
+if [ "$1" = "--tee" ]; then
+  printf '%s' "$payload"
+  exit
+fi
 backup="${1:-$dir}"
 if [ -s "$backup/original-command" ]; then
   printf '%s' "$payload" | sh -c "$(cat "$backup/original-command")"
