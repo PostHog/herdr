@@ -1,7 +1,7 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { theme, run, props, agents, spaces, home, openOverlay, closeOverlay, nextCommand, notify, playSound, shared, setShared } from "herdr";
-import { WINDOWS, tapPath, auth, configDir, projectsDir, connection, connect, disconnect, originalCommand, prune, clearReports, ensureDataDir, limits, sessionOf, findTranscript, Totals, modelName } from "./data.js";
+import { WINDOWS, tapPath, auth, configDir, projectsDir, connection, connect, disconnect, upgrade, prune, clearReports, ensureDataDir, limits, sessionOf, findTranscript, Totals, modelName } from "./data.js";
 
 const ICON = (name) => `mods/claude-usage/icons/${name}.svg`;
 const REFRESH_EVERY = 10000;
@@ -74,6 +74,7 @@ export default class ClaudeUsage extends View {
     this.authAt = 0;
     this.link = null;
     this.original = "";
+    this.upgraded = false;
     this.data = null;
     this.rows = null;
     this.rowsError = null;
@@ -124,8 +125,14 @@ export default class ClaudeUsage extends View {
         }
         if (this.auth && !this.auth.missing) {
           try {
-            this.link = await connection(configDir(this.auth));
-            this.original = this.link.connected ? await originalCommand(configDir(this.auth)) : (this.link.settings?.statusLine?.command ?? "");
+            const dir = configDir(this.auth);
+            this.link = await connection(dir);
+            if (this.link.legacy && !this.upgraded) {
+              this.upgraded = true;
+              await upgrade(dir).catch(() => null);
+              this.link = await connection(dir);
+            }
+            this.original = this.link.connected ? (this.link.command ?? this.link.settings.statusLine.command) : (this.link.settings?.statusLine?.command ?? "");
           } catch (e) {
             this.link = { error: String(e?.message ?? e) };
           }
@@ -244,7 +251,7 @@ export default class ClaudeUsage extends View {
       this.error = null;
       notify({
         title: action === "connect" ? "Connected to Claude Code" : "Disconnected from Claude Code",
-        body: action === "connect" ? "Your plan limits arrive with your next Claude reply." : "Your statusline setting is back as it was.",
+        body: action === "connect" ? "Your plan limits arrive with your next Claude reply." : "Your statusline runs your own command again.",
         level: "success",
         timeout: 6000,
       });
@@ -267,7 +274,7 @@ export default class ClaudeUsage extends View {
   }
 
   askConnect() {
-    this.ask("connect", "Connect Claude Code?", "Sets Claude Code's statusline to a small script that saves your plan limits, then runs your own statusline. Your statusline looks the same. Disconnect puts it back.");
+    this.ask("connect", "Connect Claude Code?", "Puts a small script in front of your Claude Code statusline command that saves your plan limits. Your statusline looks the same. Disconnect takes the script out.");
   }
 
   color(t, used) {
@@ -530,13 +537,13 @@ export default class ClaudeUsage extends View {
         .child(this.busy.link
           ? div().text_color(t.muted).child("Working")
           : l.connected
-            ? this.button(t, "cu-disconnect", "Disconnect", () => this.ask("disconnect", "Disconnect Claude Code?", "Puts your old statusline setting back. The strip stops getting your plan limits."))
+            ? this.button(t, "cu-disconnect", "Disconnect", () => this.ask("disconnect", "Disconnect Claude Code?", "Takes the script out of your statusline command. The strip stops getting your plan limits."))
             : this.button(t, "cu-connect-a", "Connect", () => this.askConnect(), true)))
-        .child(div().text_color(t.muted).child("Claude Code gives your statusline your plan limits. The mod saves a copy, then runs your own statusline command, so your statusline looks the same."))
+        .child(div().text_color(t.muted).child("Claude Code gives your statusline your plan limits. The mod saves them, then passes them on to your own statusline command, so your statusline looks the same."))
         .child(v_flex().gap(4).p(10).rounded(6).bg(t.chrome).text_size(12)
           .child(h_flex().gap(8).child(div().w(72).flex_none().text_color(t.muted).child(l.connected ? "statusline" : "changes to")).child(div().truncate().child(tilde(tapPath()))))
           .child(h_flex().gap(8).child(div().w(72).flex_none().text_color(t.muted).child("then runs")).child(div().truncate().child(this.original || "nothing, you have no statusline"))))
-        .child(div().text_size(12).text_color(t.muted).child(`It edits ${tilde(l.path)}. Disconnect puts your old setting back.`));
+        .child(div().text_size(12).text_color(t.muted).child(`It edits ${tilde(l.path)}. Edit your command there, and Disconnect keeps your edit.`));
     }
     for (const e of [this.error, this.failed].filter(Boolean)) link.child(div().text_size(12).text_color(t.blocked).child(e));
 
