@@ -6,6 +6,7 @@ The `Pull-Requests` layout with one tree in place of the spaces and agents lists
 
 - Each space is a row with its avatar, name, machine and branch (main and master go unsaid), and a chevron that folds it.
   The avatar is the repo's own icon when it has one: the icon its web setup declares (a `<link rel="icon">` in its HTML, or Gatsby's manifest `icon`), else the best favicon, touch icon or `<repo>-icon` file it tracks in git.
+  It sits on a small white tile with the theme's border, as browsers draw favicons, so dark and light logos both read in either theme.
   Without one, or for a space on another machine, it's the first letter on the space's color, as in Herdr's own list.
   Folded, it shows its most urgent agent's status.
 - Under a space, one row per terminal, tab by tab: the program's icon, the tab's name or what the program says it's doing, then a branch tag and the agent's status.

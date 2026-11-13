@@ -249,7 +249,8 @@ export default class SpaceTree extends View {
       .on_mouse_down("right", () => openOverlay({ mod: "menu", kind: "popup", width: 200, height: 260, props: { tab: "space", target: { id: s.id } } }))
       .child(this.chevron(t, s.id, open, count, top))
       .child(pic
-        ? h_flex().size(18).flex_none().rounded(5).overflow_hidden().items_center().justify_center().child(image(pic).w(18).h(18))
+        // A light tile, as browsers draw favicons, so dark or light logos read in either theme.
+        ? h_flex().size(18).flex_none().rounded(5).overflow_hidden().bg("#ffffff").border(1).border_color(t.border).items_center().justify_center().child(image(pic).w(14).h(14))
         : h_flex().size(18).flex_none().rounded(5).bg(fill).items_center().justify_center().text_size(10.5).font_bold().text_color("#ffffff").child([...s.name][0]?.toUpperCase() ?? "?"))
       .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(s.name))
       .when(Boolean(s.machine), (el) => el.child(div().flex_none().text_size(10.5).text_color(t.dim).child(s.machine)))
