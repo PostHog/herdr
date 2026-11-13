@@ -109,6 +109,16 @@
           ]
         }
       ]
+    },
+    {
+      "id": "resume-agents",
+      "type": "block",
+      "content": {
+        "mod": "resume-agents"
+      },
+      "size": {
+        "px": 0
+      }
     }
   ]
 }
