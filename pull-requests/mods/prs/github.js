@@ -12,7 +12,7 @@ const PR_FIELDS = `fragment PrFields on PullRequest {
   autoMergeRequest { enabledAt } mergeQueueEntry { state position }
   stack { size } stackEntry { position }
   labels(first: 30) { nodes { name } }
-  latestOpinionatedReviews(first: 20) { nodes { state author { login } } }
+  latestOpinionatedReviews(first: 20) { nodes { state author { login __typename } } }
   reviewThreads(first: 60) { nodes { isResolved isOutdated comments(first: 1) { nodes { author { login __typename } } } } }
   trunkComments: comments(last: 15) { nodes { author { login } body } }
   ${CHECK_COUNTS}
@@ -251,6 +251,7 @@ function normalizePr(node, viewer) {
     checks: checkCounts(node),
     visual: visualReview(node),
     approvals: (node.latestOpinionatedReviews?.nodes ?? []).filter((review) => review.state === "APPROVED").length,
+    botApprovals: (node.latestOpinionatedReviews?.nodes ?? []).filter((review) => review.state === "APPROVED" && isBot(review.author)).length,
     threads: threadCounts(node, viewer, author),
     mine: author === viewer,
   };

@@ -121,7 +121,7 @@ function facts(pr, { me, review, status, trusted }) {
   if (pr.additions != null) out.push(`Size: +${pr.additions} -${pr.deletions}`);
   if (status) out.push(`Next step: ${status}`);
   if (pr.checks?.total) out.push(ciLine(pr.checks));
-  if (pr.approvals) out.push(`Approvals: ${pr.approvals}`);
+  if (pr.approvals) out.push(`Approvals: ${pr.approvals}${pr.botApprovals ? ` (${pr.botApprovals} from bots)` : ""}`);
   if (pr.threads?.total) out.push(`Unresolved review threads: ${pr.threads.total}`);
   if (pr.mergeable === "CONFLICTING") out.push("Has merge conflicts with its base branch");
   for (const visual of pr.visual ?? []) out.push(visualLine(visual));

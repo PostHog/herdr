@@ -1972,10 +1972,11 @@ export default class Prs extends View {
       .text_size(12.5)
       .text_color(t.muted)
       .child(
-        state.approvals
-          ? h_flex().gap(6).items_center().font_medium().text_color(tone(t, "ok")).child(svg(ICON("tick")).size(14).flex_none().text_color(tone(t, "ok"))).child(`${state.approvals} approval${state.approvals === 1 ? "" : "s"}`)
-          : div().child("No approvals"),
+        state.approvals - state.botApprovals
+          ? h_flex().gap(6).items_center().font_medium().text_color(tone(t, "ok")).child(svg(ICON("tick")).size(14).flex_none().text_color(tone(t, "ok"))).child(`${state.approvals - state.botApprovals} approval${state.approvals - state.botApprovals === 1 ? "" : "s"}`)
+          : div().child(state.botApprovals ? "No approvals from people" : "No approvals"),
       )
+      .when(state.botApprovals > 0, (el) => el.child(h_flex().gap(5).items_center().text_color(tone(t, "ok")).child(svg(ICON("bot")).size(13).flex_none().text_color(tone(t, "ok"))).child(`${state.botApprovals} bot approval${state.botApprovals === 1 ? "" : "s"}`)))
       .child(changes ? div().text_color(tone(t, "bad")).child(`${changes} reviewer${changes === 1 ? "" : "s"} requested changes`) : div().child("No changes requested"))
       .child(open ? div().text_color(tone(t, "warn")).child(`${open} open thread${open === 1 ? "" : "s"}`) : div().child(botOpen ? "No open threads from people" : "No open threads"))
       .when(botOpen > 0, (el) => el.child(h_flex().gap(5).items_center().child(svg(ICON("bot")).size(13).flex_none().text_color(t.dim)).child(`${botOpen} open from bots`)));

@@ -157,6 +157,8 @@ export function readiness(pr, detail, { queueBased = false } = {}) {
   const tally = checks ? tallyChecks(checks) : tallySummary(pr.checks);
   const reviewers = detail ? latestReviews(detail.reviews, pr.author) : null;
   const approvals = reviewers ? reviewers.filter((reviewer) => reviewer.state === "APPROVED").length : pr.approvals ?? 0;
+  const botApprovals = reviewers ? reviewers.filter((reviewer) => reviewer.state === "APPROVED" && reviewer.isBot).length : pr.botApprovals ?? 0;
+  const approvalText = (count) => (botApprovals ? `${plural(count - botApprovals, "approval")} + ${botApprovals} bot` : plural(count, "approval"));
   const open = detail ? detail.threads.filter((thread) => !thread.isResolved && !thread.isOutdated) : null;
   const openThreads = open ? open.length : pr.threads?.total ?? 0;
   const botThreads = open ? open.filter((thread) => thread.isBot).length : pr.threads?.bot ?? 0;
@@ -177,11 +179,11 @@ export function readiness(pr, detail, { queueBased = false } = {}) {
     decision === "CHANGES_REQUESTED"
       ? { state: "bad", sub: "Changes requested" }
       : decision === "APPROVED"
-        ? { state: "ok", sub: plural(Math.max(approvals, 1), "approval") }
+        ? { state: "ok", sub: approvalText(Math.max(approvals, 1)) }
         : decision === "REVIEW_REQUIRED"
-          ? { state: "warn", sub: approvals ? `${plural(approvals, "approval")}, needs more` : "Waiting" }
+          ? { state: "warn", sub: approvals ? `${approvalText(approvals)}, needs more` : "Waiting" }
           : approvals
-            ? { state: "ok", sub: plural(approvals, "approval") }
+            ? { state: "ok", sub: approvalText(approvals) }
             : { state: "idle", sub: "Not required" };
   const threadsGate = humanThreads
     ? { state: "warn", sub: botThreads ? `${humanThreads} open, ${botThreads} bot` : `${humanThreads} open` }
@@ -218,7 +220,7 @@ export function readiness(pr, detail, { queueBased = false } = {}) {
     { id: "conflicts", label: "Conflicts", ...conflictsGate },
     lastGate,
   ];
-  return { gates, tally, approvals, openThreads, reviewers, verdict: verdictFor({ pr, tally, approvals, openThreads, botThreads, conflicting, behind, decision, failedRows, queueBased, othersClear }) };
+  return { gates, tally, approvals, botApprovals, openThreads, reviewers, verdict: verdictFor({ pr, tally, approvals, openThreads, botThreads, conflicting, behind, decision, failedRows, queueBased, othersClear }) };
 }
 
 function verdictFor({ pr, tally, approvals, openThreads, botThreads, conflicting, behind, decision, failedRows, queueBased, othersClear }) {

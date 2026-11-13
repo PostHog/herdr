@@ -27,6 +27,10 @@ export function stat(t, iconName, text, toneName = "dim") {
   return h_flex().gap(3).flex_none().items_center().child(icon(t, iconName, toneName, 11)).child(div().text_size(TEXT.meta).text_color(tone(t, toneName)).child(text));
 }
 
+function botApprovalStat(t, count) {
+  return h_flex().gap(1).flex_none().items_center().child(icon(t, "bot", "ok", 11)).child(icon(t, "approved", "ok", 9)).child(div().ml(2).text_size(TEXT.meta).text_color(tone(t, "ok")).child(String(count)));
+}
+
 export function progressBar(t, run) {
   if (!run?.checks?.total) return null;
   const done = run.checks.passed + run.checks.failed;
@@ -141,7 +145,8 @@ export function statusLine(view, t, pr, { scope = "mine", group = null, buttons 
     .when(Boolean(priority), (el) => el.child(priority))
     .when(scope !== "mine", (el) => el.child(div().min_w(0).flex_shrink_1().truncate().text_size(TEXT.meta).text_color(t.dim).child(`@${pr.author} · ${ago(pr.createdAt)}`)))
     .when(Boolean(ci), (el) => el.child(ci))
-    .when(pr.approvals > 0, (el) => el.child(stat(t, "approved", String(pr.approvals), "ok")))
+    .when(pr.approvals - (pr.botApprovals ?? 0) > 0, (el) => el.child(stat(t, "approved", String(pr.approvals - (pr.botApprovals ?? 0)), "ok")))
+    .when(pr.botApprovals > 0, (el) => el.child(botApprovalStat(t, pr.botApprovals)))
     .when(pr.threads.human > 0, (el) => el.child(stat(t, "comment", String(pr.threads.human), "warn")))
     .when(pr.threads.bot > 0, (el) => el.child(stat(t, "bot", String(pr.threads.bot), "dim")))
     .when(Boolean(pr.watching && !pr.mine), (el) => el.child(stat(t, "eye", "watching", "info")))

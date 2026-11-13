@@ -34,6 +34,7 @@ const BOT_LOGINS = new Set([
   "sonarcloud",
   "sonarqubecloud",
   "sourcery-ai",
+  "stamphog",
   "trunk-io",
   "vercel",
 ]);
