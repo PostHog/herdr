@@ -63,25 +63,33 @@ export async function auth() {
 export const configDir = (a) => a?.configDirectory || `${home()}/.claude`;
 export const projectsDir = (a) => a?.projectsDirectory || `${configDir(a)}/projects`;
 
-const opening = () => `{ [ -f ${shq(tapPath())} ] && sh ${shq(tapPath())} --tee || cat; } | {\n`;
+const tee = () => `{ [ -f ${shq(tapPath())} ] && sh ${shq(tapPath())} --tee || cat; }`;
+const opening = () => `${tee()} | {\n`;
 const CLOSING = "\n}";
+const tapOnly = () => `${tee()} >/dev/null`;
 const legacyOpening = () => `[ -f ${shq(tapPath())} ] && exec sh ${shq(tapPath())}`;
 
-export const wrap = (command) => `${opening()}${command || "true"}${CLOSING}`;
+export const wrap = (command) => (command ? `${opening()}${command}${CLOSING}` : tapOnly());
 
 export function unwrap(command, dir) {
   if (typeof command !== "string") return null;
   const text = command.trimEnd();
-  let own = null;
+  if (text === tapOnly()) return "";
   if (text.startsWith(opening()) && text.endsWith(CLOSING) && text.length > opening().length + CLOSING.length) {
-    own = text.slice(opening().length, -CLOSING.length);
-  } else if (text.startsWith(legacyOpening())) {
+    return text.slice(opening().length, -CLOSING.length);
+  }
+  if (text.startsWith(legacyOpening())) {
     let rest = text.slice(legacyOpening().length);
     const arg = ` ${shq(backupDir(dir))}`;
     if (rest.startsWith(arg)) rest = rest.slice(arg.length);
-    if (rest.startsWith("; ")) own = rest.slice(2);
+    if (rest.startsWith("; ")) return rest.slice(2);
   }
-  return own === "true" ? "" : own;
+  return null;
+}
+
+async function legacySaved(dir) {
+  const text = (await readTextFile(`${backupDir(dir)}/original-statusline.json`)) ?? (await readTextFile(`${dataDir()}/original-statusline.json`));
+  return parse(text);
 }
 
 export async function connection(dir) {
@@ -91,8 +99,10 @@ export async function connection(dir) {
   if (!settings || typeof settings !== "object" || Array.isArray(settings)) return { path, error: `${path} is not valid JSON` };
   const command = settings.statusLine?.command;
   const connected = typeof command === "string" && command.includes("/mods/claude-usage/tap.sh");
-  const own = connected ? unwrap(command, dir) : null;
-  return { path, text, settings, connected, command: own, legacy: own != null && !command.startsWith(opening()) };
+  let own = connected ? unwrap(command, dir) : null;
+  const legacy = own != null && command.trimEnd() !== tapOnly() && !command.startsWith(opening());
+  if (legacy && own === "true" && (await legacySaved(dir))?.command !== "true") own = "";
+  return { path, text, settings, connected, command: own, legacy };
 }
 
 const REPLACE = [
@@ -139,7 +149,7 @@ export async function connect(dir) {
   if (c.connected) return;
   const original = c.settings.statusLine ?? null;
   const command = original?.type === "command" && typeof original.command === "string" ? original.command : "";
-  const statusLine = { ...(original ?? {}), type: "command", command: wrap(command) };
+  const statusLine = { ...(original ?? {}), type: "command", command: wrap(original ? command || "true" : "") };
   await writeThrough(c.path, c.text, pretty({ ...c.settings, statusLine }));
 }
 

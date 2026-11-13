@@ -74,7 +74,7 @@ export default class ClaudeUsage extends View {
     this.authAt = 0;
     this.link = null;
     this.original = "";
-    this.upgraded = false;
+    this.upgradeAt = 0;
     this.data = null;
     this.rows = null;
     this.rowsError = null;
@@ -127,8 +127,8 @@ export default class ClaudeUsage extends View {
           try {
             const dir = configDir(this.auth);
             this.link = await connection(dir);
-            if (this.link.legacy && !this.upgraded) {
-              this.upgraded = true;
+            if (this.link.legacy && Date.now() - this.upgradeAt > AUTH_EVERY) {
+              this.upgradeAt = Date.now();
               await upgrade(dir).catch(() => null);
               this.link = await connection(dir);
             }
