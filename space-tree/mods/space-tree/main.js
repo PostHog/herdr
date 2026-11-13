@@ -188,8 +188,26 @@ export default class SpaceTree extends View {
   spaceRow(t, s, color, count, top) {
     const open = !this.folded.has(s.id);
     const fill = color?.startsWith("#") ? color : (MARK[color] ?? t[color] ?? t.accent);
-    return h_flex()
-      .id(`space-${s.id}`)
+    const id = `space-${s.id}`;
+    const newTab = div()
+      .id(`new-${s.id}`)
+      .size(18)
+      .flex_none()
+      .flex()
+      .items_center()
+      .justify_center()
+      .rounded(4)
+      .text_color(t.dim)
+      .hover((st) => st.bg(t.hover).text_color(t.foreground))
+      .tooltip("New tab here")
+      .on_click((_e, cx) => {
+        cx.stop_propagation();
+        // Herdr's new-tab menu opens in the shown space.
+        run("space.select", { id: s.id });
+        openOverlay({ mod: "new-menu", kind: "popup", width: 250, height: 512 });
+      })
+      .child(svg("mods/workspace-chrome/plus.svg").size(12));
+    return this.hoverable(h_flex().id(id), id)
       .h(30)
       .pl(2)
       .pr(8)
@@ -207,40 +225,105 @@ export default class SpaceTree extends View {
       .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(s.name))
       .when(Boolean(s.machine), (el) => el.child(div().flex_none().text_size(10.5).text_color(t.dim).child(s.machine)))
       .when(!quiet(s.branch), (el) => el.child(div().flex_none().max_w(130).truncate().text_size(11.5).text_color(t.dim).child(s.branch)))
-      .when(!open && Boolean(top), (el) => el.child(this.status(t, top)));
+      .when(!open && Boolean(top), (el) => el.child(this.status(t, top)))
+      .when(this.hovered === id, (el) => el.child(newTab));
   }
 
+  // Tracks the pointer for the close buttons, which show on hover and on the focused row.
+  hoverable(el, id) {
+    return el.on_hover((on, cx) => {
+      if (on) this.hovered = id;
+      else if (this.hovered === id) this.hovered = null;
+      cx.notify();
+    });
+  }
+
+  closeButton(t, id, action) {
+    return div()
+      .id(`close-${id}`)
+      .size(18)
+      .flex_none()
+      .flex()
+      .items_center()
+      .justify_center()
+      .rounded(4)
+      .text_color(t.dim)
+      .hover((s) => s.bg(t.hover).text_color(t.foreground))
+      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+      .on_click((_e, cx) => {
+        cx.stop_propagation();
+        this.hovered = null;
+        action();
+        cx.notify();
+      })
+      .child(svg("mods/pane/close.svg").size(12));
+  }
+
+  // The same as a tab in Herdr's tab bar: click to show it, double-click to rename,
+  // drag onto another row of the space to move the tab there, right-click for the
+  // tab menu, the X to close. A tab split into panes closes one pane at a time.
   terminalRow(t, s, tab, p, many, kids, depth) {
     const st = p.program?.agent || p.status ? p.status : null;
     const g = this.git[`${s.machine ?? ""}\0${this.claude[p.terminal] ?? p.cwd}`];
     const open = !this.folded.has(p.terminal);
     const top = kids.reduce((m, k) => ((RANK[k.st] ?? 0) > (RANK[m] ?? 0) ? k.st : m), null);
     const on = s.active && tab.active && p.focused;
-    return h_flex()
-      .id(`term-${p.terminal}`)
+    const id = `term-${p.terminal}`;
+    const dragging = this.pressed && this.pressed.tab !== tab.id && this.pressed.space === s.id;
+    const target = dragging && this.over === tab.id;
+    const fromIndex = this.pressed ? s.tabs.findIndex((x) => x.id === this.pressed.tab) : -1;
+    return this.hoverable(h_flex().id(id), id)
+      .relative()
       .h(28)
       .pl(2 + INDENT * depth)
-      .pr(8)
+      .pr(6)
       .gap(6)
       .flex_none()
       .items_center()
       .rounded(8)
       .when(on, (el) => el.bg(t.raised))
       .hover((st) => st.bg(t.hover))
-      .on_click(() => run("pane.focus", { pane: p.pane }))
+      .when(this.pressed?.tab === tab.id && Boolean(this.over) && this.over !== tab.id, (el) => el.opacity(0.5))
+      .when(target, (el) => el.child(div().absolute().left(0).right(0).h(2).bg(t.accent)
+        .when(fromIndex < tab.index - 1, (line) => line.bottom(0))
+        .when(fromIndex > tab.index - 1, (line) => line.top(0))))
+      .on_mouse_down("left", (e, cx) => {
+        cx.stop_propagation();
+        if (e.click_count === 2) { run("tab.rename", { id: tab.id }); return; }
+        this.pressed = { tab: tab.id, space: s.id };
+        this.over = tab.id;
+      })
+      .on_mouse_move((_e, cx) => {
+        if (!this.pressed || this.pressed.space !== s.id || this.over === tab.id) return;
+        this.over = tab.id;
+        cx.notify();
+      })
+      .on_mouse_up("left", (_e, cx) => {
+        const from = this.pressed;
+        this.pressed = null;
+        this.over = null;
+        if (from && from.space === s.id && from.tab !== tab.id) run("tab.move", { id: from.tab, index: tab.index });
+        else if (from) run("pane.focus", { pane: p.pane });
+        cx.notify();
+      })
+      .on_mouse_down("right", (_e, cx) => {
+        cx.stop_propagation();
+        openOverlay({ mod: "menu", kind: "popup", width: 200, props: { tab: "tab", target: { id: tab.id, space: s.id } } });
+      })
       .child(this.chevron(t, p.terminal, open, kids.length, top))
       .child(icon(p.program, 14, t.muted))
-      .child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(st || on ? t.foreground : t.muted).child(label(tab, p, many)))
+      .child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(st || on ? t.foreground : t.muted).child(tab.zoomed && on ? `${label(tab, p, many)} Z` : label(tab, p, many)))
       .child(this.branchTag(t, g, s.branch) ?? div())
-      .child(this.status(t, st) ?? div());
+      .child(this.status(t, st) ?? div())
+      .when(on || this.hovered === id, (el) => el.child(this.closeButton(t, id, () => (many ? run("pane.close", { pane: p.pane }) : run("tab.close", { id: tab.id })))));
   }
 
   subRow(t, k, lines) {
-    return h_flex()
-      .id(`sub-${k.t.address}`)
+    const id = `sub-${k.t.address}`;
+    return this.hoverable(h_flex().id(id), id)
       .h(26)
       .pl(2 + INDENT * 2)
-      .pr(8)
+      .pr(6)
       .flex_none()
       .items_center()
       .rounded(8)
@@ -251,7 +334,8 @@ export default class SpaceTree extends View {
         .when(l === "└" || l === "├", (el) => el.border_b(1.5).rounded_bl(6))))
       .child(div().mr(6).child(icon(k.t.program, 13, t.muted)))
       .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.muted).child(k.t.name || k.t.template || k.t.program?.name || k.t.address))
-      .child(this.status(t, k.st) ?? div());
+      .child(this.status(t, k.st) ?? div())
+      .when(this.hovered === id, (el) => el.child(this.closeButton(t, id, () => (k.pane ? run("pane.close", { pane: k.pane }) : run("terminal.kill", { terminal: k.t.address })))));
   }
 
   render() {
@@ -303,7 +387,9 @@ export default class SpaceTree extends View {
         .child("Spaces")
         .child(div().id("space-new").size(26).flex_none().flex().items_center().justify_center().rounded(6).hover((s) => s.bg(t.hover).text_color(t.foreground))
           .on_click(() => run("space.new")).child(svg("mods/workspace-chrome/plus.svg").size(14))))
-      .child(v_flex().id("tree").flex_1().min_h(0).px(8).pb(14).overflow_y_scrollbar().mode("always").children(rows));
+      .child(v_flex().id("tree").flex_1().min_h(0).px(8).pb(14).overflow_y_scrollbar().mode("always")
+        .on_mouse_up("left", (_e, cx) => { this.pressed = null; this.over = null; cx.notify(); })
+        .children(rows));
   }
 
   // Narrow sidebar: one numbered cell per space, its most urgent agent beside it.
