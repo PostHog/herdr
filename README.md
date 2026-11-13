@@ -9,6 +9,7 @@ Each top-level folder with a `RECIPE.md` is one piece. You pick the pieces you w
 | [`claude-usage`](claude-usage/RECIPE.md) | Herdr's main layout plus a strip with your live Claude plan limits, and token counts per session. |
 | [`dopamine-squirrel`](dopamine-squirrel/README.md) | Jake Ruth's opinionated, ADHD-proof setup for a vertical monitor: a top bar and one panel for running agents (context %, cost, plan limits), review requests with triage, your PRs and the Trunk merge queue. Some buttons use Jake's PostHog skills; the README says which. Pick the parts you want. |
 | [`resume-agents`](resume-agents/RECIPE.md) | Brings Claude Code back in its terminals after you restart or shut down your computer. The shared layouts above already make room for it. |
+| [`space-tree`](space-tree/RECIPE.md) | The `Pull-Requests` layout with one sidebar tree: spaces (with each repo's own icon), their terminals and agents, and each agent's sub-agents, grouped by machine. The tabs move from the top bar into the tree. Needs `pull-requests`. |
 
 ## Install
 
