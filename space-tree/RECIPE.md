@@ -4,10 +4,13 @@ The `Pull-Requests` layout with one tree in place of the spaces and agents lists
 
 ## What you see
 
-- Each space is a row with its avatar, name, machine and branch (main and master go unsaid), and a chevron that folds it.
+- With another machine added (`hc machine ls`), spaces sit under a header per machine: "This computer" first, then each machine by name, with a dot that's green while connected, its state when it isn't (loading, asleep), a `+` for a new space there, and a chevron that folds it.
+  A machine with no spaces offers "New space there".
+- Each space is a row with its avatar, name and branch (main and master go unsaid), and a chevron that folds it.
   The avatar is the repo's own icon when it has one: the icon its web setup declares (a `<link rel="icon">` in its HTML, or Gatsby's manifest `icon`), else the best favicon, touch icon or `<repo>-icon` file it tracks in git.
   It sits on a small white tile with the theme's border, as browsers draw favicons, so dark and light logos both read in either theme.
-  Without one, or for a space on another machine, it's the first letter on the space's color, as in Herdr's own list.
+  On another machine the lookup runs there, and the file comes over base64-encoded (up to 200 KB).
+  Without one, it's the first letter on the space's color, as in Herdr's own list. A repo without an icon is looked at again after 10 minutes.
   Folded, it shows its most urgent agent's status.
 - Under a space, one row per terminal, tab by tab: the program's icon, the tab's name or what the program says it's doing, then a branch tag and the agent's status.
   A tab split into panes gets a row per pane.
@@ -25,6 +28,6 @@ The `Pull-Requests` layout with one tree in place of the spaces and agents lists
 ## Built from
 
 - `layouts/Space-Tree.json`: `pull-requests/layouts/Pull-Requests.json` with its `spaces` and `agents` blocks replaced by one `space-tree` block, and its `tabs` block by `space-tree-bar`. It needs the `pull-requests` piece for the PR panel and page.
-- `mods/space-tree/main.js`: reads `spaces()`, `panes()` and `terminals()`; every 10 seconds `git rev-parse` per folder in view (each folder at most every 30 seconds), and for Claude Code `hc get`, `~/.claude/sessions/<pid>.json` and the tail of the transcript.
-- `mods/space-tree/icons.js`: scores the candidates `git ls-files` returns and copies the winner into `data/space-tree/icons/` under Herdr's home, named by its hash (an `.ico` becomes a PNG through macOS's `sips`). Each repo is looked at again every six hours.
+- `mods/space-tree/main.js`: reads `spaces()`, `panes()` and `terminals()`; every 10 seconds `git rev-parse` per folder in view (each folder at most every 30 seconds), and for Claude Code `hc get`, `~/.claude/sessions/<pid>.json` and the tail of the transcript, on the terminal's own machine. A remote pane's folder comes from `terminals()` when `panes()` has none.
+- `mods/space-tree/icons.js`: scores the candidates `git ls-files` returns and copies the winner into `data/space-tree/icons/` under Herdr's home, named by its hash (an `.ico` becomes a PNG through macOS's `sips`). A found icon is looked at again every six hours.
 - `mods/space-tree-bar/main.js`: Herdr's `tabs` mod (0.1.14) without the tab list, keeping its per-space panel memory.

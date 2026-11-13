@@ -5,7 +5,7 @@
 
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { spaces, panes, terminals, focused, run, openOverlay, exec, hc, home, readTextFile, theme, shared, setShared, setAgentOrder, layout } from "herdr";
+import { spaces, panes, terminals, machines, focused, run, openOverlay, exec, hc, home, readTextFile, theme, shared, setShared, setAgentOrder, layout } from "herdr";
 import { findIcon } from "./icons.js";
 
 function find(node, id) {
@@ -29,6 +29,7 @@ const RANK = { blocked: 4, done: 3, working: 2, idle: 1 };
 const GIT_MS = 30000;
 const CLAUDE_MS = 10000;
 const ICON_MS = 6 * 3600000;
+const MISS_MS = 10 * 60000;
 const INDENT = 14;
 
 const clean = (s) => (s ?? "").replace(/^[^\p{L}\p{N}]+/u, "").trim();
@@ -57,10 +58,34 @@ export default class SpaceTree extends View {
     this.git = {}; // "machine\0cwd" -> { branch, linked } | null
     this.gitAt = {};
     this.claude = {}; // terminal address -> the folder its Claude session is in now
-    this.icons = JSON.parse(localStorage.getItem("icons") ?? "{}"); // repo root -> { path, at }
+    this.icons = Object.fromEntries(Object.entries(JSON.parse(localStorage.getItem("icons") ?? "{}")).filter(([k]) => k.includes("\0"))); // "machine\0root" -> { path, at }
+    this.termCwd = {}; // terminal address -> its folder, for panes that report none (another machine's)
+    this.homes = {}; // machine -> its home folder
+    this.machines = []; // `hc machine ls`, without temporary ones
     this.busy = false;
     cx.timer.every(CLAUDE_MS, (cx) => this.refresh(cx));
+    cx.timer.every(15000, (cx) => this.refreshMachines(cx));
     this.refresh(cx);
+    this.refreshMachines(cx);
+  }
+
+  refreshMachines(cx) {
+    cx.spawn(async (cx) => {
+      try {
+        const r = await hc(["machine", "ls", "--json"]);
+        if (r.code === 0) this.machines = (JSON.parse(r.stdout).machines ?? []).filter((m) => !m.temporary);
+      } catch {}
+      cx.notify();
+    });
+  }
+
+  async homeOf(on) {
+    if (!on) return home();
+    if (!this.homes[on]) {
+      const r = await exec("sh", ["-c", 'printf %s "$HOME"'], { on });
+      if (r.code === 0 && r.stdout) this.homes[on] = r.stdout;
+    }
+    return this.homes[on] ?? null;
   }
 
   fold(id, cx) {
@@ -90,19 +115,22 @@ export default class SpaceTree extends View {
   // transcript line carries the folder it worked in, a worktree after EnterWorktree.
   async findClaudeFolders() {
     const found = {};
+    const machineOf = new Map(spaces().flatMap((s) => s.tabs.map((t) => [t.id, s.machine ?? null])));
     for (const p of panes()) {
-      if (!p.terminal || p.terminal.includes("/") || p.program?.key !== "claude") continue;
+      if (!p.terminal || p.program?.key !== "claude") continue;
+      const on = machineOf.get(p.tab) ?? null;
       const r = await hc(["get", p.terminal, "--json"]);
       if (r.code !== 0) continue;
       let pid;
       try { pid = JSON.parse(r.stdout).foreground?.pid; } catch { continue; }
-      const text = pid && (await readTextFile(`${home()}/.claude/sessions/${pid}.json`));
+      const dir = await this.homeOf(on);
+      const text = pid && dir && (await readTextFile(`${dir}/.claude/sessions/${pid}.json`, { on }));
       if (!text) continue;
       let s;
       try { s = JSON.parse(text); } catch { continue; }
       if (!s.sessionId || !s.cwd) continue;
       const project = s.cwd.replace(/[^A-Za-z0-9]/g, "-");
-      const tail = await exec("tail", ["-c", "200000", `${home()}/.claude/projects/${project}/${s.sessionId}.jsonl`]);
+      const tail = await exec("tail", ["-c", "200000", `${dir}/.claude/projects/${project}/${s.sessionId}.jsonl`], { on });
       const folders = tail.code === 0 ? [...tail.stdout.matchAll(/"cwd":"((?:[^"\\]|\\.)*)"/g)] : [];
       const last = folders.length ? JSON.parse(`"${folders.at(-1)[1]}"`) : s.cwd;
       found[p.terminal] = last;
@@ -116,9 +144,10 @@ export default class SpaceTree extends View {
     const sp = spaces();
     const machineOf = new Map(sp.flatMap((s) => s.tabs.map((t) => [t.id, s.machine ?? null])));
     const wanted = new Map();
+    this.termCwd = Object.fromEntries(terminals().filter((k) => k.cwd).map((k) => [k.address, k.cwd]));
     for (const p of panes()) {
       if (!p.terminal) continue;
-      const cwd = this.claude[p.terminal] ?? p.cwd;
+      const cwd = this.claude[p.terminal] ?? this.cwdOf(p);
       if (!cwd) continue;
       const on = machineOf.get(p.tab) ?? null;
       wanted.set(`${on ?? ""}\0${cwd}`, { on, cwd });
@@ -139,11 +168,16 @@ export default class SpaceTree extends View {
   }
 
   // The repo a space is in: where its first terminal is now.
+  cwdOf(p) {
+    return p.cwd ?? this.termCwd[p.terminal] ?? null;
+  }
+
   spaceRoot(s, ps) {
-    if (s.machine) return null;
     const tabs = new Set(s.tabs.map((t) => t.id));
-    const cwd = ps.find((p) => tabs.has(p.tab) && p.cwd)?.cwd;
-    return cwd ? this.git[`\0${cwd}`]?.top ?? null : null;
+    const first = ps.find((p) => tabs.has(p.tab) && this.cwdOf(p));
+    const cwd = first ? this.cwdOf(first) : null;
+    const top = cwd ? this.git[`${s.machine ?? ""}\0${cwd}`]?.top : null;
+    return top ? `${s.machine ?? ""}\0${top}` : null;
   }
 
   async findIcons() {
@@ -152,9 +186,11 @@ export default class SpaceTree extends View {
     let changed = false;
     for (const s of spaces()) {
       const root = this.spaceRoot(s, ps);
-      if (!root || now - (this.icons[root]?.at ?? 0) < ICON_MS) continue;
+      const seen = this.icons[root];
+      // A miss is asked again sooner: the repo may gain an icon, or its machine was away.
+      if (!root || (seen && now - seen.at < (seen.path ? ICON_MS : MISS_MS))) continue;
       let path = null;
-      try { path = await findIcon(root); } catch (e) { console.log(`space-tree icon: ${e}`); }
+      try { path = await findIcon(root.split("\0")[1], s.machine ?? null); } catch (e) { console.log(`space-tree icon: ${e}`); }
       this.icons[root] = { path, at: now };
       changed = true;
     }
@@ -253,7 +289,6 @@ export default class SpaceTree extends View {
         ? h_flex().size(18).flex_none().rounded(5).overflow_hidden().bg("#ffffff").border(1).border_color(t.border).items_center().justify_center().child(image(pic).w(14).h(14))
         : h_flex().size(18).flex_none().rounded(5).bg(fill).items_center().justify_center().text_size(10.5).font_bold().text_color("#ffffff").child([...s.name][0]?.toUpperCase() ?? "?"))
       .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(s.name))
-      .when(Boolean(s.machine), (el) => el.child(div().flex_none().text_size(10.5).text_color(t.dim).child(s.machine)))
       .when(!quiet(s.branch), (el) => el.child(div().flex_none().max_w(130).truncate().text_size(11.5).text_color(t.dim).child(s.branch)))
       .when(!open && Boolean(top), (el) => el.child(this.status(t, top)))
       .when(this.hovered === id, (el) => el.child(newTab));
@@ -294,7 +329,7 @@ export default class SpaceTree extends View {
   // tab menu, the X to close. A tab split into panes closes one pane at a time.
   terminalRow(t, s, tab, p, many, kids, depth) {
     const st = p.program?.agent || p.status ? p.status : null;
-    const g = this.git[`${s.machine ?? ""}\0${this.claude[p.terminal] ?? p.cwd}`];
+    const g = this.git[`${s.machine ?? ""}\0${this.claude[p.terminal] ?? this.cwdOf(p)}`];
     const open = !this.folded.has(p.terminal);
     const top = kids.reduce((m, k) => ((RANK[k.st] ?? 0) > (RANK[m] ?? 0) ? k.st : m), null);
     const on = s.active && tab.active && p.focused;
@@ -393,7 +428,7 @@ export default class SpaceTree extends View {
     const nested = new Set(all.filter((k) => k.parent && all.some((p) => p.address === k.parent)).map((k) => k.address));
 
     const order = [];
-    const rows = sp.flatMap((s) => {
+    const spaceRows = (s) => {
       const tabs = s.tabs.filter((tab) => !tab.settled || tab.active);
       const groups = tabs.map((tab) => {
         const mine = ps.filter((p) => p.tab === tab.id && p.terminal && !nested.has(p.terminal));
@@ -410,6 +445,14 @@ export default class SpaceTree extends View {
         if (this.folded.has(p.terminal)) return [row];
         return [row, ...kids.map((k) => this.subRow(t, k, k.lines))];
       }))];
+    };
+    // Spaces under a header per machine, once there is more than this computer.
+    const remote = [...new Set([...sp.map((s) => s.machine).filter(Boolean), ...this.machines.map((m) => m.name)])].sort();
+    const rows = !remote.length ? sp.flatMap(spaceRows) : [null, ...remote].flatMap((m) => {
+      const mine = sp.filter((s) => (s.machine ?? null) === m);
+      const head = this.machineRow(t, m, mine);
+      if (this.folded.has(`machine:${m ?? ""}`)) return [head];
+      return [head, ...(mine.length ? mine.flatMap(spaceRows) : [this.emptyMachineRow(t, m)])];
     });
     setAgentOrder(order);
 
@@ -421,6 +464,58 @@ export default class SpaceTree extends View {
       .child(v_flex().id("tree").flex_1().min_h(0).px(8).pb(14).overflow_y_scrollbar().mode("always")
         .on_mouse_up("left", (_e, cx) => { this.pressed = null; this.over = null; cx.notify(); })
         .children(rows));
+  }
+
+  machineRow(t, m, mine) {
+    const machine = this.machines.find((k) => k.name === m);
+    const layoutState = machines().find((k) => k.name === m)?.layout;
+    const connected = !m || machine?.state === "connected";
+    const state = !m ? null : layoutState === "loading" ? "loading" : connected ? null : (machine?.state ?? "asleep").replace(/_/g, " ");
+    const key = `machine:${m ?? ""}`;
+    const open = !this.folded.has(key);
+    const top = mine.reduce((acc, s) => ((RANK[s.status] ?? 0) > (RANK[acc] ?? 0) ? s.status : acc), null);
+    return h_flex()
+      .id(`machine-${m ?? "local"}`)
+      .h(26)
+      .mt(6)
+      .pl(4)
+      .pr(8)
+      .gap(7)
+      .flex_none()
+      .items_center()
+      .rounded(6)
+      .text_size(11)
+      .text_color(t.dim)
+      .hover((s) => s.bg(t.hover))
+      .on_click((_e, cx) => this.fold(key, cx))
+      .child(svg(`mods/workspace-chrome/chevron-${open ? "down" : "right"}.svg`).size(11).flex_none())
+      .child(svg(`mods/workspace-chrome/${m ? "server" : "monitor"}.svg`).size(13).flex_none())
+      .child(div().flex_1().min_w(0).truncate().child(m ?? "This computer"))
+      .when(Boolean(state), (el) => el.child(div().flex_none().child(state)))
+      .when(!open && Boolean(top), (el) => el.child(this.status(t, top) ?? div()))
+      .when(connected, (el) => el.child(div().id(`machine-add-${m ?? "local"}`).flex_none().px(4).rounded(4)
+        .hover((s) => s.bg(t.hover).text_color(t.foreground))
+        .tooltip(`New space on ${m ?? "this computer"}`)
+        .on_click((_e, cx) => { cx.stop_propagation(); run("space.new", { machine: m ?? "" }); })
+        .child("+")))
+      .child(div().size(6).rounded(3).flex_none().bg(connected ? t.ansi2 : t.dim));
+  }
+
+  emptyMachineRow(t, m) {
+    return h_flex()
+      .id(`machine-new-${m ?? "local"}`)
+      .h(26)
+      .pl(24)
+      .gap(7)
+      .flex_none()
+      .items_center()
+      .rounded(7)
+      .text_size(12)
+      .text_color(t.dim)
+      .hover((s) => s.bg(t.hover).text_color(t.foreground))
+      .on_click(() => run("space.new", { machine: m ?? "" }))
+      .child(svg("mods/workspace-chrome/plus.svg").size(12))
+      .child("New space there");
   }
 
   // Narrow sidebar: one numbered cell per space, its most urgent agent beside it.
