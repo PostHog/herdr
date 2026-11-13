@@ -108,7 +108,7 @@ export function latestReviews(reviews, author) {
   for (const review of reviews) {
     const login = review.author?.login ?? "ghost";
     if (login === author || review.state === "PENDING") continue;
-    const entry = byLogin.get(login) ?? { login, state: "COMMENTED", at: null, url: null, commented: false };
+    const entry = byLogin.get(login) ?? { login, isBot: Boolean(review.isBot), state: "COMMENTED", at: null, url: null, commented: false };
     if (OPINIONS.includes(review.state) || entry.state === "COMMENTED") entry.state = review.state;
     if (!entry.at || Date.parse(review.submittedAt ?? 0) >= Date.parse(entry.at)) {
       entry.at = review.submittedAt;
@@ -157,7 +157,10 @@ export function readiness(pr, detail, { queueBased = false } = {}) {
   const tally = checks ? tallyChecks(checks) : tallySummary(pr.checks);
   const reviewers = detail ? latestReviews(detail.reviews, pr.author) : null;
   const approvals = reviewers ? reviewers.filter((reviewer) => reviewer.state === "APPROVED").length : pr.approvals ?? 0;
-  const openThreads = detail ? detail.threads.filter((thread) => !thread.isResolved && !thread.isOutdated).length : pr.threads?.total ?? 0;
+  const open = detail ? detail.threads.filter((thread) => !thread.isResolved && !thread.isOutdated) : null;
+  const openThreads = open ? open.length : pr.threads?.total ?? 0;
+  const botThreads = open ? open.filter((thread) => thread.isBot).length : pr.threads?.bot ?? 0;
+  const humanThreads = openThreads - botThreads;
   const conflicting = pr.mergeable === "CONFLICTING" || pr.mergeState === "DIRTY";
   const behind = pr.mergeState === "BEHIND";
   const decision = pr.reviewDecision;
@@ -180,7 +183,11 @@ export function readiness(pr, detail, { queueBased = false } = {}) {
           : approvals
             ? { state: "ok", sub: plural(approvals, "approval") }
             : { state: "idle", sub: "Not required" };
-  const threadsGate = openThreads ? { state: "warn", sub: `${openThreads} open` } : { state: "ok", sub: "None open" };
+  const threadsGate = humanThreads
+    ? { state: "warn", sub: botThreads ? `${humanThreads} open, ${botThreads} bot` : `${humanThreads} open` }
+    : botThreads
+      ? { state: "warn", sub: `${botThreads} from bots`, bot: true }
+      : { state: "ok", sub: "None open" };
   const conflictsGate = conflicting
     ? { state: "bad", sub: "Conflicting" }
     : behind
@@ -211,10 +218,10 @@ export function readiness(pr, detail, { queueBased = false } = {}) {
     { id: "conflicts", label: "Conflicts", ...conflictsGate },
     lastGate,
   ];
-  return { gates, tally, approvals, openThreads, reviewers, verdict: verdictFor({ pr, tally, approvals, openThreads, conflicting, behind, decision, failedRows, queueBased, othersClear }) };
+  return { gates, tally, approvals, openThreads, reviewers, verdict: verdictFor({ pr, tally, approvals, openThreads, botThreads, conflicting, behind, decision, failedRows, queueBased, othersClear }) };
 }
 
-function verdictFor({ pr, tally, approvals, openThreads, conflicting, behind, decision, failedRows, queueBased, othersClear }) {
+function verdictFor({ pr, tally, approvals, openThreads, botThreads, conflicting, behind, decision, failedRows, queueBased, othersClear }) {
   const mine = Boolean(pr.mine);
   const queue = pr.queue;
   const who = QUEUE_PROVIDER[queue?.provider] ?? "The queue";
@@ -230,7 +237,7 @@ function verdictFor({ pr, tally, approvals, openThreads, conflicting, behind, de
   }
   if (pr.stackDepth) return { title: pr.stackDepth.checked ? "Stack too deep" : "Stack depth not checked", detail: "Land the PRs below it first.", tone: "warn", primary: null };
   if (decision === "CHANGES_REQUESTED") return { title: "Changes requested", detail: mine ? "A reviewer asked for changes." : "Waiting on the author.", tone: "bad", primary: mine ? "fix" : null };
-  if (openThreads) return { title: `${plural(openThreads, "open thread")}`, detail: mine ? "Reply to or resolve them before merging." : "The discussion is still open.", tone: "warn", primary: mine ? "fix" : null };
+  if (openThreads) return { title: botThreads === openThreads ? plural(openThreads, "open bot thread") : plural(openThreads, "open thread"), detail: mine ? "Reply to or resolve them before merging." : "The discussion is still open.", tone: "warn", primary: mine ? "fix" : null };
   if (queue?.state === "cancelled") return { title: "Removed from the queue", detail: mine ? "Send it again when it's ready." : "Nothing needs you.", tone: "warn", primary: mine && !tally.running ? "merge" : null };
   if (tally.running) {
     const reviewed = decision !== "REVIEW_REQUIRED";

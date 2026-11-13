@@ -135,14 +135,15 @@ export function statusLine(view, t, pr, { scope = "mine", group = null, buttons 
   return h_flex()
     .gap(7)
     .items_center()
-    .flex_wrap()
+    .when(scope === "mine", (el) => el.flex_wrap())
     .when(Boolean(number), (el) => el.child(div().flex_none().text_size(TEXT.meta).text_color(t.dim).child(number)))
     .when(Boolean(next), (el) => el.child(div().flex_none().text_size(TEXT.chip).text_color(tone(t, next.tone)).child(next.label)))
     .when(Boolean(priority), (el) => el.child(priority))
-    .when(scope !== "mine", (el) => el.child(div().flex_none().text_size(TEXT.meta).text_color(t.dim).child(`@${pr.author} · ${ago(pr.createdAt)}`)))
+    .when(scope !== "mine", (el) => el.child(div().min_w(0).flex_shrink_1().truncate().text_size(TEXT.meta).text_color(t.dim).child(`@${pr.author} · ${ago(pr.createdAt)}`)))
     .when(Boolean(ci), (el) => el.child(ci))
     .when(pr.approvals > 0, (el) => el.child(stat(t, "approved", String(pr.approvals), "ok")))
-    .when(pr.threads.total > 0, (el) => el.child(stat(t, "comment", String(pr.threads.total), "warn")))
+    .when(pr.threads.human > 0, (el) => el.child(stat(t, "comment", String(pr.threads.human), "warn")))
+    .when(pr.threads.bot > 0, (el) => el.child(stat(t, "bot", String(pr.threads.bot), "dim")))
     .when(Boolean(pr.watching && !pr.mine), (el) => el.child(stat(t, "eye", "watching", "info")))
     .when(buttons, (el) => el.child(div().flex_1()).children(rowButtons(view, t, pr, { scope, next, entry, group, plain: true })));
 }
