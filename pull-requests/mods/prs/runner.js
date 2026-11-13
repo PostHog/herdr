@@ -132,6 +132,22 @@ fi
 touch "$(marker)"
 exec claude "$@"`;
 
+const CHECKOUT_SCRIPT = `set -e
+checkout="$1"; repo="$2"; shift 2
+[ -d "$checkout/.git" ] || [ -f "$checkout/.git" ] || gh repo clone "$repo" "$checkout" -- --filter=blob:none
+cd "$checkout"
+exec claude "$@"`;
+
+// Claude Code at the root of the repo's checkout, cloning it first when the
+// machine has none. No worktree: it works on whatever the checkout has out.
+export async function launchClaudeInCheckout(pr, claudeArgs, tabName) {
+  const machine = runnerMachine();
+  const checkout = await checkoutFor(pr.repo, machine);
+  const argv = ["bash", "-lc", `${PATH_PRELUDE} ${CHECKOUT_SCRIPT}`, "prs", checkout, pr.repo, ...claudeArgs];
+  await launchTab(tabName, argv, machine, { checkout });
+  return machine;
+}
+
 export async function launchClaudeOnPr(pr, claudeArgs, tabName) {
   const machine = runnerMachine();
   const home = await homeOf(machine);

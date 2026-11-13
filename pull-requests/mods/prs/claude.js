@@ -1,6 +1,6 @@
 import { run, spaces, agents, panes, exec, shared, setShared, knownAgents, notify } from "herdr";
 import { config, loadConfig } from "./config.js";
-import { launchClaudeOnPr } from "./runner.js";
+import { launchClaudeInCheckout } from "./runner.js";
 
 export const CLAUDE_ICON = "icons/claude.svg";
 
@@ -55,15 +55,16 @@ export function openClaude(pr, context = {}) {
     if (agent) return showTab({ space: agent.space, tab: agent.tab });
     const claudeArgs = ["--name", name, "--append-system-prompt", systemPrompt(pr, context)];
     try {
-      if (checkouts[0]) {
-        const claude = await claudeArgv(checkouts[0].machine);
+      const space = checkouts[0] ?? (await repoSpace(pr));
+      if (space) {
+        const [claude, folder] = await Promise.all([claudeArgv(space.machine), rootOf(space)]);
         if (showOpen()) return;
-        run("tab.new", { name, space: checkouts[0].id, argv: [...claude, ...claudeArgs] });
+        run("tab.new", { name, space: space.id, folder, argv: [...claude, ...claudeArgs] });
         return;
       }
       await loadConfig();
       if (showOpen()) return;
-      await launchClaudeOnPr(pr, claudeArgs, name);
+      await launchClaudeInCheckout(pr, claudeArgs, name);
     } catch (error) {
       notify({ title: "Couldn't start Claude Code", body: String(error?.message ?? error), level: "error" });
     }
@@ -77,9 +78,30 @@ async function branchSpaces(pr) {
   return candidates.filter((_space, index) => inPrRepo[index]);
 }
 
-async function inRepo(space, repo) {
+// A space already in the PR's repo, whatever branch it's on: the shown one first.
+async function repoSpace(pr) {
+  const ordered = [...spaces()].sort((a, b) => Number(b.active) - Number(a.active));
+  for (const space of ordered) if (await inRepo(space, pr.repo, liveFolder(space))) return space;
+  return null;
+}
+
+// Where a space is now: its first terminal's live folder, else where it was made.
+function liveFolder(space) {
   const tabs = new Set(space.tabs.map((tab) => tab.id));
-  const cwd = panes().find((pane) => tabs.has(pane.tab) && pane.branch === space.branch && pane.cwd)?.cwd;
+  return panes().find((pane) => tabs.has(pane.tab) && pane.cwd)?.cwd || space.folder || null;
+}
+
+// The top of the checkout the space is in, so the tab starts at its root.
+async function rootOf(space) {
+  const cwd = liveFolder(space);
+  if (!cwd) return undefined;
+  const result = await exec("git", ["rev-parse", "--show-toplevel"], { cwd, on: space.machine, timeout: 5000 }).catch(() => null);
+  return result?.code === 0 && result.stdout.trim() ? result.stdout.trim() : cwd;
+}
+
+async function inRepo(space, repo, folder = null) {
+  const tabs = new Set(space.tabs.map((tab) => tab.id));
+  const cwd = folder ?? panes().find((pane) => tabs.has(pane.tab) && pane.branch === space.branch && pane.cwd)?.cwd;
   if (!cwd) return false;
   const result = await exec("git", ["remote", "-v"], { cwd, on: space.machine, timeout: 5000 }).catch(() => null);
   if (result?.code !== 0) return false;
