@@ -1,4 +1,5 @@
 import { exec } from "herdr";
+import { isBot } from "./bots.js";
 
 const CHECK_COUNTS = `commits(last: 1) { nodes { commit { oid status { contexts { context state description targetUrl } } statusCheckRollup { state contexts(first: 1) {
   totalCount checkRunCountsByState { state count } statusContextCountsByState { state count } } } } } }`;
@@ -11,7 +12,7 @@ const PR_FIELDS = `fragment PrFields on PullRequest {
   autoMergeRequest { enabledAt } mergeQueueEntry { state position }
   stack { size } stackEntry { position }
   labels(first: 30) { nodes { name } }
-  latestOpinionatedReviews(first: 20) { nodes { state author { login } } }
+  latestOpinionatedReviews(first: 20) { nodes { state author { login __typename } } }
   reviewThreads(first: 60) { nodes { isResolved isOutdated comments(first: 1) { nodes { author { login __typename } } } } }
   trunkComments: comments(last: 15) { nodes { author { login } body } }
   ${CHECK_COUNTS}
@@ -43,7 +44,7 @@ const DETAIL_QUERY = `query($owner: String!, $name: String!, $number: Int!, $aft
   repository(owner: $owner, name: $name) { pullRequest(number: $number) {
     body
     files(first: 100) { nodes { path additions deletions } }
-    reviews(last: 30) { nodes { id author { login } state body submittedAt url } }
+    reviews(last: 30) { nodes { id author { login __typename } state body submittedAt url } }
     reviewThreads(first: 100) { nodes { id isResolved isOutdated path line
       comments(first: 20) { nodes { id author { login __typename } body createdAt url pullRequestReview { id } } } } }
     commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100, after: $after) {
@@ -186,7 +187,7 @@ function threadCounts(node, viewer, author) {
     if (thread.isResolved || thread.isOutdated) continue;
     const first = thread.comments?.nodes?.[0]?.author;
     if (!first) continue;
-    if (first.__typename === "Bot" || /\[bot\]$/i.test(first.login)) bot++;
+    if (isBot(first)) bot++;
     else if (first.login !== author) human++;
   }
   return { human, bot, total: human + bot };
@@ -230,7 +231,7 @@ function normalizePr(node, viewer) {
     url: node.url,
     title: node.title,
     author,
-    authorIsBot: node.author?.__typename === "Bot" || /\[bot\]$/i.test(author),
+    authorIsBot: isBot(node.author),
     isDraft: node.isDraft,
     state: node.state ?? "OPEN",
     createdAt: node.createdAt,
@@ -250,6 +251,7 @@ function normalizePr(node, viewer) {
     checks: checkCounts(node),
     visual: visualReview(node),
     approvals: (node.latestOpinionatedReviews?.nodes ?? []).filter((review) => review.state === "APPROVED").length,
+    botApprovals: (node.latestOpinionatedReviews?.nodes ?? []).filter((review) => review.state === "APPROVED" && isBot(review.author)).length,
     threads: threadCounts(node, viewer, author),
     mine: author === viewer,
   };
@@ -486,7 +488,7 @@ export async function fetchDetail(pr) {
   return {
     body: detail?.body ?? "",
     files: detail?.files?.nodes ?? [],
-    reviews: detail?.reviews?.nodes ?? [],
+    reviews: (detail?.reviews?.nodes ?? []).map((review) => ({ ...review, isBot: isBot(review.author) })),
     threads: (detail?.reviewThreads?.nodes ?? []).map((thread) => ({
       id: thread.id,
       isResolved: thread.isResolved,
@@ -494,7 +496,8 @@ export async function fetchDetail(pr) {
       path: thread.path,
       line: thread.line,
       reviewId: thread.comments?.nodes?.[0]?.pullRequestReview?.id ?? null,
-      comments: (thread.comments?.nodes ?? []).map((comment) => ({ id: comment.id, author: comment.author?.login ?? "ghost", isBot: comment.author?.__typename === "Bot", body: comment.body, createdAt: comment.createdAt, url: comment.url })),
+      isBot: isBot(thread.comments?.nodes?.[0]?.author),
+      comments: (thread.comments?.nodes ?? []).map((comment) => ({ id: comment.id, author: comment.author?.login ?? "ghost", isBot: isBot(comment.author), body: comment.body, createdAt: comment.createdAt, url: comment.url })),
     })),
     checks: checks.map((check) => ({ ...check, bucket: bucket(check.state) })).sort((a, b) => ["failed", "running", "passed"].indexOf(a.bucket) - ["failed", "running", "passed"].indexOf(b.bucket) || a.name.localeCompare(b.name)),
   };

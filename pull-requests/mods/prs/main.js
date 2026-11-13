@@ -44,6 +44,8 @@ const REVIEW_LOOK = {
   DISMISSED: { icon: "ban", tone: "dim", word: "was dismissed", verb: "Dismissed" },
 };
 const THREAD_LOOK = { icon: "comment", tone: "warn", word: "commented on the diff" };
+const actorAvatar = (t, login, size, bot) =>
+  bot ? h_flex().size(size).flex_none().items_center().justify_center().rounded(size / 2).bg(t.raised).child(svg(ICON("bot")).size(Math.round(size * 0.6)).text_color(t.muted)) : avatar(t, login, size);
 const BUCKET_TONES = { failed: "bad", running: "run", passed: "ok" };
 const bucketColor = (t, bucket) => (BUCKET_TONES[bucket] ? tone(t, BUCKET_TONES[bucket]) : t.dim);
 const sendsToTrunk = (pr) => isTrunkPr(pr) || usesTrunk(pr);
@@ -922,7 +924,7 @@ export default class Prs extends View {
       rows.push(div().px(2).child(section(t, `${part.label} · ${part.groups.reduce((sum, group) => sum + group.members.length, 0)}`)));
       for (const group of part.groups) {
         const members = group.members.length > 1 ? [...group.members].reverse() : group.members;
-        if (group.members.length > 1) rows.push(div().pt(6).child(stackHeader(this, t, group)));
+        if (group.members.length > 1) rows.push(div().pt(6).child(stackHeader(this, t, group, { plain: false })));
         for (const member of members) {
           const pr = member.pr;
           const id = `prs-wm-${pr.repo}-${pr.number}`;
@@ -1592,7 +1594,7 @@ export default class Prs extends View {
   gateView(t, gate) {
     const idle = gate.state === "idle";
     const color = idle ? t.dim : tone(t, gate.state);
-    const glyph = gate.id === "threads" && gate.state === "warn" ? "comment" : GATE_ICONS[gate.state] ?? "circle";
+    const glyph = gate.id === "threads" && gate.state === "warn" ? (gate.bot ? "bot" : "comment") : GATE_ICONS[gate.state] ?? "circle";
     return v_flex()
       .flex_1()
       .min_w(0)
@@ -1614,12 +1616,12 @@ export default class Prs extends View {
   sheetTabs(t, pr, findings, state) {
     const openFindings = findings.filter((finding) => finding.state === "open").length;
     const worst = worstBucket(state.tally);
-    const reviewCount = this.detail ? this.conversation().reviews : 0;
+    const { reviews: reviewCount = 0, botReviews = 0 } = this.detail ? this.conversation() : {};
     const tabs = [
       ["overview", "Overview", null],
       ["findings", "Findings", openFindings ? countPill(t, String(openFindings)) : null],
       ["checks", "Checks", state.tally.total ? countPill(t, tallyLabel(state.tally), worst ? bucketColor(t, worst) : null) : null],
-      ["reviews", "Reviews", reviewCount ? countPill(t, String(reviewCount)) : null],
+      ["reviews", "Reviews", reviewCount || botReviews ? countPill(t, botReviews ? `${reviewCount} · ${botReviews} bot` : String(reviewCount)) : null],
     ];
     return h_flex()
       .mt(8)
@@ -1849,8 +1851,9 @@ export default class Prs extends View {
           .gap(8)
           .items_center()
           .text_size(12.5)
-          .child(avatar(t, reviewer.login, 20))
+          .child(actorAvatar(t, reviewer.login, 20, reviewer.isBot))
           .child(div().flex_1().min_w(0).truncate().child(reviewer.login))
+          .when(reviewer.isBot, (el) => el.child(badge(t, "BOT", "dim")))
           .child(svg(ICON(look.icon)).size(14).flex_none().text_color(tone(t, look.tone))),
       )
       .child(div().pl(28).text_size(11.5).text_color(t.dim).child(`${look.verb} ${ago(reviewer.at)}${reviewer.commented && reviewer.state !== "COMMENTED" ? ", with a comment" : ""}`));
@@ -1953,11 +1956,14 @@ export default class Prs extends View {
       .map((review) => ({ at: review.submittedAt, review, threads: threadsOf(review.id) }))
       .filter(({ review, threads: own }) => review.state !== "COMMENTED" || cleanBody(review.body) || own.length);
     const entries = [...reviewEntries, ...threads.filter((thread) => !reviewIds.has(thread.reviewId)).map((thread) => ({ at: thread.comments[0]?.createdAt, threads: [thread] }))].sort((a, b) => Date.parse(b.at ?? 0) - Date.parse(a.at ?? 0));
-    return { entries, reviews: reviewEntries.length, open: threads.filter((thread) => !thread.isResolved).length };
+    const botReviews = reviewEntries.filter(({ review }) => review.isBot).length;
+    const open = threads.filter((thread) => !thread.isResolved);
+    const botOpen = open.filter((thread) => thread.isBot).length;
+    return { entries, reviews: reviewEntries.length - botReviews, botReviews, open: open.length - botOpen, botOpen };
   }
 
   reviewsTab(t, pr, state) {
-    const { entries, open } = this.conversation();
+    const { entries, open, botOpen } = this.conversation();
     const changes = (state.reviewers ?? []).filter((reviewer) => reviewer.state === "CHANGES_REQUESTED").length;
     const summary = h_flex()
       .gap(18)
@@ -1966,12 +1972,14 @@ export default class Prs extends View {
       .text_size(12.5)
       .text_color(t.muted)
       .child(
-        state.approvals
-          ? h_flex().gap(6).items_center().font_medium().text_color(tone(t, "ok")).child(svg(ICON("tick")).size(14).flex_none().text_color(tone(t, "ok"))).child(`${state.approvals} approval${state.approvals === 1 ? "" : "s"}`)
-          : div().child("No approvals"),
+        state.approvals - state.botApprovals
+          ? h_flex().gap(6).items_center().font_medium().text_color(tone(t, "ok")).child(svg(ICON("tick")).size(14).flex_none().text_color(tone(t, "ok"))).child(`${state.approvals - state.botApprovals} approval${state.approvals - state.botApprovals === 1 ? "" : "s"}`)
+          : div().child(state.botApprovals ? "No approvals from people" : "No approvals"),
       )
+      .when(state.botApprovals > 0, (el) => el.child(h_flex().gap(5).items_center().text_color(tone(t, "ok")).child(svg(ICON("bot")).size(13).flex_none().text_color(tone(t, "ok"))).child(`${state.botApprovals} bot approval${state.botApprovals === 1 ? "" : "s"}`)))
       .child(changes ? div().text_color(tone(t, "bad")).child(`${changes} reviewer${changes === 1 ? "" : "s"} requested changes`) : div().child("No changes requested"))
-      .child(open ? div().text_color(tone(t, "warn")).child(`${open} open thread${open === 1 ? "" : "s"}`) : div().child("No open threads"));
+      .child(open ? div().text_color(tone(t, "warn")).child(`${open} open thread${open === 1 ? "" : "s"}`) : div().child(botOpen ? "No open threads from people" : "No open threads"))
+      .when(botOpen > 0, (el) => el.child(h_flex().gap(5).items_center().child(svg(ICON("bot")).size(13).flex_none().text_color(t.dim)).child(`${botOpen} open from bots`)));
     if (!entries.length) return [summary, empty(t, "No reviews or comments yet.")];
     return [
       summary,
@@ -1985,6 +1993,7 @@ export default class Prs extends View {
   timelineItem(t, pr, entry, index, last) {
     const review = entry.review ?? null;
     const login = review ? review.author?.login ?? "ghost" : entry.threads[0]?.comments[0]?.author ?? "ghost";
+    const fromBot = review ? Boolean(review.isBot) : Boolean(entry.threads[0]?.isBot);
     const look = review ? REVIEW_LOOK[review.state] ?? REVIEW_LOOK.COMMENTED : THREAD_LOOK;
     const body = review ? cleanBody(review.body) : "";
     const url = review?.url ?? null;
@@ -2002,7 +2011,7 @@ export default class Prs extends View {
               .relative()
               .size(28)
               .flex_none()
-              .child(avatar(t, login, 28))
+              .child(actorAvatar(t, login, 28, fromBot))
               .child(h_flex().absolute().right(-4).bottom(-4).size(14).rounded(7).items_center().justify_center().border_1().border_color(t.popover).bg(tone(t, look.tone)).child(svg(ICON(look.icon)).size(9).text_color(t.popover))),
           )
           .when(!last, (el) => el.child(div().flex_1().w(1).bg(t.border))),
@@ -2019,6 +2028,7 @@ export default class Prs extends View {
               .gap(6)
               .items_center()
               .child(div().min_w(0).truncate().font_semibold().child(login))
+              .when(fromBot, (el) => el.child(badge(t, "BOT", "dim")))
               .child(div().flex_none().text_color(tone(t, look.tone)).child(look.word))
               .child(div().flex_none().text_color(t.dim).child(`· ${ago(entry.at)}`))
               .when(Boolean(review) && entry.threads.length > 0, (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(`· ${entry.threads.length} comment${entry.threads.length === 1 ? "" : "s"}`)))
@@ -2045,7 +2055,7 @@ export default class Prs extends View {
       .gap(6)
       .rounded(8)
       .border_1()
-      .border_color(thread.isResolved ? t.border : tone(t, "warn"))
+      .border_color(thread.isResolved ? t.border : tone(t, thread.isBot ? "dim" : "warn"))
       .when(thread.isResolved, (el) => el.bg(t.raised))
       .child(
         h_flex()
@@ -2054,7 +2064,8 @@ export default class Prs extends View {
           .items_center()
           .cursor_pointer()
           .on_click(toggle)
-          .child(badge(t, thread.isResolved ? "RESOLVED" : "OPEN", thread.isResolved ? "ok" : "warn"))
+          .child(badge(t, thread.isResolved ? "RESOLVED" : "OPEN", thread.isResolved ? "ok" : thread.isBot ? "dim" : "warn"))
+          .when(thread.isBot, (el) => el.child(svg(ICON("bot")).size(13).flex_none().text_color(t.dim)))
           .when(thread.isOutdated, (el) => el.child(badge(t, "OUTDATED", "dim")))
           .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(thread.isResolved ? t.dim : t.muted).child(`${thread.path}${thread.line ? `:${thread.line}` : ""}`))
           .when(!expanded, (el) => el.child(div().text_size(11).text_color(t.dim).child(`${thread.comments.length} comment${thread.comments.length === 1 ? "" : "s"} · Show`)))
@@ -2070,7 +2081,7 @@ export default class Prs extends View {
         v_flex()
           .id(`prs-tc-${thread.id}-${index}`)
           .gap(2)
-          .child(h_flex().gap(6).text_size(11).text_color(t.dim).child(div().font_semibold().text_color(t.foreground).child(`@${comment.author}${comment.isBot ? " (bot)" : ""}`)).child(ago(comment.createdAt)))
+          .child(h_flex().gap(6).text_size(11).text_color(t.dim).child(div().font_semibold().text_color(comment.isBot ? t.muted : t.foreground).child(`@${comment.author}`)).when(comment.isBot, (el) => el.child(badge(t, "BOT", "dim"))).child(ago(comment.createdAt)))
           .child(div().text_size(12).text_color(t.muted).child(cleanBody(comment.body).slice(0, 600))),
       ));
   }
