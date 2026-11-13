@@ -924,7 +924,7 @@ export default class Prs extends View {
       rows.push(div().px(2).child(section(t, `${part.label} · ${part.groups.reduce((sum, group) => sum + group.members.length, 0)}`)));
       for (const group of part.groups) {
         const members = group.members.length > 1 ? [...group.members].reverse() : group.members;
-        if (group.members.length > 1) rows.push(div().pt(6).child(stackHeader(this, t, group)));
+        if (group.members.length > 1) rows.push(div().pt(6).child(stackHeader(this, t, group, { plain: false })));
         for (const member of members) {
           const pr = member.pr;
           const id = `prs-wm-${pr.repo}-${pr.number}`;

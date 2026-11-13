@@ -221,7 +221,7 @@ function prRow(view, t, pr, { depth = 0, group = null, scope = "mine", quiet = f
     .when(Boolean(progress), (el) => el.child(div().pl(19).child(progress)));
 }
 
-export function stackHeader(view, t, group) {
+export function stackHeader(view, t, group, { plain = true } = {}) {
   const trunk = view.trunk;
   const top = group.members.at(-1).pr;
   const steps = group.members.map((member) => step(member.pr, queueFor(member.pr, group, trunk), trunk));
@@ -239,7 +239,7 @@ export function stackHeader(view, t, group) {
     .child(div().min_w(0).truncate().text_size(TEXT.meta).text_color(t.muted).child(`Stack of ${group.members.length} · ${top.headRef}`))
     .child(div().flex_none().text_size(TEXT.meta).text_color(queued ? t.accent : all ? tone(t, "ok") : t.dim).child(queued ? queued.state : `${ready}/${group.members.length} ready`))
     .child(div().flex_1())
-    .when(all && !queued && top.mine, (el) => el.child(actionButton(t, `prs-stack-merge-${group.id}`, "merged", "Merge stack…", () => view.act("merge", top), "ok", { plain: true })));
+    .when(all && !queued && top.mine, (el) => el.child(actionButton(t, `prs-stack-merge-${group.id}`, "merged", "Merge stack…", () => view.act("merge", top), "ok", { plain })));
 }
 
 export function sidebarMine(view, t) {
