@@ -3,6 +3,7 @@ import { store, updateStore, prKey, newId } from "./store.js";
 import { config, loadConfig } from "./config.js";
 import { showIfOpen, prRef, launchOnce } from "./claude.js";
 import { runnerMachine, runsDir, checkoutFor, launchClaudeOnPr, startHeadless, readRuns, readRunFile } from "./runner.js";
+import { settleKeepRun } from "./keeper.js";
 
 const LENSES = {
   correctness: "Logic errors: wrong conditions, off-by-one errors, unhandled cases, broken invariants, incorrect API use, and behavior that contradicts the PR description.",
@@ -139,10 +140,13 @@ export async function syncRuns() {
     Object.assign(statuses, await readRuns(machine, running.filter((run) => (run.machine ?? null) === machine).map((run) => run.id)));
   }
   for (const run of running) {
-    if (stalled(run, statuses[run.id]?.status)) statuses[run.id] = { status: "failed", summary: "The review stopped responding: its worker exited or the machine restarted." };
+    if (stalled(run, statuses[run.id]?.status)) statuses[run.id] = { status: "failed", summary: `The ${run.kind === "keep" ? "keeper run" : "review"} stopped responding: its worker exited or the machine restarted.` };
   }
-  const finished = running.filter((run) => ["done", "failed"].includes(statuses[run.id]?.status)).sort((a, b) => Date.parse(a.startedAt) - Date.parse(b.startedAt));
-  if (!finished.length) return false;
+  const settled = running.filter((run) => ["done", "failed", "superseded"].includes(statuses[run.id]?.status)).sort((a, b) => Date.parse(a.startedAt) - Date.parse(b.startedAt));
+  if (!settled.length) return false;
+  for (const run of settled.filter((run) => run.kind === "keep")) await settleKeepRun(run, statuses[run.id]);
+  const finished = settled.filter((run) => run.kind !== "keep");
+  if (!finished.length) return true;
   const findingsByRun = {};
   for (const run of finished) {
     if (statuses[run.id].status === "done" && run.kind === "review") findingsByRun[run.id] = parseFindings(await readRunFile(run.machine ?? null, run.id, "findings.jsonl"), run);

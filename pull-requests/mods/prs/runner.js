@@ -159,8 +159,8 @@ export async function launchClaudeOnPr(pr, claudeArgs, tabName) {
   return machine;
 }
 
-export async function startHeadless(id, args, machine = runnerMachine()) {
-  const runner = await asset("runner.sh");
+export async function startHeadless(id, args, machine = runnerMachine(), script = "runner.sh") {
+  const runner = await asset(script);
   const where = machine ? ["--on", machine] : [];
   const result = await exec("hc", ["run", ...where, "--bg", "--json", "--no-parent", "--name", `prs-${id.slice(-8)}`, "--", "bash", "-lc", `${PATH_PRELUDE} ${runner}`, "prs", ...args]);
   if (result.code !== 0) throw new Error(result.stderr.trim() || `hc run exited ${result.code}`);
@@ -184,4 +184,21 @@ export async function readRunFile(machine, id, name) {
   const dir = await runsDir(machine);
   const result = await runOn(machine, 'cat "$1/$2/$3" 2>/dev/null', [dir, id, name]);
   return result.stdout;
+}
+
+const PUSH_SCRIPT = `tree="$1"; branch="$2"; expected="$3"
+cd "$tree" || { echo "The keeper worktree is gone."; exit 1; }
+remote=$(git ls-remote origin "refs/heads/$branch" | cut -f1)
+[ "$remote" = "$expected" ] || { echo "The branch moved to \${remote:0:7} during the run, so nothing was pushed."; exit 3; }
+git push -q origin "HEAD:refs/heads/$branch" 2>&1 && git rev-parse HEAD`;
+
+export async function pushKeeperRun(machine, tree, branch, expected) {
+  const result = await exec("bash", ["-lc", `${PATH_PRELUDE} ${PUSH_SCRIPT}`, "prs", tree, branch, expected], { ...(machine ? { on: machine } : {}), timeout: 300000 });
+  const out = `${result.stdout}${result.stderr}`.trim();
+  return result.code === 0 ? { ok: true, sha: out.split("\n").pop() } : { ok: false, moved: result.code === 3, message: out.split("\n").pop() || `git push exited ${result.code}` };
+}
+
+export async function discardKeeperTree(machine, repo, tree, id) {
+  const checkout = await checkoutFor(repo, machine);
+  await runOn(machine, 'git -C "$1" worktree remove --force "$2" >/dev/null 2>&1; git -C "$1" update-ref -d "refs/herdr-prs/keep-$3" >/dev/null 2>&1; true', [checkout, tree, id]);
 }

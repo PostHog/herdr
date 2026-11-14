@@ -16,6 +16,8 @@ const EMPTY = {
   workflowRuns: [],
   loopState: {},
   workflowLog: [],
+  keep: {},
+  keepLog: [],
 };
 
 let cache = null;
