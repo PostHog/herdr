@@ -173,13 +173,64 @@ export const reviewViews = {
       .child(c.head(110, "AUTHOR")).child(c.head(52, "WAITING")).child(c.head(36, "UPD")).child(c.head(52, "ACTIVITY"))
       .child(c.head(sizeW, "SIZE")).child(c.head(28, "CC", true)).child(c.head(44, "DONE", true)).child(c.head(44, "WATCH", true));
 
+    // Merged without my review though I was asked by name. Shown only while one is unchecked.
+    const skipped = (gh.skipped ?? []).filter((p) => !marks[p.url] || this.leaving[p.url]);
+    // Click a row to see why it's here: who asked for me by name and when, and who reviewed instead.
+    const skippedWhy = (p) => {
+      const lines = [
+        ...p.askedMe.map((a, i) => div().id(`asked-${p.url}-${i}`).text_color(t.muted).cursor_pointer().hover((s) => s.text_color(t.foreground))
+          .on_click((_e, cx) => { cx.stop_propagation(); cx.open_url(p.url); })
+          .child(`${a.by}${a.by === p.author ? " (author)" : ""} requested your review on GitHub ${ago(Date.parse(a.at))} ago`)),
+        ...(p.mentions ?? []).map((m, i) => h_flex().id(`mention-${p.url}-${i}`).gap(6).min_w(0).cursor_pointer().hover((s) => s.text_color(t.foreground))
+          .on_click((_e, cx) => { cx.stop_propagation(); cx.open_url(m.url); })
+          .child(div().flex_none().text_color(t.accent).child(`${m.who} mentioned you ${ago(Date.parse(m.at))} ago:`))
+          .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(m.text))),
+        ...p.reviews.map((r) => div().text_color(t.dim).child(`${r.who} ${r.state === "APPROVED" ? "approved" : r.state === "CHANGES_REQUESTED" ? "requested changes" : "commented"} ${ago(Date.parse(r.at))} ago`)),
+        div().text_color(t.dim).child(`Merged${p.mergedBy && p.mergedBy !== "trunk-io" ? ` by ${p.mergedBy}` : ""} ${ago(Date.parse(p.mergedAt))} ago`),
+      ];
+      return { height: 10 + lines.length * LINE, el: v_flex().pl(30).pr(12).pb(6).pt(2).gap(2).text_size(11.5).children(lines) };
+    };
+    const skippedRow = (p) => {
+      const key = `skipped:${p.url}`, expanded = Boolean(this.expanded[key]);
+      const leaving = this.leaving[p.url];
+      const out = leaving ? Math.min(1, Math.max(0, (Date.now() - leaving.start - 150) / (LEAVE_MS - 150))) : 0;
+      const ease = out * out * (3 - 2 * out);
+      const detail = expanded ? skippedWhy(p) : null;
+      content += (ROW + (detail?.height ?? 0)) * (1 - ease);
+      return v_flex().when(Boolean(leaving), (el) => el.h((ROW + (detail?.height ?? 0)) * (1 - ease)).overflow_hidden().opacity(1 - ease))
+        .child(h_flex().id(`skipped-${p.url}`).h(ROW).px(6).gap(8).items_center().min_w(0).rounded(4)
+          .when(expanded, (el) => el.bg(t.surface))
+          .hover((s) => s.bg(t.hover)).cursor_pointer()
+          .on_click((_e, cx) => { this.expanded[key] = !expanded; cx.notify(); })
+          .child(h_flex().w(22).flex_none().items_center()
+            .child(svg(`mods/squirrel-panel/${expanded ? "chevron-down" : "chevron-right"}.svg`).size(11).text_color(t.dim)))
+          .child(c.chip(116, "Merged", c.green)).child(div().w(70).flex_none()).child(c.link(p, prW))
+          .child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(t.foreground).child(p.title))
+          .child(c.cell(110, p.author, t.muted))
+          .child(c.cell(52, ago(Date.parse(p.mergedAt)), c.green))
+          .child(div().w(36).flex_none()).child(div().w(52).flex_none())
+          .child(c.size(p, sizeW))
+          .child(this.iconButton(`review-skipped-${p.url}`, "mods/squirrel-panel/open-pane.svg", (_e, cx) => this.review(p, cx), t,
+            { spin: this.starting[p.url], color: this.reviewPane(p) ? t.accent : t.muted }))
+          .child(this.checkbox(`seen-${p.url}`, Boolean(leaving), (cx) => this.triage(p, "done", [], cx), t, "Seen: hide it"))
+          .child(div().w(44).flex_none()))
+        .when(Boolean(detail), (el) => el.child(detail.el));
+    };
+    const skippedHeader = h_flex().flex_none().h(COLS).px(6).gap(8).items_center().border_b(1).border_color(t.border)
+      .child(c.head(22, "")).child(c.head(116, "STATUS")).child(c.head(70, "")).child(c.head(prW, "PR")).child(c.headFlex("MERGED WITHOUT YOUR REVIEW"))
+      .child(c.head(110, "AUTHOR")).child(c.head(52, "MERGED")).child(c.head(36, "")).child(c.head(52, ""))
+      .child(c.head(sizeW, "SIZE")).child(c.head(28, "CC", true)).child(c.head(44, "SEEN", true)).child(c.head(44, ""));
+
     const body = v_flex().px(4).py(2)
       .when(Boolean(gh.at) && open.length === 0, (el) => el.child(div().px(8).h(ROW).flex().items_center().text_size(12).text_color(t.dim).child("Nothing waiting on you")))
       .children(rows.map(row))
+      .when(skipped.length > 0, (el) => el.child(div().h(9).flex().items_center().child(div().w_full().h(2).bg(t.border)))
+        .child(skippedHeader).children(skipped.map(skippedRow)))
       .when(done.length > 0, (el) => el.child(div().id("show-triaged").px(8).h(ROW).flex().items_center().text_size(11).text_color(t.dim)
         .hover((s) => s.text_color(t.foreground))
         .on_click((_e, cx) => { this.showTriaged = !this.showTriaged; cx.notify(); })
         .child(`${this.showTriaged ? "Hide" : "Show"} ${done.length} triaged (${watching} watching)`)));
+    if (skipped.length) content += COLS + 9;
     if (done.length) content += ROW;
     if (gh.at && open.length === 0) content += ROW;
     return { columns, body, content: Math.max(content, ROW) };

@@ -24,6 +24,8 @@ Every agent with its cost, context %, and what it's running in the background (s
 
 PRs waiting on you. **DONE** hides one for good, **WATCH** hides it until it changes. **CC** opens Claude on the PR, or resumes your last review of it. Clear the queue for confetti.
 
+Below them, PRs that asked for you by name but merged without your review, to glance at and tick off.
+
 ## My PRs · `cmd-3`
 
 ![My PRs](screenshots/my-prs.gif)
@@ -36,7 +38,7 @@ Your open PRs in any repo, the Trunk merge queue, and what merged this week, wit
 | --- | --- |
 | `cmd-1` `cmd-2` `cmd-3` | Running agents, Reviews, My PRs |
 | `cmd-b` | Show or hide the panel |
-| `cmd-t` `cmd-shift-d` | New pane, straight into Claude |
+| `cmd-t` `cmd-shift-d` | New pane, straight into Claude; quit it to get a shell |
 | `cmd-shift-t` | New tab |
 | `cmd-r` | Rename a pane |
 | `cmd-w` | Close a pane (asks first) |
@@ -64,7 +66,7 @@ Setting this up or taking a part of it? [RECIPE.md](RECIPE.md) has setup, every 
 | PRs from PostHog cloud tasks | `mods/squirrel-topbar/cloud.js` |
 | Neon glow | `mods/squirrel-topbar/glow.js` |
 | Agent cards, context %, cost | `mods/squirrel-panel/agents.js`, `statusline.sh` |
-| Plan limits (`/usage` every 10 min) | `mods/squirrel-panel/usage.js` |
+| Plan limits (`/usage` every 3 min) | `mods/squirrel-panel/usage.js` |
 | Reviews, triage, CC button | `mods/squirrel-panel/reviews.js`, `table.js` |
 | My PRs, merge queue | `mods/squirrel-panel/my-prs.js` |
 | Visualizer | `mods/squirrel-panel/visualizer.js` |

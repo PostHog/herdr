@@ -27,6 +27,13 @@ const GH_QUERIES = {
     issueCount nodes { ... on PullRequest { ${MINE_FIELDS()} } } } }`,
   merged: () => `query { viewer { login } list: search(query: "is:pr is:merged author:@me merged:>=${new Date(Date.now() - mergedDays() * 864e5).toISOString().slice(0, 10)}", type: ISSUE, first: 30) {
     issueCount nodes { ... on PullRequest { number title url createdAt mergedAt additions deletions repository { nameWithOwner } commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } } } } }`,
+  // Merged while still asking me by name: GitHub drops a request once I review, and a team request
+  // doesn't count, so these are the PRs someone wanted my eyes on that landed without them.
+  skipped: () => `query { viewer { login } list: search(query: "is:pr is:merged user-review-requested:@me merged:>=${new Date(Date.now() - mergedDays() * 864e5).toISOString().slice(0, 10)}", type: ISSUE, first: 30) {
+    issueCount nodes { ... on PullRequest { number title url createdAt mergedAt additions deletions repository { nameWithOwner } author { login } mergedBy { login }
+      reviews(last: 30) { nodes { author { __typename login } state submittedAt bodyText url } }
+      comments(last: 50) { nodes { author { login } createdAt bodyText url } }
+      timelineItems(itemTypes: [REVIEW_REQUESTED_EVENT], last: 20) { nodes { ... on ReviewRequestedEvent { createdAt actor { login } requestedReviewer { ... on User { login } } } } } } } } }`,
 };
 
 // GitHub's 502/504s are transient: try up to three times with a short pause.
@@ -130,7 +137,7 @@ export async function fetchGh() {
     exec("gh", ["api", "notifications?participating=true&per_page=100"], { timeout: 60000 }),
     ...Object.values(GH_QUERIES).map((q) => ghGraphql(q())),
   ]);
-  const [reviews, mine, merged] = results;
+  const [reviews, mine, merged, skipped] = results;
   // GitHub inbox threads I'm part of, keyed "owner/repo#number" (reason: mention, comment, review_requested…).
   const notes = new Map();
   if (notesResult.status === "fulfilled" && notesResult.value.code === 0) for (const t of JSON.parse(notesResult.value.stdout)) {
@@ -149,6 +156,17 @@ export async function fetchGh() {
   take(merged, "merged", (d) => d.list.nodes.filter((n) => n?.number)
     .map((n) => ({ number: n.number, title: n.title, url: n.url, repo: n.repository.nameWithOwner, created: n.createdAt, mergedAt: n.mergedAt,
       additions: n.additions, deletions: n.deletions, ci: n.commits.nodes[0]?.commit?.statusCheckRollup?.state ?? null }))
+    .sort((a, b) => Date.parse(b.mergedAt) - Date.parse(a.mergedAt)));
+  take(skipped, "skipped", (d) => d.list.nodes.filter((n) => n?.number)
+    .map((n) => ({ number: n.number, title: n.title, url: n.url, repo: n.repository.nameWithOwner, author: n.author?.login ?? "ghost",
+      created: n.createdAt, mergedAt: n.mergedAt, additions: n.additions, deletions: n.deletions,
+      mergedBy: n.mergedBy?.login ?? null,
+      askedMe: n.timelineItems.nodes.filter((e) => e.requestedReviewer?.login === d.viewer.login).map((e) => ({ by: e.actor?.login ?? "ghost", at: e.createdAt })),
+      // Comments and review bodies that @-mention me: usually what I was asked.
+      mentions: [...n.comments.nodes.map((c) => ({ who: c.author?.login ?? "ghost", at: c.createdAt, text: c.bodyText, url: c.url })),
+        ...n.reviews.nodes.filter((r) => r.bodyText).map((r) => ({ who: r.author?.login ?? "ghost", at: r.submittedAt, text: r.bodyText, url: r.url }))]
+        .filter((m) => m.text.includes(`@${d.viewer.login}`)).map((m) => ({ ...m, text: m.text.replace(/\s+/g, " ").slice(0, 200) })),
+      reviews: n.reviews.nodes.filter((r) => r.author?.login && r.author.__typename !== "Bot" && r.author.login !== n.author?.login && r.state !== "PENDING").map((r) => ({ who: r.author.login, state: r.state, at: r.submittedAt })) }))
     .sort((a, b) => Date.parse(b.mergedAt) - Date.parse(a.mergedAt)));
   next.mergedDays = mergedDays();
   // PRs your PostHog cloud tasks opened (a bot authors them): add them to My PRs, tagged, and out of Reviews.

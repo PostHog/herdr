@@ -33,7 +33,7 @@ Laid out for a vertical monitor; works on a wide one too. [README.md](README.md)
 - **Background work**: Herdr reports an agent as idle while its shells, monitors or background agents still run. The panel reads Claude's footer ("· 1 shell, 1 monitor") every 10 s and shows it on the third line with a slow blue spinner.
 - **Helpers**: cards group by tab. Every tab after the first starts folded into one-line pills (status, name, a blue dot for background work, context %); click its header or any pill to unfold them into cards. A helper says "helper of <parent>", its parent counts its helpers, and a tab of helpers is labelled with whose they are. The parent is the terminal that started it with `hc run`. For helpers opened another way (`herdr-app do tab.new`, `pane.split`, `terminal.open`), the panel finds the agent whose Claude transcript holds the command that launched it and labels the helper (`squirrel.parent`).
 - A helper without a pane shows as "+N in background" on its parent; click it to give it a pane.
-- **Plan limits strip**: one line per Claude subscription, with the same columns on each: 5-hour, week, per-model weeks such as Fable, and usage credits, each with when it resets. `usage.js` reads Claude Code's own `/usage` screen every 10 minutes: it starts a hidden Claude session in an empty folder, types `/usage`, reads the screen and closes the session. That sends nothing to the model. Between reads, the statusline keeps 5-hour and week current after every reply.
+- **Plan limits strip**: one line per Claude subscription, with the same columns on each: 5-hour, week, per-model weeks such as Fable, and usage credits, each with when it resets. `usage.js` reads Claude Code's own `/usage` screen every 3 minutes: it starts a hidden Claude session in an empty folder, types `/usage`, reads the screen and closes the session. That sends nothing to the model. Between reads, the statusline keeps 5-hour and week current after every reply.
 - The panel sizes itself to the rows of cards.
 
 ### Reviews (`mods/squirrel-panel/reviews.js`)
@@ -45,6 +45,7 @@ Laid out for a vertical monitor; works on a wide one too. [README.md](README.md)
 - **CC**: opens a pane below running Claude with your review skill on that PR. A second click jumps to that pane. If you closed that pane, the click resumes the same conversation (`claude --resume`), so a PR that comes back picks up where you left off.
 - **DONE**: hide it for good. **WATCH**: hide it until new commits, a new comment or a new request, then it comes back on top with an amber `↻` tag. The row shows the tick, then fades out. Ticking the last one plays confetti (`mods/squirrel-confetti/`).
 - At most 10 rows show; the rest scroll under a sticky header.
+- **Merged without your review**: below the open PRs, PRs from the last week that asked for you by name and merged before you reviewed. Team requests don't count. Click a row to see who asked and who reviewed instead; **SEEN** hides it. The section shows only while one is unchecked.
 
 ### My PRs (`mods/squirrel-panel/my-prs.js`)
 
@@ -69,7 +70,7 @@ Laid out for a vertical monitor; works on a wide one too. [README.md](README.md)
 | --- | --- |
 | `cmd-1` / `cmd-2` / `cmd-3` | Running agents / Reviews / My PRs, showing the panel if it's hidden |
 | `cmd-b` | Show or hide the panel |
-| `cmd-t`, `cmd-shift-d` | New pane below, straight into Claude (no shell start-up) |
+| `cmd-t`, `cmd-shift-d` | New pane below, straight into Claude (no shell start-up); quitting Claude leaves a shell |
 | `cmd-shift-t` | New tab |
 | `cmd-r` | Rename the focused pane |
 | `cmd-w` | Close the focused pane, after asking |
