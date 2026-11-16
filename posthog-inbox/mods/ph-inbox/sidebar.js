@@ -305,6 +305,13 @@ export class Sidebar {
 
   rail(t) {
     const cell = (el) => h_flex().flex_none().h(26).justify_center().items_center().child(el);
+    if (this.compact) {
+      return v_flex().size_full().min_h(0).bg(t.chrome).justify_center()
+        .child(cell(h_flex().id("rail-inbox").w(32).h(26).rounded(6).justify_center().items_center().text_size(11.5).text_color(t.muted)
+          .tooltip(`${this.count ?? 0} inbox reports for you. Click to triage.`).hover((s) => s.bg(t.hover))
+          .on_click(triage)
+          .child(String(this.count ?? "·"))));
+    }
     return v_flex().size_full().min_h(0).bg(t.chrome).pt(6).gap(2).overflow_hidden()
       .children(activeTasks().map((task) => {
         const space = spaceOf(task);
