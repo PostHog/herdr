@@ -6,6 +6,7 @@ import { v_flex, h_flex, TextView } from "gpui-base";
 import { theme, shared, openOverlay } from "herdr";
 import { ph } from "./ph.js";
 import { taskOfReport, spaceOf, goToTask } from "./store.js";
+import { heldByOther } from "./flows.js";
 import { button, priority, ago, prNumber } from "./ui.js";
 
 const words = (text) => (text ?? "").replace(/_/g, " ");
@@ -43,6 +44,16 @@ function body(report, artefacts) {
     if (log.length) parts.push("## Work log", log.join("\n\n---\n\n"));
   }
   return parts.join("\n\n");
+}
+
+// Who holds the report, said beside its title. Nothing until the report says.
+function claimTag(t, r) {
+  if (r.assignee === undefined) return null;
+  const mine = shared("ph-inbox.mine") ?? [];
+  const held = heldByOther(r, mine);
+  const [text, color] = mine.includes(r.id) ? ["Claimed by you", t.accent] : held ? [`Claimed by ${held}`, t.ansi3] : ["Unclaimed", t.dim];
+  return h_flex().flex_none().h(22).mt(1).px(9).items_center().rounded(11).bg(color + "26")
+    .text_size(11.5).font_medium().text_color(color).child(text);
 }
 
 const forDialog = (r) => ({
@@ -92,12 +103,14 @@ export class ReportPane {
     const task = taskOfReport(r.id);
     const space = task ? spaceOf(task) : null;
     const dialog = (view, width, height) => () => openOverlay({ mod: "ph-inbox", kind: "dialog", modal: true, width, height, props: { view, report: forDialog(r) } });
+    const claim = claimTag(t, r);
     const facts = [words(r.status), words(r.work_state), r.repo_slug, r.scout_name, r.signal_count ? `${r.signal_count} signals` : null, r.updated_at ? `updated ${ago(r.updated_at)}` : null].filter(Boolean);
     return root
       .child(v_flex().flex_none().px(22).pt(18).pb(14).gap(10).border_b_1().border_color(t.border)
         .child(h_flex().gap(10).items_start()
           .child(div().pt(3).child(priority(t, r.priority)))
-          .child(div().flex_1().min_w(0).text_size(16).font_semibold().child(r.title ?? "")))
+          .child(div().flex_1().min_w(0).text_size(16).font_semibold().child(r.title ?? ""))
+          .when(Boolean(claim), (el) => el.child(claim)))
         .child(div().text_size(12).text_color(t.dim).child(facts.join(" · ")))
         .when(Boolean(r.personal_reason), (el) => el.child(div().text_size(12.5).text_color(t.muted).child(r.personal_reason)))
         .child(h_flex().gap(8).pt(2).flex_wrap()

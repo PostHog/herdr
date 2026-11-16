@@ -22,7 +22,7 @@ A report is read in a pane, started locally (a worktree, a space and an agent), 
     When a refresh fails with a list already there, the list stays under "Showing the list from 4m ago." and the error.
   - "No personal ranking yet: PostHog's recommended order." shows when PostHog ranked the list without your personal ranking.
 - Under 160 px wide the sidebar is a rail: one 32 by 26 px cell per task with its status mark, then the inbox count. A click on the count widens the sidebar to 300 px.
-- **The report pane**, a tab named "Inbox": a header with the priority tile, the title (16 px semibold), a facts line (status, work state, repository, scout, "14 signals", "updated 3h"), PostHog's reason, and buttons: "Start locally" (or "Go to task" when its task has a space), "Start in cloud", "Open in PostHog".
+- **The report pane**, a tab named "Inbox": a header with the priority tile, the title (16 px semibold), a tag on its right that says who holds it ("Claimed by you" in `accent`, "Claimed by <name>" in `ansi3`, "Unclaimed" in `dim`, each on its color at 15%), a facts line (status, work state, repository, scout, "14 signals", "updated 3h"), PostHog's reason, and buttons: "Start locally" (or "Go to task" when its task has a space), "Start in cloud", "Open in PostHog".
   Below, selectable markdown up to 820 px wide: the summary, "Suggested next steps", "Pull requests", and the "Work log".
 - **Dialogs**, in the `popover` color with 18 px padding: a title with "Esc" on the right, a scrolling body, then a status line and buttons.
   - Start locally (540 by 520): the checkout path with Browse…, "Pull request #n" or "A new branch" when the report has an open pull request, the branch, the agent, and "Claim the report" or "Don't claim".
