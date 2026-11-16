@@ -123,8 +123,12 @@ same_repo_head() {
   git -C "$checkout" fetch -q origin "+refs/heads/$head_ref:refs/remotes/origin/$head_ref" 2>/dev/null || return 1
   [ "$(git -C "$checkout" rev-parse "refs/remotes/origin/$head_ref")" = "$head_sha" ]
 }
-if [ ! -d "$tree" ] && same_repo_head; then
-  git -C "$checkout" worktree add -q --track -b "$head_ref" "$tree" "origin/$head_ref"
+add_on_head_branch() {
+  git -C "$checkout" worktree add -q -b "$head_ref" "$tree" "origin/$head_ref" 2>/dev/null || { git -C "$checkout" worktree prune; return 1; }
+  git -C "$tree" config "branch.$head_ref.remote" origin
+  git -C "$tree" config "branch.$head_ref.merge" "refs/heads/$head_ref"
+}
+if [ ! -d "$tree" ] && same_repo_head && add_on_head_branch; then
   cd "$tree"
 elif [ ! -d "$tree" ]; then
   start=FETCH_HEAD
@@ -164,7 +168,7 @@ export async function launchClaudeOnPr(pr, claudeArgs, tabName) {
   const treePrefix = `${home}/.herdr/worktrees/prs/${pr.repo.replace("/", "-")}-`;
   const tree = `${treePrefix}${pr.number}`;
   const checkout = await checkoutFor(pr.repo, machine);
-  const argv = ["bash", "-lc", `${PATH_PRELUDE} ${PR_WORKTREE_SCRIPT}`, "prs", checkout, pr.repo, String(pr.number), tree, pr.headRef ?? "", pr.headSha ?? "", ...claudeArgs];
+  const argv = ["bash", "-lc", `${PATH_PRELUDE} ${PR_WORKTREE_SCRIPT}`, "prs", checkout, pr.repo, String(pr.number), tree, ...(pr.headInRepo ? [pr.headRef, pr.headSha ?? ""] : ["", ""]), ...claudeArgs];
   await launchTab(tabName, argv, machine, { checkout, treePrefix });
   return machine;
 }
