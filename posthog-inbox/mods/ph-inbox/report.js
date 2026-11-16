@@ -46,12 +46,17 @@ function body(report, artefacts) {
   return parts.join("\n\n");
 }
 
-// Who holds the report, said beside its title. Nothing until the report says.
+// Who holds the report, said beside its title: the person, and the agent or
+// cloud task that claimed it for them. Nothing until the report says.
 function claimTag(t, r) {
-  if (r.assignee === undefined) return null;
-  const mine = shared("ph-inbox.mine") ?? [];
-  const held = heldByOther(r, mine);
-  const [text, color] = mine.includes(r.id) ? ["Claimed by you", t.accent] : held ? [`Claimed by ${held}`, t.ansi3] : ["Unclaimed", t.dim];
+  const a = r.assignee;
+  if (a === undefined) return null;
+  const mine = (shared("ph-inbox.mine") ?? []).includes(r.id);
+  const who = mine ? "you" : heldByOther(r, []);
+  const text = !a ? "Unclaimed"
+    : a.kind === "task" ? `Claimed by ${mine ? "your" : `${who}'s`} cloud task`
+    : `Claimed by ${who}${a.agent ? ` via ${a.agent}` : ""}`;
+  const color = !a ? t.dim : mine ? t.accent : t.ansi3;
   return h_flex().flex_none().h(22).mt(1).px(9).items_center().rounded(11).bg(color + "26")
     .text_size(11.5).font_medium().text_color(color).child(text);
 }
