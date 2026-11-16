@@ -10,6 +10,7 @@ Each top-level folder with a `RECIPE.md` is one piece. You pick the pieces you w
 | [`dopamine-squirrel`](dopamine-squirrel/README.md) | Jake Ruth's opinionated, ADHD-proof setup for a vertical monitor: a top bar and one panel for running agents (context %, cost, plan limits), review requests with triage, your PRs and the Trunk merge queue. Some buttons use Jake's PostHog skills; the README says which. Pick the parts you want. |
 | [`resume-agents`](resume-agents/RECIPE.md) | Brings Claude Code back in its terminals after you restart or shut down your computer. The shared layouts above already make room for it. |
 | [`space-tree`](space-tree/RECIPE.md) | The `Pull-Requests` layout with one sidebar tree: spaces (with each repo's own icon), their terminals and agents, and each agent's sub-agents, grouped by machine. The tabs move from the top bar into the tree. Needs `pull-requests`. |
+| [`hogpilot`](hogpilot/RECIPE.md) | A side panel for CSMs: hogpilot's book of accounts with open signals and ARR at stake, and the account card for whichever account the focused terminal is working on, with buttons to ask Claude about it or open its dossier. Needs hogpilot installed. |
 
 ## Install
 
