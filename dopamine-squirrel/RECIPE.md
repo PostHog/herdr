@@ -112,6 +112,6 @@ Context % and session cost come from Claude Code's statusline input, and so do l
 
 ## For agents changing this
 
-- Shared state keys: `squirrel.github` (PR lists, written by the top bar), `squirrel.triaged`, `squirrel.visited`, `squirrel.view`, `squirrel.pane-names`, `squirrel.review-panes`, `squirrel.review-sessions`, `squirrel.standup-pane`, `squirrel.settings`.
+- Shared state keys: `squirrel.github` (PR lists, written by the top bar), `squirrel.triaged`, `squirrel.visited`, `squirrel.view`, `squirrel.pane-names`, `squirrel.review-panes`, `squirrel.review-sessions`, `squirrel.standup-pane`, `squirrel.settings`, `squirrel.ai-triage`, `squirrel.ai-triage-feedback`, `squirrel.ai-triage-learned`.
 - The top bar owns fetching. The panel only reads `squirrel.github`, so a different fetcher can feed it.
 - Panel views are mixins on one `View`: `agents.js`, `reviews.js`, `my-prs.js`, with `table.js` for the shared cells and `shared.js` for constants.

@@ -78,6 +78,7 @@ export default class SquirrelPanel extends View {
   render() {
     const t = theme();
     const view = this.view();
+    const aiTags = Object.values(shared("squirrel.ai-triage") ?? {});
     const gh = shared(GITHUB) ?? {};
     const marks = shared(TRIAGED) ?? {};
     const reviewCount = (gh.prs ?? []).filter((p) => !p.draft && (!marks[p.url] || this.resurfaced(p, marks[p.url]))).length;
@@ -115,6 +116,8 @@ export default class SquirrelPanel extends View {
         .child(div().flex_1())
         .when(view !== "agents", (el) => el
           .when(Boolean(gh.error), (el) => el.child(div().text_size(10.5).text_color(t.ansi1).child(gh.error)))
+          .when(view === "reviews" && aiTags.length > 0, (el) => el.child(div().id("ai-score").text_size(10.5).text_color(t.dim).mr(8)
+            .tooltip("AI tags you haven't flipped, out of all tagged PRs").child(`AI right ${aiTags.filter((x) => !x.corrected).length}/${aiTags.length}`)))
           .child(div().text_size(10.5).text_color(t.dim).child(gh.loading ? "refreshing…" : gh.at ? `updated ${ago(gh.at)} ago` : "loading…"))
           .child(div().id("gh-refresh").h(22).px(6).flex().items_center().rounded(4).text_size(11).text_color(t.muted)
             .hover((s) => s.bg(t.hover).text_color(t.foreground)).on_click(() => run("squirrel-topbar.gh_refresh")).child("Refresh"))))

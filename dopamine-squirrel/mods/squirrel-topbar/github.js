@@ -2,6 +2,7 @@
 import { shared, setShared, exec } from "herdr";
 import { squirrelSettings } from "./settings.js";
 import { cloudTaskPrs } from "./cloud.js";
+import { AI_TRIAGE } from "./triage-ai.js";
 
 const mergedDays = () => squirrelSettings().mergedDays;
 
@@ -10,7 +11,7 @@ const mergedDays = () => squirrelSettings().mergedDays;
 export const GH_EVERY_MS = 5 * 60 * 1000;
 const PR_FIELDS = `number title url isDraft createdAt updatedAt additions deletions reviewDecision
       repository { nameWithOwner } author { login }
-      commits(last: 1) { nodes { commit { committedDate statusCheckRollup { state } } } }
+      commits(last: 1) { nodes { commit { oid committedDate statusCheckRollup { state } } } }
       reviews(last: 50) { nodes { author { __typename login } state submittedAt bodyText url } }
       comments(last: 30) { nodes { author { __typename login } createdAt bodyText url } }
       timelineItems(itemTypes: [REVIEW_REQUESTED_EVENT], last: 20) { nodes { ... on ReviewRequestedEvent { createdAt requestedReviewer { ... on User { login } ... on Team { name } } } } }
@@ -20,8 +21,16 @@ const PR_FIELDS = `number title url isDraft createdAt updatedAt additions deleti
 // What My PRs reads for each PR: the shared fields, Trunk's sticky comment and unresolved threads.
 const MINE_FIELDS = () => `${PR_FIELDS} trunk: comments(first: 10) { nodes { author { login } body updatedAt } }
       threads: reviewThreads(first: 50) { nodes { isResolved path comments(first: 1) { nodes { author { __typename login } createdAt bodyText url } } } }`;
+const SKIPPED_FIELDS = `number title url createdAt mergedAt additions deletions repository { nameWithOwner } author { login } mergedBy { login }
+      reviews(last: 30) { nodes { author { __typename login } state submittedAt bodyText url } }
+      comments(last: 50) { nodes { author { login } createdAt bodyText url } }
+      timelineItems(itemTypes: [REVIEW_REQUESTED_EVENT], last: 20) { nodes { ... on ReviewRequestedEvent { createdAt actor { login } requestedReviewer { ... on User { login } ... on Team { name } } } } }`;
 const GH_QUERIES = {
   reviews: () => `query { viewer { login } list: search(query: "is:pr is:open archived:false review-requested:@me", type: ISSUE, first: 100) {
+    issueCount nodes { ... on PullRequest { ${PR_FIELDS} } } } }`,
+  // GitHub drops my request once I review and never re-requests on its own, so a PR I blocked would vanish
+  // while the author pushes fixes. These come back when there are commits after my last review.
+  blocked: () => `query { viewer { login } list: search(query: "is:pr is:open archived:false reviewed-by:@me review:changes_requested -author:@me", type: ISSUE, first: 30) {
     issueCount nodes { ... on PullRequest { ${PR_FIELDS} } } } }`,
   mine: () => `query { viewer { login } list: search(query: "is:pr is:open archived:false author:@me", type: ISSUE, first: 100) {
     issueCount nodes { ... on PullRequest { ${MINE_FIELDS()} } } } }`,
@@ -30,10 +39,7 @@ const GH_QUERIES = {
   // Merged while still asking me by name: GitHub drops a request once I review, and a team request
   // doesn't count, so these are the PRs someone wanted my eyes on that landed without them.
   skipped: () => `query { viewer { login } list: search(query: "is:pr is:merged user-review-requested:@me merged:>=${new Date(Date.now() - mergedDays() * 864e5).toISOString().slice(0, 10)}", type: ISSUE, first: 30) {
-    issueCount nodes { ... on PullRequest { number title url createdAt mergedAt additions deletions repository { nameWithOwner } author { login } mergedBy { login }
-      reviews(last: 30) { nodes { author { __typename login } state submittedAt bodyText url } }
-      comments(last: 50) { nodes { author { login } createdAt bodyText url } }
-      timelineItems(itemTypes: [REVIEW_REQUESTED_EVENT], last: 20) { nodes { ... on ReviewRequestedEvent { createdAt actor { login } requestedReviewer { ... on User { login } } } } } } } } }`,
+    issueCount nodes { ... on PullRequest { ${SKIPPED_FIELDS} } } } }`,
 };
 
 // GitHub's 502/504s are transient: try up to three times with a short pause.
@@ -105,7 +111,7 @@ function toPr(n, me, notes) {
   const since = myLast ? Date.parse(myLast.submittedAt) : Date.parse(requestedAt);
   const note = notes.get(`${n.repository.nameWithOwner}#${n.number}`);
   return {
-    headAt: head?.committedDate ?? n.createdAt, requestedAt,
+    headAt: head?.committedDate ?? n.createdAt, headSha: head?.oid ?? null, requestedAt,
     // My PRs only (the query asks for threads there): comments still waiting on an answer or a resolve.
     threads: (n.threads?.nodes ?? []).filter((x) => !x.isResolved && x.comments.nodes[0]).map((x) => {
       const c = x.comments.nodes[0];
@@ -123,11 +129,27 @@ function toPr(n, me, notes) {
     mine: reviewers.some((x) => x.login === me),
     waiting,
     // My review state: null = never reviewed; "stale" = new commits since my last review.
+    // My changes-requested still stands: a later plain comment doesn't lift it.
+    blockedByMe: reviews.filter((r) => r.author.login === me && r.state !== "COMMENTED").at(-1)?.state === "CHANGES_REQUESTED",
     myReview: !myLast ? null : head && Date.parse(head.committedDate) > Date.parse(myLast.submittedAt) ? "stale" : myLast.state,
     approvals: [...latestBy.values()].filter((s) => s === "APPROVED").length,
     openThreads: (n.reviewThreads?.nodes ?? []).filter((x) => !x.isResolved).length,
     trunk: trunkState(n),
   };
+}
+
+function toSkipped(n, me) {
+  const asks = n.timelineItems.nodes;
+  return { number: n.number, title: n.title, url: n.url, repo: n.repository.nameWithOwner, author: n.author?.login ?? "ghost",
+    created: n.createdAt, mergedAt: n.mergedAt, additions: n.additions, deletions: n.deletions,
+    mergedBy: n.mergedBy?.login ?? null,
+    askedMe: asks.filter((e) => e.requestedReviewer?.login === me).map((e) => ({ by: e.actor?.login ?? "ghost", at: e.createdAt })),
+    askedTeams: asks.filter((e) => e.requestedReviewer?.name).map((e) => ({ team: e.requestedReviewer.name, by: e.actor?.login ?? "ghost", at: e.createdAt })),
+    // Comments and review bodies that @-mention me: usually what I was asked.
+    mentions: [...n.comments.nodes.map((c) => ({ who: c.author?.login ?? "ghost", at: c.createdAt, text: c.bodyText, url: c.url })),
+      ...n.reviews.nodes.filter((r) => r.bodyText).map((r) => ({ who: r.author?.login ?? "ghost", at: r.submittedAt, text: r.bodyText, url: r.url }))]
+      .filter((m) => m.text.includes(`@${me}`)).map((m) => ({ ...m, text: m.text.replace(/\s+/g, " ").slice(0, 200) })),
+    reviews: n.reviews.nodes.filter((r) => r.author?.login && r.author.__typename !== "Bot" && r.author.login !== n.author?.login && r.state !== "PENDING").map((r) => ({ who: r.author.login, state: r.state, at: r.submittedAt })) };
 }
 
 export async function fetchGh() {
@@ -137,7 +159,7 @@ export async function fetchGh() {
     exec("gh", ["api", "notifications?participating=true&per_page=100"], { timeout: 60000 }),
     ...Object.values(GH_QUERIES).map((q) => ghGraphql(q())),
   ]);
-  const [reviews, mine, merged, skipped] = results;
+  const [reviews, blocked, mine, merged, skipped] = results;
   // GitHub inbox threads I'm part of, keyed "owner/repo#number" (reason: mention, comment, review_requested…).
   const notes = new Map();
   if (notesResult.status === "fulfilled" && notesResult.value.code === 0) for (const t of JSON.parse(notesResult.value.stdout)) {
@@ -152,22 +174,37 @@ export async function fetchGh() {
     next[`${name}At`] = Date.now();
   };
   take(reviews, "prs", (d) => d.list.nodes.filter((n) => n?.number).map((n) => toPr(n, d.viewer.login, notes)));
+  if (blocked.status === "fulfilled" && reviews.status === "fulfilled") {
+    const d = blocked.value, have = new Set(next.prs.map((p) => p.url));
+    for (const n of d.list.nodes.filter((n) => n?.number && !have.has(n.url))) {
+      const p = toPr(n, d.viewer.login, notes);
+      if (p.blockedByMe && p.myReview === "stale") next.prs.push({ ...p, mine: true, rereview: true, requestedAt: p.headAt });
+    }
+  }
   take(mine, "mine", (d) => d.list.nodes.filter((n) => n?.number).map((n) => toPr(n, d.viewer.login, notes)));
   take(merged, "merged", (d) => d.list.nodes.filter((n) => n?.number)
     .map((n) => ({ number: n.number, title: n.title, url: n.url, repo: n.repository.nameWithOwner, created: n.createdAt, mergedAt: n.mergedAt,
       additions: n.additions, deletions: n.deletions, ci: n.commits.nodes[0]?.commit?.statusCheckRollup?.state ?? null }))
     .sort((a, b) => Date.parse(b.mergedAt) - Date.parse(a.mergedAt)));
-  take(skipped, "skipped", (d) => d.list.nodes.filter((n) => n?.number)
-    .map((n) => ({ number: n.number, title: n.title, url: n.url, repo: n.repository.nameWithOwner, author: n.author?.login ?? "ghost",
-      created: n.createdAt, mergedAt: n.mergedAt, additions: n.additions, deletions: n.deletions,
-      mergedBy: n.mergedBy?.login ?? null,
-      askedMe: n.timelineItems.nodes.filter((e) => e.requestedReviewer?.login === d.viewer.login).map((e) => ({ by: e.actor?.login ?? "ghost", at: e.createdAt })),
-      // Comments and review bodies that @-mention me: usually what I was asked.
-      mentions: [...n.comments.nodes.map((c) => ({ who: c.author?.login ?? "ghost", at: c.createdAt, text: c.bodyText, url: c.url })),
-        ...n.reviews.nodes.filter((r) => r.bodyText).map((r) => ({ who: r.author?.login ?? "ghost", at: r.submittedAt, text: r.bodyText, url: r.url }))]
-        .filter((m) => m.text.includes(`@${d.viewer.login}`)).map((m) => ({ ...m, text: m.text.replace(/\s+/g, " ").slice(0, 200) })),
-      reviews: n.reviews.nodes.filter((r) => r.author?.login && r.author.__typename !== "Bot" && r.author.login !== n.author?.login && r.state !== "PENDING").map((r) => ({ who: r.author.login, state: r.state, at: r.submittedAt })) }))
+  take(skipped, "skipped", (d) => d.list.nodes.filter((n) => n?.number).map((n) => toSkipped(n, d.viewer.login))
     .sort((a, b) => Date.parse(b.mergedAt) - Date.parse(a.mergedAt)));
+  // Team requests the AI tag said likely need me, that merged without my review: they join the same section.
+  const tags = shared(AI_TRIAGE) ?? {}, since = Date.now() - mergedDays() * 864e5;
+  const seen = new Set([...(next.prs ?? []), ...(next.skipped ?? [])].map((p) => p.url));
+  const gone = Object.entries(tags).filter(([url, v]) => v.verdict === "needs" && !seen.has(url) && v.at > since).map(([url]) => url).slice(0, 30);
+  if (gone.length && skipped.status === "fulfilled") {
+    const parts = gone.map((url, i) => {
+      const [, owner, name, number] = /github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/.exec(url) ?? [];
+      return owner ? `p${i}: repository(owner: "${owner}", name: "${name}") { pullRequest(number: ${number}) { merged ${SKIPPED_FIELDS} } }` : "";
+    }).filter(Boolean);
+    const d = await ghGraphql(`query { viewer { login } ${parts.join("\n")} }`).catch(() => null);
+    for (const key of Object.keys(d ?? {}).filter((k) => /^p\d+$/.test(k))) {
+      const n = d[key]?.pullRequest;
+      if (!n?.merged || Date.parse(n.mergedAt) < since || n.reviews.nodes.some((r) => r.author?.login === d.viewer.login)) continue;
+      next.skipped.push({ ...toSkipped(n, d.viewer.login), aiReason: tags[n.url]?.reason });
+    }
+    next.skipped.sort((a, b) => Date.parse(b.mergedAt) - Date.parse(a.mergedAt));
+  }
   next.mergedDays = mergedDays();
   // PRs your PostHog cloud tasks opened (a bot authors them): add them to My PRs, tagged, and out of Reviews.
   const cloud = await cloudTaskPrs().catch(() => []);
