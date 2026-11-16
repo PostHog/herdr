@@ -9,9 +9,15 @@ This panel reads that store. It needs hogpilot installed and its book synced (`h
 
 - **The book.** One row per active account, most open signals first, then the most ARR at stake.
   Each row has a dot (grey with no open signals, the theme's working colour with some, red when $50k or more is at stake) and a line with its signal count, ARR at stake and remembered facts.
-- **The card.** Click a row, or work in a terminal that belongs to an account, and the panel shows `hp context <org>` for it as Markdown.
+- **The card.** Click a row, or work in a terminal that belongs to an account, and the panel shows `hp context <org>` for it.
   It follows focus: a terminal whose folder is inside an account folder (see Settings), or a tab or space named after an account, picks that account.
   Clicking a row pins it instead; "← Book" goes back.
+- **The card, laid out for people.** `hp context` prints a card for agents, so the panel lays it out again.
+  Billing, contract and setup become label rows. Each section folds, and Signals and Memory start open.
+  A signal shows its headline, the ARR at stake and its likely cause, and folds its linked facts.
+  Snapshots hide the metrics with no value and shorten the numbers. Hover a metric for when hogpilot last read it.
+  The panel drops the notes meant for agents, such as "read live before you quote".
+  "Raw" shows the card exactly as agents read it. A section the panel does not know shows as raw Markdown.
 - **Buttons on the card.** "Ask Claude" opens a new tab running Claude Code with a prompt to catch up on that account.
   "Dossier" opens the account's dossier, when you have an accounts folder.
 - **Status line.** When hogpilot last captured facts from a session, and a red note if its team pull is failing (hover for the error).
@@ -58,5 +64,6 @@ The panel reads the file on each refresh, so ↻ picks up a change.
 - `mods/hogpilot/main.js`: a `View`. The book is one query on `~/.local/state/hogpilot/state.db` (tables `book`, `account_signals`, `memory_facts`) through `/usr/bin/sqlite3` with `PRAGMA query_only`, so it can't write.
   It doesn't use `-readonly`: the store is in WAL mode, and a read-only open fails when no other connection has the WAL files open.
 - The card is `hp context <org_id>`. Dossiers come from a `grep` for `posthog_org_id:` across the accounts folder.
+- `mods/hogpilot/card.js` reads that card into sections and rows. It imports nothing from Herdr, so `node --test hogpilot/test/` tests it.
 - The status line is the tail of `~/.config/hogpilot/distill.log`, watched with `watchFolder`.
 - `mods/hogpilot/hog.svg`: a compass icon for a tab-bar button.

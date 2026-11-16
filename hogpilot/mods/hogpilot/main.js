@@ -11,12 +11,14 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, TextView } from "gpui-base";
 import { exec, theme, home, appHome, readTextFile, focused, agents, spaces, watchFolder, run, setShared, notify, checking } from "herdr";
+import { parseCard } from "./card.js";
 
 const expand = (p) => (typeof p === "string" && p ? p.replace(/^~(?=\/|$)/, home()).replace(/\/+$/, "") : null);
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const norm = (s) => String(s ?? "").toLowerCase().replace(/\b(ltd|limited|group|prod|inc)\b/g, "").replace(/[^a-z0-9]/g, "");
 const money = (n) => (n >= 1000 ? `$${Math.round(n / 1000)}k` : `$${Math.round(n)}`);
+const hardBreaks = (s) => s.replace(/([^\n])\n(?=[^\n])/g, "$1  \n");
 
 const ROSTER_SQL = `
 select b.org_id as org_id,
@@ -49,6 +51,10 @@ export default class Hogpilot extends View {
     this.pinned = null;
     this.showBook = false;
     this.card = "";
+    this.view = null;
+    this.raw = false;
+    this.open = {};
+    this.folds = new Set();
     this.cardFor = null;
     this.loading = false;
     this.error = null;
@@ -155,10 +161,12 @@ export default class Hogpilot extends View {
       try {
         const r = await exec(this.hp, ["context", account.org_id], { timeout: 20000 });
         if (r.code !== 0) throw new Error(r.stderr.trim() || `hp exited ${r.code}`);
-        this.card = r.stdout.replace(/([^\n])\n(?=[^\n])/g, "$1  \n");
+        this.card = hardBreaks(r.stdout);
+        try { this.view = parseCard(r.stdout); } catch { this.view = null; }
         this.error = null;
       } catch (e) {
         this.card = "";
+        this.view = null;
         this.error = String(e?.message ?? e);
       }
       this.cardFor = account.org_id;
@@ -193,6 +201,93 @@ export default class Hogpilot extends View {
     return div().id(id).px(8).h(24).flex_none().flex().items_center().rounded(6).text_size(12).cursor_pointer()
       .bg(primary ? t.selected : t.raised).text_color(t.foreground)
       .hover((s) => s.bg(t.hover)).tooltip(tip).on_click((_e, cx) => fn(cx)).child(label);
+  }
+
+  readable(t, v, name, org) {
+    const ids = [v.orgId && `org ${v.orgId}`, v.caId && `Customer Analytics ${v.caId}`].filter(Boolean).join(" · ") || org;
+    const facts = v.facts.map((f, i) => h_flex().id(`hp-f-${i}`).gap(8).items_start()
+      .when(Boolean(f.note), (el) => el.tooltip(f.note))
+      .child(div().w(56).flex_none().text_size(11).text_color(t.dim).child(f.label))
+      .child(div().flex_1().min_w(0).text_size(12).text_color(t.foreground).child(f.value)));
+    return v_flex().id("hp-card").flex_1().min_h(0).overflow_y_scrollbar().pb(10)
+      .child(v_flex().px(16).pb(10).gap(3).flex_none()
+        .child(h_flex().id("hp-name").gap(6).items_center().tooltip(ids)
+          .child(div().text_size(15).font_semibold().text_color(t.foreground).child(v.name || name))
+          .when(v.inactive, (el) => el.child(div().text_size(11).text_color(t.dim).child("inactive"))))
+        .children(facts))
+      .children(v.sections.map((s, i) => this.section(t, s, `${org}-${i}`)));
+  }
+
+  section(t, s, key) {
+    const open = this.open[s.title] ?? s.open;
+    const head = h_flex().id(`hp-sec-${key}`).px(16).py(5).gap(6).flex_none().items_center().cursor_pointer()
+      .hover((st) => st.bg(t.hover))
+      .on_click((_e, cx) => { this.open[s.title] = !open; cx.notify(); })
+      .child(div().w(10).flex_none().text_size(11).text_color(t.dim).child(open ? "▾" : "▸"))
+      .child(div().flex_none().text_size(12.5).font_semibold().text_color(t.foreground).child(s.title))
+      .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(s.meta));
+    if (!open) return head;
+    const rows = s.kind === "raw" ? [TextView.markdown(`hp-raw-${key}`, hardBreaks(s.markdown)).selectable(true)]
+      : s.kind === "metrics" ? s.rows.map((r, i) => this.metric(t, `hp-m-${key}-${i}`, r))
+      : s.title === "Signals" ? s.rows.map((r, i) => this.signal(t, `hp-sig-${key}-${i}`, r))
+      : s.rows.map((r, i) => (r.heading ? this.heading(t, r) : this.item(t, `hp-i-${key}-${i}`, r, 0)));
+    const notes = s.notes ?? [];
+    return v_flex().flex_none().child(head)
+      .child(v_flex().pl(32).pr(16).pt(2).pb(10).gap(s.kind === "metrics" ? 3 : 8).text_size(12.5)
+        .children(rows)
+        .when(rows.length === 0 && notes.length === 0, (el) => el.child(div().text_size(11).text_color(t.dim).child("None")))
+        .children(notes.map((n) => div().text_size(11).text_color(t.dim).child(n))));
+  }
+
+  tagLine(t, tags) {
+    return h_flex().flex_wrap().gap(8).text_size(10.5)
+      .children(tags.map((g) => div().text_color(g.warn ? t.working : t.dim).child(g.text)));
+  }
+
+  heading(t, r) {
+    return h_flex().pt(4).gap(6).items_center()
+      .child(div().text_size(11).font_semibold().text_color(t.muted).child(r.heading))
+      .when(Boolean(r.note), (el) => el.child(div().text_size(11).text_color(t.dim).child(r.note)));
+  }
+
+  item(t, id, r, depth) {
+    return h_flex().gap(6).items_start().pl(depth ? 4 : 0)
+      .child(div().flex_none().text_color(t.dim).child("•"))
+      .child(v_flex().flex_1().min_w(0).gap(2)
+        .when(Boolean(r.label), (el) => el.child(div().text_size(11).font_medium().text_color(t.muted).child(r.label)))
+        .child(r.markdown ? TextView.markdown(id, r.text).selectable(true) : div().text_color(t.foreground).child(r.text))
+        .children(r.sub.map((l) => div().text_size(11.5).text_color(t.muted).child(l)))
+        .children(r.quotes.map((q) => div().text_size(11.5).italic().text_color(t.dim).child(`"${q}"`)))
+        .when(r.tags.length > 0, (el) => el.child(this.tagLine(t, r.tags)))
+        .children(r.children.map((c, i) => this.item(t, `${id}-${i}`, c, depth + 1))));
+  }
+
+  signal(t, id, r) {
+    const hot = r.stake >= 50000;
+    const open = this.folds.has(id);
+    const n = r.children.length;
+    return v_flex().gap(3).pl(10).border_l_2().border_color(hot ? t.blocked : t.working)
+      .child(h_flex().gap(8).items_start()
+        .child(div().flex_1().min_w(0).font_medium().text_color(t.foreground).child(r.text))
+        .when(Boolean(r.chip), (el) => el.child(div().flex_none().px(6).rounded(4).bg(t.raised).text_size(11)
+          .text_color(hot ? t.blocked : t.muted).child(r.chip))))
+      .children(r.sub.map((l) => div().text_size(11.5).text_color(t.muted).child(l)))
+      .when(r.tags.length > 0, (el) => el.child(this.tagLine(t, r.tags)))
+      .children(r.quotes.map((q) => div().text_size(11.5).italic().text_color(t.dim).child(`"${q}"`)))
+      .when(n > 0, (el) => el.child(div().id(`${id}-fold`).text_size(11).text_color(t.dim).cursor_pointer()
+        .hover((s) => s.text_color(t.foreground))
+        .on_click((_e, cx) => { if (open) this.folds.delete(id); else this.folds.add(id); cx.notify(); })
+        .child(`${open ? "▾" : "▸"} ${n} linked fact${n === 1 ? "" : "s"}`)))
+      .when(open, (el) => el.child(v_flex().gap(6).pt(2).children(r.children.map((c, i) => this.item(t, `${id}-${i}`, c, 0)))));
+  }
+
+  metric(t, id, r) {
+    return h_flex().id(id).gap(8).items_center().text_size(12)
+      .tooltip(r.status ? `${r.label}: ${r.status}` : r.label)
+      .child(div().flex_1().min_w(0).truncate().text_color(t.muted).child(r.label))
+      .child(div().w(56).flex_none().text_right().text_color(t.foreground).child(r.value))
+      .child(div().w(76).flex_none().text_right().truncate().text_color(t.dim).child(r.change))
+      .child(div().w(30).flex_none().text_right().text_color(r.flag ? t.working : t.dim).child(r.age));
   }
 
   row(t, a, current) {
@@ -251,13 +346,17 @@ export default class Hogpilot extends View {
         (cx) => { this.pinned = null; this.showBook = true; cx.notify(); }))
       .child(this.button(t, "hp-ask", "Ask Claude", `New Claude tab about ${name}`, () => this.askClaude(account), true))
       .when(Boolean(this.dossiers[account.org_id]), (el) => el.child(this.button(t, "hp-dossier", "Dossier", "Open the dossier", () => this.openDossier(account))))
+      .when(Boolean(this.view), (el) => el.child(this.button(t, "hp-raw", this.raw ? "Readable" : "Raw",
+        this.raw ? "Show the card for people" : "Show the card as agents read it", (cx) => { this.raw = !this.raw; cx.notify(); })))
       .child(div().flex_1())
       .child(div().text_size(11).text_color(t.dim).child(this.pinned ? "pinned" : "following focus"));
 
     const body = this.loading && this.cardFor !== account.org_id
       ? h_flex().px(16).gap(6).items_center().text_size(12).text_color(t.dim)
         .child(svg("mods/workspace-chrome/spinner.svg").size(13).spin(900)).child(`Reading ${name}…`)
-      : div().id("hp-card").flex_1().min_h(0).px(16).pb(10).text_size(12.5).text_color(t.foreground)
+      : this.view && !this.raw
+        ? this.readable(t, this.view, name, account.org_id)
+        : div().id("hp-card").flex_1().min_h(0).px(16).pb(10).text_size(12.5).text_color(t.foreground)
         .child(TextView.markdown(`hp-md-${account.org_id}`, this.card).selectable(true).scrollable(true));
 
     return root.child(bar).child(body);
