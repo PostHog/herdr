@@ -33,13 +33,13 @@ export default class SquirrelPanel extends View {
         await cx.sleep(10000);
       }
     });
-    // /usage for each Claude subscription, every 10 minutes (usage.js).
+    // /usage for each Claude subscription, every 3 minutes (usage.js).
     this.usage = {};
     cx.spawn(async (cx) => {
       for (;;) {
         const next = await readUsage().catch(() => null);
         if (next && Object.keys(next).length) { this.usage = next; cx.notify(); }
-        await cx.sleep(10 * 60 * 1000);
+        await cx.sleep(3 * 60 * 1000);
       }
     });
     this.width = 0;

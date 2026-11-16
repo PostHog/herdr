@@ -40,7 +40,7 @@ export async function readContext() {
 }
 
 // One line per Claude subscription, with the same columns on every line. /usage (usage.js, every
-// 10 minutes) gives every window, Fable and credits included; the statusline (after every reply)
+// 3 minutes) gives every window, Fable and credits included; the statusline (after every reply)
 // keeps 5h and week live in between.
 function accountLines(accounts, usage) {
   const dirs = new Set([...Object.keys(usage), ...Object.keys(accounts).filter((d) => Object.keys(accounts[d]).length)]);
