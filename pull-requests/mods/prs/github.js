@@ -7,7 +7,7 @@ const CHECK_COUNTS = `commits(last: 1) { nodes { commit { oid status { contexts 
 const PR_FIELDS = `fragment PrFields on PullRequest {
   id number url title isDraft state createdAt updatedAt
   author { login __typename } authorAssociation
-  headRefName baseRefName repository { nameWithOwner }
+  headRefName baseRefName isCrossRepository repository { nameWithOwner }
   mergeable mergeStateStatus reviewDecision additions deletions changedFiles
   autoMergeRequest { enabledAt } mergeQueueEntry { state position }
   stack { size } stackEntry { position }
@@ -23,7 +23,7 @@ const MY_PRS_QUERY = `query($q: String!, $after: String) { viewer { login }
 
 const REVIEW_FIELDS = `fragment ReviewFields on PullRequest {
   id number url title isDraft createdAt updatedAt additions deletions changedFiles
-  author { login __typename } authorAssociation headRefName baseRefName repository { nameWithOwner }
+  author { login __typename } authorAssociation headRefName baseRefName isCrossRepository repository { nameWithOwner }
   mergeable mergeStateStatus reviewDecision autoMergeRequest { enabledAt } mergeQueueEntry { state position }
   stack { size } stackEntry { position }
   labels(first: 30) { nodes { name } }
@@ -237,6 +237,7 @@ function normalizePr(node, viewer) {
     createdAt: node.createdAt,
     updatedAt: node.updatedAt,
     headRef: node.headRefName,
+    headInRepo: node.isCrossRepository === false,
     baseRef: node.baseRefName,
     headSha: node.commits?.nodes?.[0]?.commit?.oid ?? null,
     mergeable: node.mergeable,
