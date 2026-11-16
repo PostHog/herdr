@@ -33,6 +33,14 @@ python3 ~/.config/herdr-app/mods/ph-inbox/phmcp.py check
 
 It needs `python3`, `git`, and the [GitHub CLI](https://cli.github.com) logged in (`gh auth login`) for pull requests.
 
+## Just the triage bar
+
+To keep another layout's sidebar and add only the Inbox header (count, triage and refresh), give that layout a block like:
+
+```json
+{ "id": "inbox", "type": "block", "content": { "mod": "ph-inbox", "props": { "compact": true } }, "size": { "px": 40 } }
+```
+
 ## Keys
 
 The mod binds no keys itself. These commands can be bound in `~/.config/herdr-app/keys.json`:

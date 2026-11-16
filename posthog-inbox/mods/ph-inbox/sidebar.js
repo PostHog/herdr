@@ -46,7 +46,8 @@ const newTask = () => openOverlay({ mod: "ph-inbox", kind: "dialog", modal: true
 const triage = () => openOverlay({ mod: "ph-inbox", kind: "dialog", modal: true, width: 1100, height: 720, props: { view: "triage" } });
 
 export class Sidebar {
-  init(_props, cx) {
+  init(props, cx) {
+    this.compact = Boolean(props?.compact);
     this.reports = [];
     this.count = null;
     this.fetched = 0;
@@ -318,10 +319,23 @@ export class Sidebar {
         .child(String(this.count ?? "·"))));
   }
 
+  inboxHead(t) {
+    const tool = (id, name, tip, action) => div().id(id).size(26).flex_none().flex().items_center().justify_center().rounded(6).tooltip(tip)
+      .hover((s) => s.bg(t.hover).text_color(t.foreground)).on_click(action).child(svg(name.includes("/") ? name : icon(name)).size(14));
+    const title = this.count === null ? "Inbox" : this.count > this.reports.length && !this.compact ? `Inbox · ${this.reports.length} of ${this.count}` : `Inbox · ${this.count}`;
+    const status = this.loading ? "Refreshing…" : this.compact && this.error ? (this.error.code === "no_key" ? "No API key" : "Failed") : this.fetched ? ago(this.fetched) : "";
+    return h_flex().h(31).pl(8).pr(2).flex_none().items_center().gap(2).text_size(11.5).text_color(t.dim)
+      .child(div().flex_1().child(title))
+      .child(div().flex_none().pr(4).text_size(11).when(this.compact && Boolean(this.error), (el) => el.text_color(t.blocked).tooltip(this.error.message)).child(status))
+      .child(tool("inbox-triage", "layers", "Triage the inbox", triage))
+      .child(tool("inbox-refresh", "mods/ph-inbox/refresh.svg", "Refresh the inbox", (_e, cx) => this.refresh(cx)));
+  }
+
   render(cx) {
     const t = theme();
     this.work(cx);
     if (narrow()) return this.rail(t);
+    if (this.compact) return v_flex().size_full().min_h(0).bg(t.chrome).px(8).justify_center().child(this.inboxHead(t));
     const starting = jobs().filter((j) => j.kind === "start" || j.error);
     const active = activeTasks(), archived = archivedTasks();
     const shown = shared("ph-inbox.report")?.id ?? null;
@@ -346,10 +360,7 @@ export class Sidebar {
         .when(this.showArchived, (el) => el.children(archived.map((task) => h_flex().id(`archived-${task.id}`).h(26).pl(26).pr(8).flex_none().items_center().rounded(6)
           .text_size(12).text_color(t.dim).hover((s) => s.bg(t.hover)).on_mouse_down("right", () => this.menu(task))
           .child(div().flex_1().min_w(0).truncate().child(task.title)))))
-        .child(head(this.count === null ? "Inbox" : this.count > this.reports.length ? `Inbox · ${this.reports.length} of ${this.count}` : `Inbox · ${this.count}`,
-          div().flex_none().pr(4).text_size(11).child(this.loading ? "Refreshing…" : this.fetched ? ago(this.fetched) : ""),
-          tool("inbox-triage", "layers", "Triage the inbox", triage),
-          tool("inbox-refresh", "mods/ph-inbox/refresh.svg", "Refresh the inbox", (_e, cx) => this.refresh(cx))).mt(10))
+        .child(this.inboxHead(t).mt(10))
         .children(this.notice(t))
         .when(this.reports.length > 0 && this.ranker !== null && this.ranker !== "personal", (el) => el.child(div().px(8).pb(4).text_size(11.5).text_color(t.dim).child("No personal ranking yet: PostHog's recommended order.")))
         .children(this.reports.map((r) => this.reportRow(r, t, shown)))
