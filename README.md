@@ -12,6 +12,7 @@ Each top-level folder with a `RECIPE.md` is one piece. You pick the pieces you w
 | [`resume-agents`](resume-agents/RECIPE.md) | Brings Claude Code back in its terminals after you restart or shut down your computer. The shared layouts above already make room for it. |
 | [`space-tree`](space-tree/RECIPE.md) | The `Pull-Requests` layout with one sidebar tree: spaces (with each repo's own icon), their terminals and agents, and each agent's sub-agents, grouped by machine. The tabs move from the top bar into the tree. Needs `pull-requests`. |
 | [`gustavo`](gustavo/README.md) | Gustavo Strassburger's task-first setup: each space is a task with its Claude sessions, PRs and worktrees, an Inbox of what waits on you, a Grafana view, a pixel-art Dungeon of your tasks with PostHog's hoggies, a history bar, and PostHog's dev stack on the right. Built around Feature Flags team work; take the parts you like. |
+| [`back-forward`](back-forward/RECIPE.md) | Slack-style back and forward buttons that step through the spaces and tabs you looked at. Add its block to your layout; the recipe has the JSON. |
 
 ## Install
 
