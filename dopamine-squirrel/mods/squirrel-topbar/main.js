@@ -1,6 +1,6 @@
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex, ScrollHandle } from "gpui-base";
-import { spaces, panes, run, openOverlay, theme, window, shared, setShared, layout, updates, nextCommand, home, hc, exec } from "herdr";
+import { spaces, panes, run, openOverlay, theme, window, shared, setShared, layout, updates, nextCommand, home, hc, exec, appHome } from "herdr";
 import { fetchGh, GH_EVERY_MS } from "./github.js";
 import { tagReviews } from "./triage-ai.js";
 import { glow } from "./glow.js";
@@ -95,16 +95,37 @@ export default class SquirrelTopbar extends View {
   }
 
   // One click starts the standup: Claude (standupCommand) with the standup skill from the PostHog MCP. A second click focuses that pane.
-  // Fact-check: a pane below with Claude (Opus, high effort) that already knows its job, so you just paste the Slack
-  // message, link or screenshot and press Enter. The instructions go in as a system prompt, which leaves your clipboard alone.
+  // Fact-check: a pane below with Claude (Opus, high effort) and the fact-check request typed into its input,
+  // not sent, ending in "Here it is: " so you paste the Slack link or screenshot and press Enter.
+  // Herdr can only type into a terminal by pasting, so this borrows the clipboard and puts all of it back after,
+  // images included (clipboard.js).
   factCheck(cx) {
-    const instructions = "The user's messages are things they're about to send in Slack: text, a Slack link, or a screenshot. "
-      + "Fact-check each one. Verify each claim against the code, docs, PRs or data you can reach (read Slack links with the "
-      + "Slack tools). Tell them plainly if they're wrong, overstating, missing context, or about to look foolish. Verdict "
-      + "first, then corrected wording ready to paste into Slack: Slack formatting (*bold*, _italic_, `code`, bullets) is fine, "
-      + "but no blockquote bars or other terminal-only gutter characters. Be clear, concise and direct.";
+    const template = "Fact-check this before I send it. Verify each claim against the code, docs, PRs or data you can reach "
+      + "(read Slack links with the Slack tools). Tell me plainly if I'm wrong, overstating, missing context, or about to look "
+      + "like a retard. Verdict first, then corrected wording ready to paste into Slack: Slack formatting (*bold*, _italic_, "
+      + "`code`, bullets) is fine, but no blockquote bars or other terminal-only gutter characters. Be clear, concise and direct. Here it is: ";
     const checkout = squirrelSettings().posthogCheckout.replace(/^~/, home());
-    run("pane.split", { direction: "down", argv: ["/bin/sh", "-c", 'cd "$1" 2>/dev/null || cd; exec claude --model opus --effort high -n "Fact check" --append-system-prompt "$2"', "sh", checkout, instructions] });
+    const clip = (mode) => exec("/bin/sh", ["-c", 'osascript -l JavaScript "$1" "$2" "${TMPDIR:-/tmp}/squirrel-clipboard" 2>/dev/null',
+      "sh", `${appHome()}/mods/squirrel-topbar/clipboard.js`, mode]).catch(() => null);
+    const before = new Set(panes().map((p) => p.pane));
+    run("pane.split", { direction: "down", argv: ["/bin/sh", "-c", 'cd "$1" 2>/dev/null || cd; exec claude --model opus --effort high -n "Fact check"', "sh", checkout] });
+    cx.spawn(async (cx) => {
+      let pane = null;
+      for (let i = 0; i < 50 && !pane; i++) { pane = panes().find((p) => !before.has(p.pane)); if (!pane) await cx.sleep(100); }
+      if (!pane?.terminal) return;
+      // Wait for Claude's input box before pasting.
+      for (let i = 0; i < 40; i++) {
+        const r = await hc(["read", pane.terminal, "--lines", "0"]).catch(() => null);
+        if (/auto mode|shift\+tab|\? for shortcuts|❯/.test(r?.stdout ?? "")) break;
+        await cx.sleep(250);
+      }
+      await clip("save");
+      await exec("/bin/sh", ["-c", 'printf "%s" "$1" | pbcopy', "sh", template]).catch(() => null);
+      run("pane.focus", { pane: pane.pane });
+      run("terminal.paste");
+      await cx.sleep(400);
+      await clip("restore");
+    });
   }
 
   standup(cx) {

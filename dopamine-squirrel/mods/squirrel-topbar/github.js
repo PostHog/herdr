@@ -57,13 +57,15 @@ const GH_QUERIES = {
     issueCount pageInfo { hasNextPage endCursor } nodes { ... on PullRequest { ${SKIPPED_FIELDS} } } } }`,
 };
 
-// GitHub's 502/504s are transient: try up to three times with a short pause.
+// GitHub's 502/504s and cut-off replies are transient: try up to three times with a short pause.
 async function ghGraphql(query) {
   let last = "";
   for (let attempt = 0; attempt < 3; attempt++) {
     if (attempt) await exec("/bin/sleep", [String(2 * attempt)]).catch(() => null);
     const r = await exec("gh", ["api", "graphql", "-f", `query=${query}`], { timeout: 60000 }).catch((e) => ({ code: 1, stderr: String(e?.message ?? e) }));
-    if (r.code === 0) return JSON.parse(r.stdout).data;
+    if (r.code === 0) {
+      try { return JSON.parse(r.stdout).data; } catch { last = "GitHub sent back a cut-off reply"; continue; }
+    }
     last = r.stderr.split("\n").filter((l) => l && !l.startsWith("*")).pop() || `gh exited ${r.code}`;
     if (!/50[234]|timeout|timed out|EOF|connection/i.test(last)) break;
   }
