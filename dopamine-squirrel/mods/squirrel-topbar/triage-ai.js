@@ -83,21 +83,24 @@ async function ask(url, header) {
 }
 
 // Team requests only: a request by name always counts. DONE PRs, drafts and your flips are left alone.
-// A PR is tagged again on new commits or when the rules or your team change.
+// An open PR is tagged again on new commits or when the rules or your team change. A PR in "merged
+// without your review" is tagged once, after the open ones, so each flip doesn't re-tag the whole backlog.
 export async function tagReviews() {
   if (checking()) return;
   const gh = shared("squirrel.github") ?? {}, marks = shared("squirrel.triaged") ?? {};
   const open = (gh.prs ?? []).filter((p) => !p.mine && !p.draft && p.headSha && !(marks[p.url] && !marks[p.url].watch)
     && !(shared(AI_TRIAGE) ?? {})[p.url]?.corrected);
-  if (!open.length) return;
-  const mates = await teammates(open[0].url.split("/")[3]);
+  const merged = (gh.skipped ?? []).filter((p) => !marks[p.url] && !(shared(AI_TRIAGE) ?? {})[p.url]);
+  if (!open.length && !merged.length) return;
+  const mates = await teammates((open[0] ?? merged[0]).url.split("/")[3]);
   const rules = await currentRules(mates).catch(() => null);
   if (!rules) return;
   const header = `${rules}\n\nMy teammates on GitHub: ${mates || "unknown"}. A teammate who wrote or reviewed the PR may already cover it.`;
   const version = hash(header);
   // New PRs first, then new commits, then rule changes.
   const stale = (p) => { const tag = (shared(AI_TRIAGE) ?? {})[p.url]; return !tag ? 0 : tag.sha !== p.headSha ? 1 : tag.rules !== version ? 2 : 3; };
-  const todo = open.filter((p) => stale(p) < 3).sort((a, b) => stale(a) - stale(b)).slice(0, PER_ROUND);
+  const todo = [...open.filter((p) => stale(p) < 3).sort((a, b) => stale(a) - stale(b)), ...merged.map((p) => ({ ...p, headSha: "merged" }))]
+    .slice(0, PER_ROUND);
   for (const p of todo) {
     const answer = await ask(p.url, header);
     if (!answer) continue;

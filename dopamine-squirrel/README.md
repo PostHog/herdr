@@ -24,7 +24,7 @@ Every agent with its cost, context %, and what it's running in the background (s
 
 PRs waiting on you. **DONE** hides one for good, **WATCH** hides it until it changes. **CC** opens Claude on the PR, or resumes your last review of it. Clear the queue for confetti.
 
-A PR you requested changes on comes back with `↻ new commits` once the author pushes, even if they never re-request you.
+A PR that asked you or your team stays here after you comment or request changes, until you approve it. It gets `↻ new commits` when the author pushes after your review.
 
 Team review requests get an AI tag: **You care** or **Not important**. Click a tag to flip it, and expand the row to add a note on why. Before each tagging round, Opus rebuilds the rules from your base rules and all your feedback, then open PRs are tagged again. The header shows how many tags you've left unflipped. Base rules: `~/.config/herdr-app/review-triage.md` (copy `mods/squirrel-topbar/review-triage.md` to start). Learned rules: `~/.config/herdr-app/review-triage.learned.md`. Tagging runs `claude -p` with no tools on your default Claude login.
 

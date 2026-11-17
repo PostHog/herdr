@@ -41,7 +41,9 @@ export const reviewViews = {
     cx.notify();
     const before = new Set(panes().map((p) => p.pane));
     const skill = settings().reviewSkill, past = (shared(REVIEW_SESSIONS) ?? {})[pr.url];
-    const prompt = ownPrompt ?? `Load my ${skill} skill from the PostHog MCP (learn project:${skill}) and use it on ${pr.url}`;
+    const prompt = ownPrompt ?? `Load my ${skill} skill from the PostHog MCP (learn project:${skill}) and use it on ${pr.url}. `
+      + "Check every claim against the code before you state it; if you haven't checked something, say so or leave it out. "
+      + "Label opinion as opinion. Be clear, concise and direct: answer first, no filler, no recap, no pedantry.";
     const argv = past?.sessionId
       ? ["/bin/sh", "-c", 'cd "$1" 2>/dev/null; exec claude --resume "$2"', "sh", past.cwd ?? home(), past.sessionId]
       : ["claude", prompt];
@@ -238,7 +240,9 @@ export const reviewViews = {
       .child(c.head(sizeW, "SIZE")).child(c.head(28, "CC", true)).child(c.head(44, "DONE", true)).child(c.head(44, "WATCH", true));
 
     // Merged without my review though I was asked by name, or a team request tagged likely mine. Shown only while one is unchecked.
-    const skipped = (gh.skipped ?? []).filter((p) => !marks[p.url] || this.leaving[p.url]);
+    // Newest merge first. Ones a teammate approved or the AI called not important are dimmed.
+    const rank = (p) => (p.coveredBy?.length ? 2 : 0) + (aiTags[p.url]?.verdict === "skip" ? 1 : 0);
+    const skipped = (gh.skipped ?? []).filter((p) => !marks[p.url] || this.leaving[p.url]).sort((a, b) => Date.parse(b.mergedAt) - Date.parse(a.mergedAt));
     // Click a row to see why it's here: who asked for me by name and when, and who reviewed instead.
     const skippedWhy = (p) => {
       const lines = [
@@ -246,7 +250,7 @@ export const reviewViews = {
           .on_click((_e, cx) => { cx.stop_propagation(); cx.open_url(p.url); })
           .child(`${a.by}${a.by === p.author ? " (author)" : ""} requested your review on GitHub ${ago(Date.parse(a.at))} ago`)),
         ...(p.askedMe.length ? [] : (p.askedTeams ?? []).map((a) => div().text_color(t.muted).child(`${a.team} asked to review ${ago(Date.parse(a.at))} ago`))),
-        ...this.aiLines(p, p.aiReason && aiTags[p.url], t, c).lines,
+        ...this.aiLines(p, aiTags[p.url], t, c).lines,
         ...(p.mentions ?? []).map((m, i) => h_flex().id(`mention-${p.url}-${i}`).gap(6).min_w(0).cursor_pointer().hover((s) => s.text_color(t.foreground))
           .on_click((_e, cx) => { cx.stop_propagation(); cx.open_url(m.url); })
           .child(div().flex_none().text_color(t.accent).child(`${m.who} mentioned you ${ago(Date.parse(m.at))} ago:`))
@@ -254,7 +258,7 @@ export const reviewViews = {
         ...p.reviews.map((r) => div().text_color(t.dim).child(`${r.who} ${r.state === "APPROVED" ? "approved" : r.state === "CHANGES_REQUESTED" ? "requested changes" : "commented"} ${ago(Date.parse(r.at))} ago`)),
         div().text_color(t.dim).child(`Merged${p.mergedBy && p.mergedBy !== "trunk-io" ? ` by ${p.mergedBy}` : ""} ${ago(Date.parse(p.mergedAt))} ago`),
       ];
-      const extra = p.aiReason && aiTags[p.url] && this.notes?.[p.url] ? 26 - LINE : 0;
+      const extra = aiTags[p.url] && this.notes?.[p.url] ? 26 - LINE : 0;
       return { height: 10 + lines.length * LINE + extra, el: v_flex().pl(30).pr(12).pb(6).pt(2).gap(2).text_size(11.5).children(lines) };
     };
     const skippedRow = (p) => {
@@ -268,13 +272,14 @@ export const reviewViews = {
         .child(h_flex().id(`skipped-${p.url}`).h(ROW).px(6).gap(8).items_center().min_w(0).rounded(4)
           .when(expanded, (el) => el.bg(t.surface))
           .hover((s) => s.bg(t.hover)).cursor_pointer()
-          .on_click((_e, cx) => { this.expanded[key] = !expanded; if (p.aiReason) this.noteState(p); cx.notify(); })
+          .on_click((_e, cx) => { this.expanded[key] = !expanded; this.noteState(p); cx.notify(); })
           .child(h_flex().w(22).flex_none().items_center()
             .child(svg(`mods/squirrel-panel/${expanded ? "chevron-down" : "chevron-right"}.svg`).size(11).text_color(t.dim)))
           .child(c.chip(116, "Merged", c.green)).child(div().w(70).flex_none()).child(c.link(p, prW))
           .child(h_flex().flex_1().min_w(0).gap(5).items_center()
-            .when(Boolean(p.aiReason && aiTags[p.url]), (el) => el.child(this.aiTag(p, aiTags[p.url], key, c, t)))
-            .child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(t.foreground).child(p.title)))
+            .when(Boolean(aiTags[p.url]), (el) => el.child(this.aiTag(p, aiTags[p.url], key, c, t)))
+            .when(Boolean(p.coveredBy?.length), (el) => el.child(c.tag(`✓ ${p.coveredBy.map((l) => settings().nicknames?.[l] ?? l).join(", ")}`, c.green, false)))
+            .child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(rank(p) ? t.muted : t.foreground).child(p.title)))
           .child(c.cell(110, p.author, t.muted))
           .child(c.cell(52, ago(Date.parse(p.mergedAt)), c.green))
           .child(div().w(36).flex_none()).child(div().w(52).flex_none())

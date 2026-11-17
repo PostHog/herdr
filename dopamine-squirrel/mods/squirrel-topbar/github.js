@@ -5,6 +5,20 @@ import { cloudTaskPrs } from "./cloud.js";
 import { AI_TRIAGE } from "./triage-ai.js";
 
 const mergedDays = () => squirrelSettings().mergedDays;
+const mergedSince = () => new Date(Date.now() - mergedDays() * 864e5).toISOString().slice(0, 10);
+
+// My teams' names and my teammates' logins, in the orgs the PRs come from, refreshed daily.
+let teamCache = null;
+async function myTeams(me, orgs) {
+  const key = [...orgs].sort().join(",");
+  if (teamCache?.key === key && Date.now() - teamCache.at < 864e5) return teamCache;
+  const d = await ghGraphql(`query { viewer { organizations(first: 20) { nodes { login teams(first: 20, userLogins: ["${me}"]) { nodes { name members(first: 100) { nodes { login } } } } } } } }`).catch(() => null);
+  if (!d) return teamCache ?? { names: new Set(), mates: new Set() };
+  const teams = d.viewer.organizations.nodes.filter((o) => orgs.has(o.login)).flatMap((o) => o.teams.nodes);
+  teamCache = { key, at: Date.now(), names: new Set(teams.map((t) => t.name)),
+    mates: new Set(teams.flatMap((t) => t.members.nodes.map((m) => m.login)).filter((l) => l !== me)) };
+  return teamCache;
+}
 
 // PRs waiting on my review (directly or through a team), fetched every 5 minutes into
 // shared "squirrel.github" for the GitHub view in squirrel-panel and the count badge here.
@@ -22,24 +36,25 @@ const PR_FIELDS = `number title url isDraft createdAt updatedAt additions deleti
 const MINE_FIELDS = () => `${PR_FIELDS} trunk: comments(first: 10) { nodes { author { login } body updatedAt } }
       threads: reviewThreads(first: 50) { nodes { isResolved path comments(first: 1) { nodes { author { __typename login } createdAt bodyText url } } } }`;
 const SKIPPED_FIELDS = `number title url createdAt mergedAt additions deletions repository { nameWithOwner } author { login } mergedBy { login }
-      reviews(last: 30) { nodes { author { __typename login } state submittedAt bodyText url } }
-      comments(last: 50) { nodes { author { login } createdAt bodyText url } }
+      reviews(last: 20) { nodes { author { __typename login } state submittedAt bodyText url } }
+      comments(last: 15) { nodes { author { login } createdAt bodyText url } }
       timelineItems(itemTypes: [REVIEW_REQUESTED_EVENT], last: 20) { nodes { ... on ReviewRequestedEvent { createdAt actor { login } requestedReviewer { ... on User { login } ... on Team { name } } } } }`;
 const GH_QUERIES = {
   reviews: () => `query { viewer { login } list: search(query: "is:pr is:open archived:false review-requested:@me", type: ISSUE, first: 100) {
     issueCount nodes { ... on PullRequest { ${PR_FIELDS} } } } }`,
-  // GitHub drops my request once I review and never re-requests on its own, so a PR I blocked would vanish
-  // while the author pushes fixes. These come back when there are commits after my last review.
-  blocked: () => `query { viewer { login } list: search(query: "is:pr is:open archived:false reviewed-by:@me review:changes_requested -author:@me", type: ISSUE, first: 30) {
+  // GitHub drops my request (and my team's) as soon as I review at all. A PR that asked me or my team stays
+  // on my list until I approve it; fetchGh picks those out of the PRs I've reviewed.
+  reviewed: () => `query { viewer { login } list: search(query: "is:pr is:open archived:false reviewed-by:@me -author:@me", type: ISSUE, first: 40) {
     issueCount nodes { ... on PullRequest { ${PR_FIELDS} } } } }`,
   mine: () => `query { viewer { login } list: search(query: "is:pr is:open archived:false author:@me", type: ISSUE, first: 100) {
     issueCount nodes { ... on PullRequest { ${MINE_FIELDS()} } } } }`,
   merged: () => `query { viewer { login } list: search(query: "is:pr is:merged author:@me merged:>=${new Date(Date.now() - mergedDays() * 864e5).toISOString().slice(0, 10)}", type: ISSUE, first: 30) {
     issueCount nodes { ... on PullRequest { number title url createdAt mergedAt additions deletions repository { nameWithOwner } commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } } } } }`,
-  // Merged while still asking me by name: GitHub drops a request once I review, and a team request
-  // doesn't count, so these are the PRs someone wanted my eyes on that landed without them.
-  skipped: () => `query { viewer { login } list: search(query: "is:pr is:merged user-review-requested:@me merged:>=${new Date(Date.now() - mergedDays() * 864e5).toISOString().slice(0, 10)}", type: ISSUE, first: 30) {
-    issueCount nodes { ... on PullRequest { ${SKIPPED_FIELDS} } } } }`,
+  // Merged while still waiting on me or one of my teams: GitHub drops a request once I (or, for a team, a
+  // teammate) review, so these landed without any of us. Teammate-reviewed ones are added in fetchGh.
+  // 25 a page: these fields make a big page time out.
+  skipped: (after) => `query { viewer { login } list: search(query: "is:pr is:merged -author:@me review-requested:@me merged:>=${mergedSince()}", type: ISSUE, first: 25${after ? `, after: "${after}"` : ""}) {
+    issueCount pageInfo { hasNextPage endCursor } nodes { ... on PullRequest { ${SKIPPED_FIELDS} } } } }`,
 };
 
 // GitHub's 502/504s are transient: try up to three times with a short pause.
@@ -129,8 +144,8 @@ function toPr(n, me, notes) {
     mine: reviewers.some((x) => x.login === me),
     waiting,
     // My review state: null = never reviewed; "stale" = new commits since my last review.
-    // My changes-requested still stands: a later plain comment doesn't lift it.
-    blockedByMe: reviews.filter((r) => r.author.login === me && r.state !== "COMMENTED").at(-1)?.state === "CHANGES_REQUESTED",
+    // My approval still stands: a later plain comment doesn't lift it, a dismissal does.
+    approvedByMe: reviews.filter((r) => r.author.login === me && r.state !== "COMMENTED").at(-1)?.state === "APPROVED",
     myReview: !myLast ? null : head && Date.parse(head.committedDate) > Date.parse(myLast.submittedAt) ? "stale" : myLast.state,
     approvals: [...latestBy.values()].filter((s) => s === "APPROVED").length,
     openThreads: (n.reviewThreads?.nodes ?? []).filter((x) => !x.isResolved).length,
@@ -159,7 +174,7 @@ export async function fetchGh() {
     exec("gh", ["api", "notifications?participating=true&per_page=100"], { timeout: 60000 }),
     ...Object.values(GH_QUERIES).map((q) => ghGraphql(q())),
   ]);
-  const [reviews, blocked, mine, merged, skipped] = results;
+  const [reviews, reviewed, mine, merged, skipped] = results;
   // GitHub inbox threads I'm part of, keyed "owner/repo#number" (reason: mention, comment, review_requested…).
   const notes = new Map();
   if (notesResult.status === "fulfilled" && notesResult.value.code === 0) for (const t of JSON.parse(notesResult.value.stdout)) {
@@ -174,11 +189,15 @@ export async function fetchGh() {
     next[`${name}At`] = Date.now();
   };
   take(reviews, "prs", (d) => d.list.nodes.filter((n) => n?.number).map((n) => toPr(n, d.viewer.login, notes)));
-  if (blocked.status === "fulfilled" && reviews.status === "fulfilled") {
-    const d = blocked.value, have = new Set(next.prs.map((p) => p.url));
+  if (reviewed.status === "fulfilled" && reviews.status === "fulfilled") {
+    const d = reviewed.value, me = d.viewer.login, have = new Set(next.prs.map((p) => p.url));
+    const teams = await myTeams(me, new Set(d.list.nodes.filter((n) => n?.number).map((n) => n.repository.nameWithOwner.split("/")[0])));
     for (const n of d.list.nodes.filter((n) => n?.number && !have.has(n.url))) {
-      const p = toPr(n, d.viewer.login, notes);
-      if (p.blockedByMe && p.myReview === "stale") next.prs.push({ ...p, mine: true, rereview: true, requestedAt: p.headAt });
+      const asks = n.timelineItems.nodes.filter((e) => e.requestedReviewer?.login === me || teams.names.has(e.requestedReviewer?.name));
+      if (!asks.length) continue;
+      const p = toPr(n, me, notes);
+      if (p.approvedByMe) continue;
+      next.prs.push({ ...p, mine: asks.some((e) => e.requestedReviewer?.login === me), rereview: p.myReview === "stale", requestedAt: asks.at(-1).createdAt });
     }
   }
   take(mine, "mine", (d) => d.list.nodes.filter((n) => n?.number).map((n) => toPr(n, d.viewer.login, notes)));
@@ -186,8 +205,40 @@ export async function fetchGh() {
     .map((n) => ({ number: n.number, title: n.title, url: n.url, repo: n.repository.nameWithOwner, created: n.createdAt, mergedAt: n.mergedAt,
       additions: n.additions, deletions: n.deletions, ci: n.commits.nodes[0]?.commit?.statusCheckRollup?.state ?? null }))
     .sort((a, b) => Date.parse(b.mergedAt) - Date.parse(a.mergedAt)));
+  if (skipped.status === "fulfilled") {
+    for (let page = skipped.value.list, n = 1; page.pageInfo.hasNextPage && n < 6; n++) {
+      const more = await ghGraphql(GH_QUERIES.skipped(page.pageInfo.endCursor)).catch(() => null);
+      if (!more) break;
+      skipped.value.list.nodes.push(...more.list.nodes);
+      page = more.list;
+    }
+  }
   take(skipped, "skipped", (d) => d.list.nodes.filter((n) => n?.number).map((n) => toSkipped(n, d.viewer.login))
     .sort((a, b) => Date.parse(b.mergedAt) - Date.parse(a.mergedAt)));
+  // PRs that asked me or my team and merged after a teammate reviewed (which drops the team request), still without
+  // my review. They're marked with who approved.
+  if (skipped.status === "fulfilled") {
+    const me = skipped.value.viewer.login;
+    const teams = await myTeams(me, new Set([...(next.prs ?? []), ...next.skipped].map((p) => p.repo.split("/")[0])));
+    const mates = [...teams.mates];
+    // A light pass finds them; the full fields come after, a few at a time, since big pages time out.
+    const light = mates.length ? await ghGraphql(`query { ${mates.map((m, i) => `m${i}: search(query: "is:pr is:merged -author:@me reviewed-by:${m} merged:>=${mergedSince()}", type: ISSUE, first: 100) { nodes { ... on PullRequest { url reviews(last: 30) { nodes { author { login } } }
+      timelineItems(itemTypes: [REVIEW_REQUESTED_EVENT], last: 20) { nodes { ... on ReviewRequestedEvent { requestedReviewer { ... on User { login } ... on Team { name } } } } } } } }`).join("\n")} }`).catch(() => null) : null;
+    const have = new Set(next.skipped.map((p) => p.url));
+    const found = [...new Set(Object.values(light ?? {}).flatMap((x) => x?.nodes ?? []).filter((n) => n?.url && !have.has(n.url)
+      && !n.reviews.nodes.some((r) => r.author?.login === me)
+      && n.timelineItems.nodes.some((e) => e.requestedReviewer?.login === me || teams.names.has(e.requestedReviewer?.name))).map((n) => n.url))];
+    for (let i = 0; i < found.length; i += 15) {
+      const parts = found.slice(i, i + 15).map((url, j) => {
+        const [, owner, name, number] = /github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/.exec(url) ?? [];
+        return owner ? `p${j}: repository(owner: "${owner}", name: "${name}") { pullRequest(number: ${number}) { ${SKIPPED_FIELDS} } }` : "";
+      }).filter(Boolean);
+      const d = await ghGraphql(`query { ${parts.join("\n")} }`).catch(() => null);
+      for (const x of Object.values(d ?? {})) if (x?.pullRequest?.number) next.skipped.push(toSkipped(x.pullRequest, me));
+    }
+    for (const p of next.skipped) p.coveredBy = [...new Set(p.reviews.filter((r) => r.state === "APPROVED" && teams.mates.has(r.who)).map((r) => r.who))];
+    next.skipped.sort((a, b) => Date.parse(b.mergedAt) - Date.parse(a.mergedAt));
+  }
   // Team requests the AI tag said likely need me, that merged without my review: they join the same section.
   const tags = shared(AI_TRIAGE) ?? {}, since = Date.now() - mergedDays() * 864e5;
   const seen = new Set([...(next.prs ?? []), ...(next.skipped ?? [])].map((p) => p.url));
