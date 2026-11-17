@@ -28,20 +28,29 @@ export function queueFor(pr, group, trunk) {
   const own = items[pr.number];
   if (own) return { ...own, via: null };
   if (!group) return null;
-  const above = group.members.slice(group.members.findIndex((member) => member.pr === pr) + 1);
-  for (const member of above) {
+  const descendants = descendantsOf(group, pr);
+  for (const member of descendants) {
     const hit = items[member.pr.number];
     if (hit) return { ...hit, via: member.pr.number };
   }
   if (pr.queue?.active) return null;
-  const queued = above.find((member) => member.pr.queue?.active);
-  return queued ? { state: "Queued", via: queued.pr.number } : null;
+  const queued = descendants.find((member) => member.pr.queue?.active);
+  return queued ? { state: "Queued", via: queued.pr.number, queue: queued.pr.queue } : null;
+}
+
+function descendantsOf(group, pr) {
+  const index = group.members.findIndex((member) => member.pr === pr);
+  if (index < 0) return [];
+  const depth = group.members[index].depth;
+  const end = group.members.findIndex((member, at) => at > index && member.depth <= depth);
+  return group.members.slice(index + 1, end < 0 ? undefined : end);
 }
 
 const TRUNK_QUEUE_STATE = { Testing: "testing", "Tests Passed": "tests_passed", Pending: "pending", "Not Ready": "not_ready", "Pending Failure": "pending_failure", Failed: "failed", Cancelled: "cancelled", Merged: "merged" };
 const TRUNK_QUEUE_DONE = ["failed", "cancelled", "merged"];
 
 export function withTrunkQueue(pr, entry) {
+  if (entry?.queue) return { ...pr, queue: entry.queue };
   const state = entry ? TRUNK_QUEUE_STATE[entry.state] : null;
   if (!state) return pr;
   return { ...pr, queue: { provider: "trunk", state, position: null, active: !TRUNK_QUEUE_DONE.includes(state) } };
