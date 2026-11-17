@@ -1,0 +1,10 @@
+{
+  "matcher": "Bash|mcp__github__create_pull_request",
+  "hooks": [
+    {
+      "type": "command",
+      "command": "~/.claude/hooks/herdr-task-pr.sh 2>/dev/null || true",
+      "timeout": 10
+    }
+  ]
+}
