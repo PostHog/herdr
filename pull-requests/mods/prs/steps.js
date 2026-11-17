@@ -24,16 +24,18 @@ export function fixable(pr) {
 }
 
 export function queueFor(pr, group, trunk) {
-  if (!trunk?.items || pr.repo !== trunk.repo) return null;
-  const own = trunk.items[pr.number];
+  const items = trunk?.items && pr.repo === trunk.repo ? trunk.items : {};
+  const own = items[pr.number];
   if (own) return { ...own, via: null };
   if (!group) return null;
-  const index = group.members.findIndex((member) => member.pr === pr);
-  for (const member of group.members.slice(index + 1)) {
-    const hit = trunk.items[member.pr.number];
+  const above = group.members.slice(group.members.findIndex((member) => member.pr === pr) + 1);
+  for (const member of above) {
+    const hit = items[member.pr.number];
     if (hit) return { ...hit, via: member.pr.number };
   }
-  return null;
+  if (pr.queue?.active) return null;
+  const queued = above.find((member) => member.pr.queue?.active);
+  return queued ? { state: "Queued", via: queued.pr.number } : null;
 }
 
 const TRUNK_QUEUE_STATE = { Testing: "testing", "Tests Passed": "tests_passed", Pending: "pending", "Not Ready": "not_ready", "Pending Failure": "pending_failure", Failed: "failed", Cancelled: "cancelled", Merged: "merged" };
@@ -56,6 +58,8 @@ export function step(pr, entry, trunk) {
         return { icon: "fail", tone: "bad", label: `Queue ${entry.state === "Failed" ? "failed" : "failing"}${via}`, requeue: entry.state === "Failed" && !entry.via };
       case "Cancelled":
         return { icon: "ban", tone: "dim", label: "Removed from queue", requeue: !entry.via };
+      case "Queued":
+        return { icon: "queue", tone: "accent", label: `In merge queue${via}` };
       case "Tests Passed":
         return { icon: "rocket", tone: "ok", label: "Merging" };
       case "Testing": {
