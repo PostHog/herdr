@@ -83,6 +83,18 @@ export async function findCheckout() {
   return null;
 }
 
+// hogli.yaml lists every command under its group, indented. A checkout from before a command
+// landed doesn't have it, so the menu leaves that row out instead of failing on a click.
+export async function hogliCommands(checkout) {
+  try {
+    const text = await readTextFile(`${checkout}/hogli.yaml`);
+    const names = [...(text ?? "").matchAll(/^\s+([a-z][\w-]*(?::[\w-]+)+):\s*$/gm)].map((m) => m[1]);
+    return names.length ? new Set(names) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function uiForward(machineName) {
   const forward = terminals().find((t) => t.labels?.[UI_LABEL] === machineName && t.state === "live" && !String(t.address).includes("/"));
   if (!forward) return null;
