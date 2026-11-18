@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+"""todo-agent <slug> <text> — decide whether a new to-do is agent work and, if so,
+start a Claude session for it as a pane in the shared "to-do helpers" space.
+Started by the Herdr to-do panel. Alert to-dos (todo-links/<slug>.json with how "alert") skip the check and get todo-alert-preamble.md. Writes ~/morning-launch/todo-prep/<slug>.json
+(status: checking | skip | running); the session writes <slug>.md when done.
+Test hooks: TODO_TRIAGE (fixed answer), TODO_FAKE (placeholder session), TODO_SPACE."""
+import json, os, subprocess, sys
+
+BASE = os.path.expanduser("~/morning-launch")
+PREP = f"{BASE}/todo-prep"
+HA = os.path.expanduser("~/.local/bin/herdr-app")
+SPACE = os.environ.get("TODO_SPACE", "to-do helpers")
+PER_TAB = 4  # helpers per tab, as a 2×2 grid; a fifth starts a new tab
+CHECK = ("Classify a to-do item. Output YES if an AI research-and-drafting assistant (no phone, no calendar "
+         "booking, no payments) could produce useful prep or a draft for it: data checks, account investigations, "
+         "analyses, written drafts, meeting prep docs. Output NO for calls, meetings themselves, personal errands, "
+         "bookings, expenses/admin, or anything only a human can do. Output exactly one word: YES or NO.")
+
+
+def record(slug, **fields):
+    path = f"{PREP}/{slug}.json"
+    try:
+        data = json.load(open(path))
+    except (OSError, ValueError):
+        data = {}
+    data.update(fields)
+    tmp = path + ".tmp"
+    json.dump(data, open(tmp, "w"))
+    os.replace(tmp, path)
+
+
+def ask(model, text):
+    try:
+        r = subprocess.run(["claude", "-p", "--model", model, "--no-session-persistence", "--tools", "",
+                            "--system-prompt", CHECK, text],
+                           capture_output=True, text=True, timeout=90, cwd=f"{PREP}/.check")
+        return r.stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+
+def verdict(answer):
+    word = answer.strip().split()[0].strip(".!").upper() if answer.strip() else ""
+    return word if word in ("YES", "NO") else None
+
+
+def triage(text):
+    if "TODO_TRIAGE" in os.environ:
+        return verdict(os.environ["TODO_TRIAGE"]) or "YES"
+    return verdict(ask("haiku", text)) or verdict(ask("sonnet", text)) or "YES"  # unclear leans yes
+
+
+def ha(*args):
+    r = subprocess.run([HA, *args], capture_output=True, text=True)
+    return json.loads(r.stdout or "{}")
+
+
+def do(cmd, args):
+    out = ha("do", cmd, json.dumps(args))
+    if "error" in out:
+        raise SystemExit(f"herdr {cmd}: {out['error']}")
+    return out
+
+
+def alert_link(slug):
+    """The Slack post an alert to-do came from (book-spaces alert-todos writes todo-links/<slug>.json), or None."""
+    try:
+        rec = json.load(open(f"{BASE}/todo-links/{slug}.json"))
+    except (OSError, ValueError):
+        return None
+    return rec.get("slack") if rec.get("how") == "alert" else None
+
+
+def start(slug, text, alert=None):
+    handover = f"{PREP}/{slug}.md"
+    if os.environ.get("TODO_FAKE"):
+        argv = ["zsh", "-c", f"echo placeholder for {slug}; sleep 600"]
+    else:
+        argv = ["zsh", "-c", f"cd {BASE}/work && exec zsh {BASE}/run-todo.sh \"$0\" \"$1\" \"$2\"", text, handover, alert or ""]
+    spaces = [s for s in ha("ls").get("spaces", []) if s["name"] == SPACE]
+    if not spaces:
+        made = do("space.new", {"name": SPACE, "folder": f"{BASE}/work", "tab": "helpers", "argv": argv})
+        return made["space"], made["tab"], made["terminal"]
+    space = spaces[0]
+    # The first tab with room takes it (so gaps left by closed helpers get reused);
+    # when every tab is full, open a new one.
+    tab = next((t for t in space["tabs"] if len(t["terminals"]) < PER_TAB), None)
+    if tab is None:
+        made = do("tab.new", {"space": space["id"], "name": f"helpers {len(space['tabs']) + 1}",
+                              "folder": f"{BASE}/work", "argv": argv})
+        return space["id"], made["tab"], made["terminal"]
+    panes = [t["pane"] for t in tab["terminals"]]
+    n = len(panes)
+    # A 2×2 grid: second goes right of the first, third under the first, fourth under
+    # the second. Herdr lists panes column by column, so the right column's top is last.
+    if n == 1:
+        made = do("pane.split", {"pane": panes[0], "direction": "right", "argv": argv})
+    elif n == 2:
+        made = do("pane.split", {"pane": panes[0], "direction": "down", "argv": argv})
+    else:
+        made = do("pane.split", {"pane": panes[-1], "direction": "down", "argv": argv})
+    return space["id"], tab["id"], made["terminal"]
+
+
+def main():
+    slug, text = sys.argv[1], sys.argv[2]
+    os.makedirs(f"{PREP}/.check", exist_ok=True)
+    record(slug, text=text, status="checking")
+    alert = alert_link(slug)  # alert to-dos were already judged worth a look; skip the yes/no check
+    if not alert and triage(text) == "NO":
+        record(slug, status="skip")
+        return 0
+    space, tab, terminal = start(slug, text, alert)
+    record(slug, status="running", space=space, tab=tab, terminal=terminal, handover=f"{PREP}/{slug}.md")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,201 @@
+{
+  "id": "root",
+  "cloned_from": {
+    "name": "main",
+    "version": "0.1.15"
+  },
+  "type": "row",
+  "children": [
+    {
+      "id": "sidebar",
+      "type": "column",
+      "children": [
+        {
+          "id": "brand",
+          "type": "block",
+          "content": {
+            "mod": "workspace-chrome"
+          },
+          "size": {
+            "px": 46
+          },
+          "window_drag": true,
+          "background": "chrome",
+          "radius": 12,
+          "border": {
+            "width": 1,
+            "color": "border"
+          },
+          "shadow": "md"
+        },
+        {
+          "id": "sidebar-lists",
+          "type": "block",
+          "content": {
+            "mod": "ella-sidebar"
+          },
+          "size": {
+            "weight": 1
+          },
+          "min": 60
+        },
+        {
+          "id": "sidebar-footer",
+          "type": "block",
+          "content": {
+            "mod": "workspace-chrome",
+            "props": {
+              "footer": true
+            }
+          },
+          "size": {
+            "px": 69
+          },
+          "background": "chrome",
+          "radius": 12,
+          "border": {
+            "width": 1,
+            "color": "border"
+          },
+          "shadow": "md"
+        }
+      ],
+      "size": {
+        "px": 268
+      },
+      "min": 44,
+      "max": 480,
+      "resizable": false,
+      "gap": 24
+    },
+    {
+      "id": "work",
+      "type": "column",
+      "children": [
+        {
+          "id": "tabs",
+          "type": "block",
+          "content": {
+            "mod": "ella-tabs"
+          },
+          "size": {
+            "px": 42
+          },
+          "window_drag": true,
+          "background": "chrome",
+          "radius": 12,
+          "border": {
+            "width": 1,
+            "color": "border"
+          },
+          "shadow": "md"
+        },
+        {
+          "id": "work-body",
+          "type": "row",
+          "children": [
+            {
+              "id": "main",
+              "type": "block",
+              "content": {
+                "tab": "active",
+                "pane": {
+                  "header": {
+                    "content": {
+                      "mod": "ella-pane"
+                    },
+                    "reveal": "always",
+                    "height": 30,
+                    "position": "top"
+                  },
+                  "background": "background",
+                  "border": {
+                    "width": 1,
+                    "color": "border"
+                  },
+                  "focus": {
+                    "width": 1,
+                    "color": "accent"
+                  },
+                  "radius": 12,
+                  "gap": 32,
+                  "lone": true,
+                  "shadow": "md"
+                }
+              }
+            },
+            {
+              "id": "panel",
+              "type": "column",
+              "children": [
+                {
+                  "id": "panel-body",
+                  "type": "stack",
+                  "children": [
+                    {
+                      "id": "files",
+                      "type": "block",
+                      "content": {
+                        "mod": "files"
+                      }
+                    },
+                    {
+                      "id": "changes",
+                      "type": "block",
+                      "content": {
+                        "mod": "changes"
+                      }
+                    }
+                  ],
+                  "active": "files"
+                }
+              ],
+              "size": {
+                "px": 368
+              },
+              "min": 280,
+              "max": 900,
+              "hidden": true
+            }
+          ],
+          "padding": 0,
+          "gap": 32
+        },
+        {
+          "id": "status",
+          "type": "block",
+          "content": {
+            "mod": "ella-status"
+          },
+          "size": {
+            "px": 28
+          },
+          "background": "chrome",
+          "radius": 12,
+          "border": {
+            "width": 1,
+            "color": "border"
+          },
+          "shadow": "md"
+        }
+      ],
+      "resizable": false,
+      "gap": 26
+    }
+  ],
+  "background": {
+    "image": "mods/ella-scenes/images/sunset.jpg",
+    "fit": "cover"
+  },
+  "terminal_padding": [
+    14,
+    12
+  ],
+  "titlebar": "none",
+  "traffic_lights": [
+    12,
+    16
+  ],
+  "padding": 36,
+  "gap": 32
+}

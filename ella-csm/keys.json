@@ -1,0 +1,7 @@
+{
+  "global": {
+    "cmd-w": "mod.open:ella-close-guard",
+    "cmd-shift-w": "ella-pane.close",
+    "cmd-shift-y": "mod.open:ella-scenes"
+  }
+}

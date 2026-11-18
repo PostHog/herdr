@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+"""todo-slack <slug> <text> — find the Slack message a to-do item came from.
+Started by the Herdr to-do panel for each open item without a record. Writes
+~/morning-launch/todo-links/<slug>.json: {"slack": <permalink or null>, "how": "pasted"|"search"|"none", "checked": date}.
+A Slack link pasted in the text is used as is; otherwise headless Claude searches Slack
+and only answers when one message clearly matches. No match means no button, never a guess.
+Test hook: TODO_SLACK_FAKE (fixed answer instead of the search)."""
+import datetime, json, os, re, subprocess, sys
+
+DIR = os.path.expanduser("~/morning-launch/todo-links")
+LINK = re.compile(r"https://[\w-]+\.slack\.com/archives/[A-Z0-9]+/p\d+[^\s)>\]]*")
+TOOLS = "mcp__claude_ai_Slack__slack_search_public_and_private,mcp__claude_ai_Slack__slack_search_public,mcp__claude_ai_Slack__slack_read_thread"
+ASK = """A to-do item below was copied from a Slack message (an alert, a scout post, or someone's message),
+possibly reworded or shortened. Find that source message with Slack search: search for its most
+distinctive words (names, numbers, invoice ids, ticket numbers, channel names), within the last 30 days.
+Only answer with a permalink if one message clearly carries the same specific facts. If several messages
+could be it, pick the original post, not a reply quoting it. If nothing clearly matches, or the item didn't
+come from Slack (a meeting note, a personal reminder), answer NONE. Reply with exactly one line: the
+permalink, or NONE.
+
+To-do item:
+"""
+
+
+def record(slug, slack, how):
+    os.makedirs(DIR, exist_ok=True)
+    path = f"{DIR}/{slug}.json"
+    tmp = path + ".tmp"
+    json.dump({"slack": slack, "how": how, "checked": datetime.date.today().isoformat()}, open(tmp, "w"))
+    os.replace(tmp, path)
+
+
+def search(text):
+    if "TODO_SLACK_FAKE" in os.environ:
+        return os.environ["TODO_SLACK_FAKE"]
+    os.makedirs(f"{DIR}/.check", exist_ok=True)
+    try:
+        # Prompt first: --allowedTools takes several values and would swallow it.
+        r = subprocess.run(["claude", "-p", ASK + text, "--model", "sonnet", "--no-session-persistence",
+                            "--allowedTools", TOOLS],
+                           stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=240, cwd=f"{DIR}/.check")
+        return r.stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def main():
+    slug, text = sys.argv[1], sys.argv[2]
+    pasted = LINK.search(text)
+    if pasted:
+        return record(slug, pasted.group(0), "pasted")
+    answer = search(text)
+    if answer is None:
+        return  # failed to run: leave no record so the panel tries again next time
+    found = LINK.findall(answer)
+    # One distinct link, or nothing: two candidates means it wasn't sure.
+    record(slug, found[0], "search") if len(set(found)) == 1 else record(slug, None, "none")
+
+
+if __name__ == "__main__":
+    main()

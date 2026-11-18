@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+"""acct-space — open (or go back to) an account's own Herdr space.
+
+    acct-space "<Account Name>"
+
+The space is named after the account (acme, dunder-mifflin) and starts in ~/book with
+Claude, which pulls the hogpilot card and waits. If the space already exists it
+just switches to it. Called by `acct`; ACCT_SPACE_FAKE=1 runs a plain shell
+instead of Claude (tests).
+"""
+import json, os, subprocess, sys, time
+
+HA = os.path.expanduser("~/.local/bin/herdr-app")
+BOOK = os.path.expanduser("~/book")
+
+
+def ha(*args):
+    r = subprocess.run([HA, *args], capture_output=True, text=True)
+    return r.returncode, r.stdout
+
+
+def do(cmd, args):
+    code, out = ha("do", cmd, json.dumps(args))
+    data = json.loads(out or "{}")
+    if code or "error" in data:
+        raise SystemExit("herdr: %s: %s" % (cmd, data.get("error", out)))
+    return data
+
+
+def main():
+    if len(sys.argv) < 2:
+        print(__doc__.strip()); return 1
+    name = sys.argv[1]
+    slug = name.lower().replace(" ", "-")
+    os.makedirs(BOOK, exist_ok=True)
+
+    if ha("status")[0]:
+        subprocess.run(["open", "-ga", "Herdr"])
+        for _ in range(30):
+            if not ha("status")[0]: break
+            time.sleep(1)
+
+    spaces = json.loads(ha("ls")[1] or "{}").get("spaces", [])
+    existing = [s for s in spaces if s["name"] == slug]
+    if existing:
+        space = existing[0]["id"]
+        print("back to the %s space in herdr" % slug)
+    else:
+        if os.environ.get("ACCT_SPACE_FAKE"):
+            start = {"argv": ["zsh", "-c", "echo placeholder for %s; sleep 600" % slug]}
+        else:
+            start = {"argv": ["claude"],
+                     "task": "We're looking at %s. Run `hp context %s` and give me a three-line "
+                             "where-things-stand from the card, with its date. Then wait for me." % (name, slug)}
+        space = do("space.new", {"name": slug, "folder": BOOK, "tab": "claude", **start})["space"]
+        print("made a %s space in herdr" % slug)
+    do("space.select", {"id": space})
+    if not os.environ.get("ACCT_SPACE_FAKE"):
+        subprocess.run(["open", "-a", "Herdr"])
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

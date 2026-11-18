@@ -1,0 +1,5 @@
+#!/bin/zsh
+# launchd com.ella-csm.book-spaces runs this every 2 minutes.
+export PATH=$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
+mkdir -p $HOME/book/spaces
+exec $HOME/.local/bin/book-spaces tick >> $HOME/book/spaces/book-spaces.log 2>&1
