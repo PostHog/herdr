@@ -14,7 +14,7 @@ function setLaunching(key, at) {
   setShared("prs.launching", launching);
 }
 
-export function showIfOpen(...names) {
+function showIfOpen(...names) {
   const open = findTab(...names);
   if (open) showTab(open);
   return Boolean(open);
@@ -45,17 +45,31 @@ export function findTab(...names) {
   return null;
 }
 
+const prTabNames = (pr) => [`PR ${prRef(pr)}`, `fix ${prRef(pr)}`, `review ${prRef(pr)}`];
+
+export async function showPrWork(pr) {
+  if (showIfOpen(...prTabNames(pr))) return true;
+  const checkouts = await branchSpaces(pr);
+  if (showIfOpen(...prTabNames(pr))) return true;
+  const agent = agents().find((candidate) => checkouts.some((space) => space.id === candidate.space));
+  if (agent) {
+    showTab({ space: agent.space, tab: agent.tab });
+    return true;
+  }
+  if (!checkouts.length) return false;
+  const space = checkouts.find((candidate) => candidate.active) ?? checkouts[0];
+  run("space.select", { id: space.id });
+  return true;
+}
+
 export function openClaude(pr, context = {}) {
   const name = `PR ${prRef(pr)}`;
-  const showOpen = () => showIfOpen(name, `fix ${prRef(pr)}`, `review ${prRef(pr)}`);
+  const showOpen = () => showIfOpen(...prTabNames(pr));
   return launchOnce(`claude ${prRef(pr)}`, async () => {
-    if (showOpen()) return;
-    const checkouts = await branchSpaces(pr);
-    const agent = agents().find((candidate) => checkouts.some((space) => space.id === candidate.space));
-    if (agent) return showTab({ space: agent.space, tab: agent.tab });
+    if (await showPrWork(pr)) return;
     const claudeArgs = ["--name", name, "--append-system-prompt", systemPrompt(pr, context)];
     try {
-      const space = checkouts[0] ?? (await repoSpace(pr));
+      const space = await repoSpace(pr);
       if (space) {
         const [claude, folder] = await Promise.all([claudeArgv(space.machine), rootOf(space)]);
         if (showOpen()) return;
