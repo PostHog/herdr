@@ -1,0 +1,79 @@
+#!/usr/bin/env python3
+"""herdr-style [style] [--animated | --static] — switch Herdr's background and colours
+together, and whether the background moves.
+
+    herdr-style meadow            switch style, keeping animated/static as it is
+    herdr-style --animated        keep the style, start the animation (--static stops it)
+
+With no argument, lists the styles. Styles come from
+~/.config/herdr-app/mods/ella-scenes/scenes.json (the ella-scenes mod's list). The swatches in the status bar (mods/ella-status) run this.
+"""
+import json, os, subprocess, sys
+
+HOME = os.path.expanduser("~/.config/herdr-app")
+STYLES = f"{HOME}/mods/ella-scenes/scenes.json"
+LAYOUT = f"{HOME}/layouts/ella.json"
+# What's chosen: {"id": style, "animated": bool}. The status bar mod plays the frames
+# while animated is on, by swapping the layout's background image.
+CURRENT = f"{HOME}/ella-style.json"
+HA = os.path.expanduser("~/.local/bin/herdr-app")
+
+
+def write_json(path, data):
+    with open(path + ".tmp", "w") as f:
+        json.dump(data, f, indent=2)
+        f.write("\n")
+    os.replace(path + ".tmp", path)
+
+
+def main():
+    styles = {s["id"]: s for s in json.load(open(STYLES))}
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    flags = [a for a in sys.argv[1:] if a.startswith("--")]
+    try:
+        cur = json.load(open(CURRENT))
+    except (OSError, ValueError):
+        cur = {"id": "sunset", "animated": False}
+    if not args and not flags:
+        for s in styles.values():
+            mark = " ←" if s["id"] == cur.get("id") else ""
+            print(f"{s['id']:10} {s['label']}{' (animated)' if mark and cur.get('animated') else ''}{mark}")
+        return 0
+    sid = args[0] if args else cur.get("id", "sunset")
+    s = styles.get(sid)
+    if not s:
+        raise SystemExit(f"no style {sid!r}: {', '.join(styles)}")
+    animated = cur.get("animated", False)
+    if "--animated" in flags:
+        animated = True
+    if "--static" in flags:
+        animated = False
+    if animated and not s.get("frames"):
+        raise SystemExit(f"{s['label']} has no animated version yet: run backgrounds/make_scene.py --frames {sid}")
+    image = s["frames"][0] if animated else s["image"]
+    if not os.path.exists(f"{HOME}/{image}"):
+        raise SystemExit(f"{image} is missing: run backgrounds/make_scene.py {sid}")
+    write_json(CURRENT, {"id": sid, "animated": animated})
+    layout = json.load(open(LAYOUT))
+    layout.setdefault("background", {})["image"] = image
+    write_json(LAYOUT, layout)
+    # Keep the dark slot in settings.json too, so the theme survives a restart
+    # (app.theme alone only changes the window).
+    sp = f"{HOME}/settings.json"
+    settings = json.load(open(sp))
+    theme = settings.get("theme")
+    if isinstance(theme, dict):
+        theme["dark"] = s["theme"]
+    else:
+        settings["theme"] = {"dark": s["theme"]}
+    write_json(sp, settings)
+    # Theme last: the app.theme call also makes the window redraw.
+    r = subprocess.run([HA, "do", "app.theme", json.dumps({"name": s["theme"]})], capture_output=True, text=True)
+    if r.returncode or "error" in (r.stdout or ""):
+        raise SystemExit(f"couldn't set the theme: {(r.stdout or r.stderr).strip()}")
+    print(f"now {s['label']}{' (animated)' if animated else ''}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

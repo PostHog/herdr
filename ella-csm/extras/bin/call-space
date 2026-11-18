@@ -1,0 +1,7 @@
+#!/bin/zsh
+# call-space after <heard meeting json> — the Granola "heard" pull (~/morning-launch/heard,
+# launchd com.ella-csm.heard) calls this after each meeting; it hands off to book-spaces,
+# which drops the commitments into that account's Herdr space.
+export PATH=$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
+mkdir -p $HOME/book/spaces
+exec $HOME/.local/bin/book-spaces "$@" >> $HOME/book/spaces/book-spaces.log 2>&1

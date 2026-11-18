@@ -1,0 +1,182 @@
+[
+  {
+    "id": "sunset",
+    "label": "Sunset",
+    "theme": "painted-dusk",
+    "image": "mods/ella-scenes/images/sunset.jpg",
+    "thumb": "mods/ella-scenes/thumbs/sunset.jpg",
+    "swatch": [
+      "#46597a",
+      "#e8919f",
+      "#2c4640"
+    ],
+    "buttons": {
+      "verify": "#c5a5b0",
+      "ca": "#b8899b",
+      "draft": "#c6b3b7",
+      "devbox": "#d6bdbf",
+      "thanks": "#e8d9db",
+      "help": "#ae758f"
+    }
+  },
+  {
+    "id": "meadow",
+    "label": "Meadow",
+    "theme": "painted-meadow",
+    "image": "mods/ella-scenes/images/meadow.jpg",
+    "thumb": "mods/ella-scenes/thumbs/meadow.jpg",
+    "swatch": [
+      "#7fb3e0",
+      "#ffffff",
+      "#5f9466"
+    ],
+    "buttons": {
+      "verify": "#b2c5a5",
+      "ca": "#9fb889",
+      "draft": "#b9c6b3",
+      "devbox": "#c2d6bd",
+      "thanks": "#dde8d9",
+      "help": "#94ae75"
+    }
+  },
+  {
+    "id": "rain",
+    "label": "Forest rain",
+    "theme": "painted-rain",
+    "image": "mods/ella-scenes/images/rain.jpg",
+    "thumb": "mods/ella-scenes/thumbs/rain.jpg",
+    "swatch": [
+      "#8a9c94",
+      "#dfe5da",
+      "#3a5a4a"
+    ],
+    "buttons": {
+      "verify": "#a9c0b4",
+      "ca": "#8fb09c",
+      "draft": "#b7c2b6",
+      "devbox": "#cbd3c0",
+      "thanks": "#dfe5da",
+      "help": "#7fa688"
+    }
+  },
+  {
+    "id": "night",
+    "label": "Starry night",
+    "theme": "painted-night",
+    "image": "mods/ella-scenes/images/night.jpg",
+    "thumb": "mods/ella-scenes/thumbs/night.jpg",
+    "swatch": [
+      "#1c2450",
+      "#f3d38a",
+      "#222a4d"
+    ],
+    "buttons": {
+      "verify": "#a2a6c8",
+      "ca": "#868ebc",
+      "draft": "#b2b2c8",
+      "devbox": "#bfbbd8",
+      "thanks": "#d9d8e9",
+      "help": "#7080b2"
+    }
+  },
+  {
+    "id": "seaside",
+    "label": "Seaside",
+    "theme": "painted-seaside",
+    "image": "mods/ella-scenes/images/seaside.jpg",
+    "thumb": "mods/ella-scenes/thumbs/seaside.jpg",
+    "swatch": [
+      "#8cc8ec",
+      "#ffffff",
+      "#2f7f9a"
+    ],
+    "buttons": {
+      "verify": "#a2c0c8",
+      "ca": "#86b3bc",
+      "draft": "#b2c0c8",
+      "devbox": "#bbcbd8",
+      "thanks": "#d8e3e9",
+      "help": "#70aeb2"
+    }
+  },
+  {
+    "id": "blossom",
+    "label": "Cherry blossom",
+    "theme": "painted-blossom",
+    "image": "mods/ella-scenes/images/blossom.jpg",
+    "thumb": "mods/ella-scenes/thumbs/blossom.jpg",
+    "swatch": [
+      "#f6c0d4",
+      "#ec8fae",
+      "#8cbc8a"
+    ],
+    "buttons": {
+      "verify": "#cf9bb1",
+      "ca": "#c67b9e",
+      "draft": "#ccadb6",
+      "devbox": "#deb5bd",
+      "thanks": "#edd4da",
+      "help": "#bf6396"
+    }
+  },
+  {
+    "id": "autumn",
+    "label": "Autumn",
+    "theme": "painted-autumn",
+    "image": "mods/ella-scenes/images/autumn.jpg",
+    "thumb": "mods/ella-scenes/thumbs/autumn.jpg",
+    "swatch": [
+      "#f0cfa0",
+      "#e0703a",
+      "#7c4c2c"
+    ],
+    "buttons": {
+      "verify": "#ccb29e",
+      "ca": "#c19980",
+      "draft": "#cabeb0",
+      "devbox": "#dbcfb8",
+      "thanks": "#ebe2d6",
+      "help": "#b9826a"
+    }
+  },
+  {
+    "id": "snow",
+    "label": "Snowy village",
+    "theme": "painted-snow",
+    "image": "mods/ella-scenes/images/snow.jpg",
+    "thumb": "mods/ella-scenes/thumbs/snow.jpg",
+    "swatch": [
+      "#a9bfd8",
+      "#ffffff",
+      "#355a5c"
+    ],
+    "buttons": {
+      "verify": "#a7b1c3",
+      "ca": "#8d9db4",
+      "draft": "#b5b8c5",
+      "devbox": "#bfc2d4",
+      "thanks": "#dadde7",
+      "help": "#7991a9"
+    }
+  },
+  {
+    "id": "forest",
+    "label": "Forest",
+    "theme": "painted-forest",
+    "image": "mods/ella-scenes/images/forest.jpg",
+    "thumb": "mods/ella-scenes/thumbs/forest.jpg",
+    "swatch": [
+      "#d8ec9a",
+      "#f6e080",
+      "#5a3f5e"
+    ],
+    "buttons": {
+      "verify": "#bec6a4",
+      "ca": "#afb988",
+      "draft": "#bfc7b3",
+      "devbox": "#cad6bc",
+      "thanks": "#e2e8d9",
+      "help": "#a8af74"
+    }
+  }
+]

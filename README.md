@@ -14,6 +14,7 @@ Each top-level folder with a `RECIPE.md` is one piece. You pick the pieces you w
 | [`space-tree`](space-tree/RECIPE.md) | The `Pull-Requests` layout with one sidebar tree: spaces (with each repo's own icon), their terminals and agents, and each agent's sub-agents, grouped by machine. The tabs move from the top bar into the tree. Needs `pull-requests`. |
 | [`gustavo`](gustavo/README.md) | Gustavo Strassburger's task-first setup: each space is a task with its Claude sessions, PRs and worktrees, an Inbox of what waits on you, a Grafana view, a pixel-art Dungeon of your tasks with PostHog's hoggies, a history bar, and PostHog's dev stack on the right. Built around Feature Flags team work; take the parts you like. |
 | [`hogpilot`](hogpilot/RECIPE.md) | A side panel for CSMs: hogpilot's book of accounts with open signals and ARR at stake, and the account card for whichever account the focused terminal is working on, with buttons to ask Claude about it or open its dossier. Needs hogpilot installed. |
+| [`ella-csm`](ella-csm/README.md) | Ella Cullen's customer success setup: nine painted scenes with matching colours, a sidebar with your book of accounts, a pond of agents and a to-do list whose items each get a Claude helper, Slack alerts that become to-dos with the investigation done, and call prep that opens before each customer meeting. Scripts outside Herdr go in with `extras/setup.sh`; the README lists what to change for your own book. Needs hogpilot. |
 
 ## Install
 

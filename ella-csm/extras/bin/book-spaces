@@ -1,0 +1,925 @@
+#!/usr/bin/env python3
+"""book-spaces — account spaces that follow the calendar, plus cadence data for the sidebar.
+
+    book-spaces tick                  launchd, every 2 min: refresh what's stale, open prep for calls
+                                      starting in the next 10 min
+    book-spaces refresh-calendar      Granola upcoming meetings -> calendar.json
+    book-spaces refresh-cadence       PostHog (last meeting, last email Ella sent, contract end)
+                                      -> cadence.json, which the sidebar mods read
+    book-spaces before <evt_id>       open the account's space with a prep tab for that meeting
+    book-spaces after <heard.json>    drop a finished call's commitments into its space
+    book-spaces refresh-alerts        the scouts' Slack posts from the last 7 days, matched to
+                                      accounts -> alerts.json (badges in Accounts, the tab bar)
+    book-spaces alert-todos [--dry-run]  new alert posts (own scout channels + shared channels that
+                                      tag Ella) -> to-do items, each of which starts a helper; runs
+                                      after every alerts refresh
+    book-spaces touch <account>       count today as a touch (something the data can't see)
+    book-spaces status                what it knows: next calls, cadence per account
+
+Data lives in ~/book/spaces (BOOK_SPACES_DIR overrides). Both refreshes read the tool
+result itself out of `claude -p --output-format stream-json`, so the model never retypes
+data. BOOK_SPACES_FAKE=1 runs placeholder shells instead of Claude in Herdr (tests).
+"""
+import json, os, re, subprocess, sys, time
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+HOME = Path.home()
+DIR = Path(os.environ.get("BOOK_SPACES_DIR", HOME / "book/spaces"))
+CALLS_DIR = Path(os.environ.get("BOOK_CALLS_DIR", HOME / "book/calls"))
+BIN = HOME / ".local/bin"
+HA = str(BIN / "herdr-app")
+LOCAL = ZoneInfo("Europe/London")
+ME = "you@posthog.com"
+LEAD = timedelta(minutes=10)           # open prep this long before a call
+LATE = timedelta(minutes=5)            # still open it if the call started this recently
+CAL_EVERY = timedelta(minutes=20)
+CADENCE_EVERY = timedelta(hours=20)
+ALERTS_EVERY = timedelta(minutes=30)
+RETRY_AFTER = timedelta(hours=2)       # after a failed refresh
+WORK_HOURS = range(7, 19)
+FAKE = bool(os.environ.get("BOOK_SPACES_FAKE"))
+MEEP = HOME / ".config/herdr-app/sounds/meep.mp3"  # same sound as Herdr's alerts
+GRANOLA_MCP = HOME / "morning-launch/heard/granola-mcp.json"
+EMAIL = re.compile(r"[A-Za-z0-9._%+'-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+
+
+# ---------- small helpers ----------
+
+def now():
+    return datetime.now(timezone.utc)
+
+
+def parse_time(text):
+    if not text or str(text).startswith("(null)"):
+        return None
+    try:
+        t = datetime.fromisoformat(str(text).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+
+
+def load(name, default):
+    try:
+        return json.loads((DIR / name).read_text())
+    except (OSError, ValueError):
+        return default
+
+
+def save(name, data):
+    DIR.mkdir(parents=True, exist_ok=True)
+    tmp = DIR / (name + ".tmp")
+    tmp.write_text(json.dumps(data, indent=1, default=str))
+    tmp.replace(DIR / name)
+
+
+def log(msg):
+    stamp = datetime.now(LOCAL).strftime("%d %b %H:%M:%S")
+    print(f"{stamp}  {msg}", flush=True)
+
+
+def slugify(name):
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+
+
+# ---------- the roster: hp's book, named the way acct names spaces ----------
+
+def acct_names():
+    """org_id -> display name, from the table baked into ~/.local/bin/acct."""
+    try:
+        src = (BIN / "acct").read_text()
+        book = json.loads(re.search(r"BOOK = json\.loads\(r'''(.*?)'''\)", src, re.S).group(1))
+    except (OSError, AttributeError, ValueError):
+        return {}
+    out = {}
+    for name, tabs in book.items():
+        for tab in tabs:
+            m = re.search(r"organization_id(?:=|%22%3A%22)([0-9a-f-]{36})", tab.get("url", ""))
+            if m:
+                out[m.group(1)] = name
+                break
+    return out
+
+
+NAMES = {"piedpiper": "Piedpiper"}  # book accounts acct doesn't know, spelled properly
+
+
+def roster():
+    """[{slug, name, org, hp}] — slug is the Herdr space name acct-space uses."""
+    raw = subprocess.run(["hp", "book", "show"], capture_output=True, text=True).stdout
+    try:
+        rows = [r for r in json.loads(raw)["rows"] if r.get("active", True)]
+    except (ValueError, KeyError):
+        rows = []
+    names = acct_names()
+    out = []
+    for r in rows:
+        name = names.get(r["org_id"]) or NAMES.get(r["account"]) or r["account"].replace("-", " ").title()
+        out.append({"slug": slugify(name), "name": name, "org": r["org_id"], "hp": r["account"]})
+    return sorted(out, key=lambda a: a["name"].lower())
+
+
+# ---------- reading a tool result out of headless Claude ----------
+
+def tool_results(argv, prompt, timeout=300):
+    """Run claude -p and return the text of every tool result, in order."""
+    cmd = ["claude", "-p", prompt, *argv, "--model", "haiku", "--no-session-persistence",
+           "--output-format", "stream-json", "--verbose"]
+    r = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=timeout,
+                       cwd=str(HOME / "morning-launch/heard"))
+    out = []
+    for line in r.stdout.splitlines():
+        try:
+            d = json.loads(line)
+        except ValueError:
+            continue
+        if d.get("type") != "user":
+            continue
+        for b in d.get("message", {}).get("content", []) or []:
+            if isinstance(b, dict) and b.get("type") == "tool_result":
+                c = b.get("content")
+                out.append(c if isinstance(c, str) else "".join(x.get("text", "") for x in c or []))
+    return out
+
+
+# ---------- scout alerts (the PostHog Slack app's posts about the book) ----------
+
+# Where Ella's scouts post. In the Acme channel only the app's posts count, and all are Acme.
+ALERT_CHANNELS = {
+    "C00000NEWS0": "#account-news-you",
+    "C000OUTREACH": "#outreach-suggestions-you",
+    "C000ADOPTION": "#adoption-follow-through-you",
+    "C00SHIPMATCH": "#ship-match-you",
+    "D00000000DM": "PostHog DM",
+    "C00CUSTOMER1": "#customer-acme-internal",
+}
+CHANNEL_ACCOUNT = {"C00CUSTOMER1": "acme"}
+ALERT_DAYS = 7
+ALIASES = {"stark": "stark-chat", "dp": "daily-planet", "wayne": "wayne-performance"}
+MESSAGE = re.compile(r"=== Message from (.*?) at (.*?) ===\s*\nMessage TS: (\S+)\n(.*?)(?=\n\n=== Message from |\Z)", re.S)
+SCOUT = re.compile(r"^\*Scout · (.+?)\*( posted an update on an existing report)?\s*$")
+SCOUT_SUFFIX = re.compile(r"\s+(ella( c)?|eli)$", re.I)  # "Acme watch you" -> "Acme watch"
+
+
+def plain(line):
+    """A Slack mrkdwn line as plain text: links to their label, no *bold* or :emoji:."""
+    line = re.sub(r"<[^|>]+\|([^>]+)>", r"\1", line)
+    line = re.sub(r":[a-z0-9_+-]+:", "", line)
+    return re.sub(r"\s+", " ", line.replace("*", "")).strip()
+
+
+def alert_account(title, accounts):
+    """The account a title is about: its name (or an alias) at the start, longest first."""
+    low = title.lower()
+    names = [(a["name"].lower(), a["slug"]) for a in accounts] + list(ALIASES.items())
+    for name, slug in sorted(names, key=lambda n: -len(n[0])):
+        if low.startswith(name) and not low[len(name):len(name) + 1].isalnum():
+            return slug
+    return None
+
+
+def parse_alerts(channel, text, accounts):
+    try:
+        text = json.loads(text).get("messages", text)
+    except (ValueError, AttributeError):
+        pass
+    out = []
+    for author, when, ts, body in MESSAGE.findall(text):
+        lines = [l for l in body.strip().splitlines() if l.strip()]
+        if not lines:
+            continue
+        head = SCOUT.match(lines[0].strip())
+        if head and len(lines) > 1:
+            scout, update, title = SCOUT_SUFFIX.sub("", head.group(1)), bool(head.group(2)), plain(lines[1])
+            slug = CHANNEL_ACCOUNT.get(channel) or alert_account(title, accounts)
+        elif author.startswith("Book feature watch") or lines[0].startswith("Book feature watch"):
+            scout, update = "Feature watch", False
+            m = re.search(r"\*([^*]+)\* turned (on|off) \*([^*]+)\*", lines[0])
+            title = f"{m.group(1)} turned {m.group(2)} {m.group(3)}" if m else plain(lines[0])
+            slug = alert_account(m.group(1), accounts) if m else None
+        else:
+            continue  # a person talking, not a scout
+        if not slug:
+            continue
+        detail = next((plain(l) for l in lines[2:] if not l.startswith(("View ", ":speech_balloon:", "Thread:"))), "")
+        out.append({"slug": slug, "ts": ts, "at": datetime.fromtimestamp(float(ts), timezone.utc).isoformat(timespec="seconds"),
+                    "scout": scout, "update": update, "title": title, "detail": detail[:280], "channel": ALERT_CHANNELS[channel],
+                    "link": f"https://posthog.slack.com/archives/{channel}/p{ts.replace('.', '')}"})
+    return out
+
+
+def refresh_alerts():
+    accounts = roster()
+    if not accounts:
+        raise RuntimeError("hp book show gave no accounts")
+    oldest = f"{time.time() - ALERT_DAYS * 86400:.0f}"
+    calls = " ".join(f'Call {i + 1}: channel_id "{c}", oldest "{oldest}", limit 100, response_format "detailed".'
+                     for i, c in enumerate(ALERT_CHANNELS))
+    prompt = ("Call mcp__claude_ai_Slack__slack_read_channel exactly once for each of these channels, "
+              f"in order, and nothing else. {calls} Then reply with the single word: done.")
+    results = tool_results(["--allowedTools", "mcp__claude_ai_Slack__slack_read_channel"], prompt)
+    read = [r for r in results if '"messages"' in r or "=== Message from" in r]
+    if len(read) < len(ALERT_CHANNELS) - 1:
+        raise RuntimeError(f"Slack read {len(read)} of {len(ALERT_CHANNELS)} channels: " + " / ".join(r[:120] for r in results)[-400:])
+    alerts = []
+    for text in read:
+        channel = re.search(r"Channel: [^(]*\(([A-Z0-9]+)\)", text)
+        if channel and channel.group(1) in ALERT_CHANNELS:
+            alerts += parse_alerts(channel.group(1), text, accounts)
+    alerts.sort(key=lambda a: -float(a["ts"]))
+    save("alerts.json", {"fetched_at": now().isoformat(timespec="seconds"), "alerts": alerts})
+    log(f"alerts: {len(alerts)} in {ALERT_DAYS} days across {len({a['slug'] for a in alerts})} accounts")
+    return alerts
+
+
+# ---------- alert to-dos: new alert posts about the book -> to-do items with a helper ----------
+
+# Shared channels: every CSM's alerts land here, so only top-level posts that tag Ella count.
+# #billing-page-visit-alerts is left out on purpose (noisy; Ella's call, 18 Nov 2026).
+SHARED_CHANNELS = {
+    "C00000SPIKES": "#spike-detector",
+    "C0000000SALES": "#sales-alerts",
+    "C00000SCOUTS": "#project-managed-customers-consolidated-scouts",
+    "C000SUPPORT0": "#support-managed-customers",
+}
+ELLA_SLACK = "U00000000ME"
+TODO_HOME = Path(os.environ.get("TODO_HOME", HOME / "morning-launch"))
+FIRST_LOOKBACK = timedelta(hours=12)   # the first run only looks this far back
+OVERLAP = timedelta(hours=1)           # later runs read from the previous run minus this
+MAX_NEW = 8                            # to-dos added per run at most, so a flood can't start 30 helpers
+DECIDE = """You turn Slack alert posts about a CSM's customer accounts into to-do items for her list.
+Each new to-do automatically starts an AI helper that investigates it, so only add what is worth investigating.
+
+For each post decide:
+- "add": it's about one of her accounts and could need action or a look (spikes, drops, errors, limits,
+  overdue invoices, renewals, support tickets, churn or competitor signals, adoption gaps, outreach ideas,
+  people asking her something). Write "todo": one line, starting with the account name and a colon, saying
+  what happened with the key numbers and dates, ending with the source in brackets, e.g.
+  "Wonka: error tracking exceptions dropped to 0 after a ~10k/week baseline, 10-14 Nov (#account-news-you, 16 Nov)".
+  Plain words, no emoji, no Slack markup, under 300 characters.
+- "skip": the same issue for the same account is already on her to-do list (open or done today) or earlier
+  in this batch (say which in "reason"). Check this carefully before adding: look for the account name in the
+  list, then the same ticket number, invoice, person or metric. A list item that mentions the ticket or issue
+  in passing counts as covering it. Also skip when it's not about one of her accounts, or it needs nothing (a pure FYI with no
+  possible action, a "resolved" notice, someone joining a channel).
+When unsure, add.
+
+Reply with only a JSON array, one object per post, in the same order:
+[{"id": "<post id>", "action": "add" | "skip", "todo": "<line, for add>", "reason": "<short, for skip>"}]
+"""
+
+
+def todo_slug(text):
+    """Same key as slug() in ~/.config/herdr-app/mods/ella-todo/list.js (names todo-prep and todo-links files)."""
+    h = 5381
+    for ch in text:
+        h = ((h * 33) ^ ord(ch)) & 0xFFFFFFFF
+    base = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:44] or "item"
+    digits, b36 = "0123456789abcdefghijklmnopqrstuvwxyz", ""
+    while True:
+        h, r = divmod(h, 36)
+        b36 = digits[r] + b36
+        if not h:
+            break
+    return f"{base}-{b36}"
+
+
+def find_account(text, accounts):
+    """An account named anywhere in a post (whole words, longest name first)."""
+    low = plain(text).lower()
+    names = [(a["name"].lower(), a["slug"]) for a in accounts] + list(ALIASES.items())
+    for name, slug in sorted(names, key=lambda n: -len(n[0])):
+        if re.search(rf"(?<![a-z0-9]){re.escape(name)}(?![a-z0-9])", low):
+            return slug
+    return None
+
+
+def parse_shared(channel, text, accounts):
+    """Top-level posts in a shared channel that tag Ella and aren't by her."""
+    try:
+        text = json.loads(text).get("messages", text)
+    except (ValueError, AttributeError):
+        pass
+    out = []
+    for author, when, ts, body in MESSAGE.findall(text):
+        if ELLA_SLACK not in body or f"({ELLA_SLACK})" in author or author.startswith("Your Name"):
+            continue
+        out.append({"slug": find_account(body, accounts), "ts": ts, "channel": SHARED_CHANNELS[channel],
+                    "author": re.sub(r"\s*[<(].*$", "", author), "text": plain(body)[:1200],
+                    "link": f"https://posthog.slack.com/archives/{channel}/p{ts.replace('.', '')}"})
+    return out
+
+
+SAVED = re.compile(r"Output has been saved to (\S+?\.txt)")
+
+
+def full_result(text):
+    """A tool result too big for the session is saved to a file; read it back from there."""
+    m = SAVED.search(text) if not text.startswith('{"messages"') else None
+    if m:
+        try:
+            return Path(m.group(1)).read_text()
+        except OSError:
+            return text
+    return text
+
+
+def read_shared(accounts, since):
+    if os.environ.get("ALERT_SHARED_FAKE"):  # tests: [{channel, text}] standing in for the Slack reads
+        return [p for r in json.loads(os.environ["ALERT_SHARED_FAKE"]) for p in parse_shared(r["channel"], r["text"], accounts)]
+    oldest = f"{since.timestamp():.0f}"
+    calls = " ".join(f'Call {i + 1}: channel_id "{c}", oldest "{oldest}", limit 100, response_format "detailed".'
+                     for i, c in enumerate(SHARED_CHANNELS))
+    prompt = ("Call mcp__claude_ai_Slack__slack_read_channel exactly once for each of these channels, "
+              f"in order, and nothing else. {calls} Then reply with the single word: done.")
+    results = tool_results(["--allowedTools", "mcp__claude_ai_Slack__slack_read_channel"], prompt)
+    read = [r for r in map(full_result, results) if '"messages"' in r or "=== Message from" in r]
+    for r in read:
+        if "There are more messages available" in r:  # over 100 posts since the last run: the oldest are missed
+            log("alert-todos: a shared channel had over 100 posts since the last run; older ones skipped")
+    if len(read) < len(SHARED_CHANNELS):
+        raise RuntimeError(f"Slack read {len(read)} of {len(SHARED_CHANNELS)} shared channels")
+    posts = []
+    for text in read:
+        channel = re.search(r"Channel: [^(]*\(([A-Z0-9]+)\)", text)
+        if channel and channel.group(1) in SHARED_CHANNELS:
+            posts += parse_shared(channel.group(1), text, accounts)
+    return posts
+
+
+def open_todos(md, done_on=None):
+    """Open items' text; with done_on (YYYY-MM-DD), items ticked that day too, marked as done."""
+    text = lambda l: re.sub(r"\s*<!--.*?-->", "", l[6:]).strip()
+    out = [text(l) for l in md.splitlines() if l.startswith("- [ ] ")]
+    if done_on:
+        out += ["(done) " + text(l) for l in md.splitlines() if l.startswith("- [x] ") and f"done:{done_on}" in l]
+    return out
+
+
+def add_todo(md, line):
+    """Insert an open item after the last open one (where the panel's add() puts it)."""
+    lines = md.rstrip("\n").splitlines() if md.strip() else ["# to-do", ""]
+    last_open = max((i for i, l in enumerate(lines) if l.startswith("- [ ] ")), default=None)
+    if last_open is None:
+        last_open = max((i for i, l in enumerate(lines) if not l.startswith("- [x]")), default=len(lines) - 1)
+    lines.insert(last_open + 1, line)
+    return "\n".join(lines) + "\n"
+
+
+def decide(candidates, todos):
+    if os.environ.get("ALERT_TODOS_FAKE"):
+        return json.loads(os.environ["ALERT_TODOS_FAKE"])
+    posts = [{"id": c["id"], "account": c["slug"] or "unknown", "channel": c["channel"],
+              "posted": c["at"][:10], "text": c["text"]} for c in candidates]
+    prompt = (DECIDE + "\nHer accounts: " + ", ".join(a["name"] for a in roster())
+              + "\n\nHer to-do list (open, then done today):\n" + "\n".join(f"- {t[:400]}" for t in todos)
+              + "\n\nNew posts:\n" + json.dumps(posts, indent=1))
+    r = subprocess.run(["claude", "-p", prompt, "--model", "sonnet", "--no-session-persistence",
+                        "--tools", "", "--output-format", "text"],
+                       capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=300,
+                       cwd=str(HOME / "morning-launch/heard"))
+    m = re.search(r"\[.*\]", r.stdout, re.S)
+    if not m:
+        raise RuntimeError(f"decide gave no JSON: {r.stdout[:200]} {r.stderr[:200]}")
+    return json.loads(m.group(0))
+
+
+def alert_todos(dry=False):
+    """New alert posts (own channels via alerts.json, shared channels read here) -> to-do items."""
+    state = load("alert-todos.json", {})
+    since = parse_time(state.get("since")) or now() - FIRST_LOOKBACK
+    seen = state.get("seen", {})
+    accounts = roster()
+    candidates = []
+    for a in load("alerts.json", {}).get("alerts", []):
+        candidates.append({**a, "id": a["link"], "text": f"{a['title']}. {a['detail']}" + (" (update to an earlier report)" if a.get("update") else "")})
+    last = parse_time(state.get("ran_at"))
+    for p in read_shared(accounts, max(since, last - OVERLAP) if last else since):
+        candidates.append({**p, "id": p["link"], "at": datetime.fromtimestamp(float(p["ts"]), timezone.utc).isoformat(timespec="seconds")})
+    fresh = [c for c in candidates if c["id"] not in seen and parse_time(c["at"]) and parse_time(c["at"]) >= since]
+    fresh.sort(key=lambda c: float(c["ts"]))
+    todo_file = TODO_HOME / "todo.md"
+    md = todo_file.read_text() if todo_file.exists() else ""
+    added = []
+    if fresh:
+        by_id = {c["id"]: c for c in fresh}
+        for d in decide(fresh, open_todos(md, datetime.now(LOCAL).date().isoformat())):
+            c = by_id.get(d.get("id"))
+            if not c or c["id"] in seen:
+                continue
+            line = re.sub(r"\s+", " ", str(d.get("todo") or "")).replace("<!--", "").replace("-->", "").strip()
+            if d.get("action") == "add" and line and len(added) < MAX_NEW:
+                added.append((c, line))
+                seen[c["id"]] = {"at": c["at"], "action": "add", "todo": line}
+            elif d.get("action") == "add" and line:
+                continue  # over the cap: left unseen, so the next run picks it up
+            else:
+                seen[c["id"]] = {"at": c["at"], "action": "skip", "reason": d.get("reason", "")}
+    if dry:
+        for c, line in added:
+            print(f"ADD  {line}\n     {c['link']}")
+        return added
+    if added:
+        md = todo_file.read_text() if todo_file.exists() else ""  # re-read: the panel may have written meanwhile
+        links = TODO_HOME / "todo-links"
+        links.mkdir(parents=True, exist_ok=True)
+        for c, line in added:
+            md = add_todo(md, f"- [ ] {line} <!-- slack:{c['link']} -->")
+            (links / f"{todo_slug(line)}.json").write_text(json.dumps(
+                {"slack": c["link"], "how": "alert", "channel": c["channel"], "checked": now().date().isoformat()}))
+        tmp = todo_file.with_suffix(".md.tmp")
+        tmp.write_text(md)
+        os.replace(tmp, todo_file)
+    cutoff = now() - timedelta(days=10)
+    seen = {k: v for k, v in seen.items() if (parse_time(v.get("at")) or now()) >= cutoff}
+    save("alert-todos.json", {"since": state.get("since") or since.isoformat(timespec="seconds"),
+                              "ran_at": now().isoformat(timespec="seconds"), "seen": seen})
+    log(f"alert-todos: {len(fresh)} new posts, {len(added)} added as to-dos")
+    return added
+
+
+# ---------- calendar (Granola's upcoming meetings) ----------
+
+def parse_upcoming(text):
+    meetings = []
+    for m in re.finditer(r'<upcoming_meeting (.*?)>(.*?)</upcoming_meeting>', text, re.S):
+        attrs = dict(re.findall(r'(\w+)="([^"]*)"', m.group(1)))
+        people = re.search(r"<known_participants[^>]*>(.*?)</known_participants>", m.group(2), re.S)
+        emails = sorted({e.lower() for e in EMAIL.findall(people.group(1) if people else "")})
+        meetings.append({"id": attrs.get("id"), "title": unescape(attrs.get("title", "")),
+                         "start": attrs.get("meeting_at"), "end": attrs.get("ends_at"), "emails": emails})
+    return [m for m in meetings if m["id"] and parse_time(m["start"])]
+
+
+def unescape(s):
+    return s.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", '"').replace("&#39;", "'")
+
+
+def refresh_calendar():
+    today = datetime.now(LOCAL).date()
+    prompt = (f"Call mcp__granola__search_meetings exactly once with from_date {today.isoformat()}, "
+              f"to_date {(today + timedelta(days=1)).isoformat()}, attended_only true, limit 50. "
+              "Then reply with the single word: done.")
+    results = tool_results(["--strict-mcp-config", "--mcp-config", str(GRANOLA_MCP),
+                            "--allowedTools", "mcp__granola__search_meetings"], prompt)
+    text = "\n".join(results)
+    if "<upcoming_meetings" not in text and "<meetings_data" not in text:
+        raise RuntimeError("Granola gave no meeting list: " + text[:200].replace("\n", " "))
+    meetings = parse_upcoming(text)
+    save("calendar.json", {"fetched_at": now().isoformat(timespec="seconds"), "meetings": meetings})
+    log(f"calendar: {len(meetings)} upcoming meetings")
+    return meetings
+
+
+# ---------- cadence (last touch + renewal) ----------
+
+# PostHog's internal CS data (the Customer Analytics project and the cadence queries) isn't in
+# this public repo. Put it in ~/.config/ella-csm/ (README, "Make it yours"): internal.json with
+# {"ca_project_id": <id>}, and sql/cadence.sql, sql/domains.sql, sql/sites.sql. Without them the
+# cadence refresh fails with a message naming the missing file; everything else still runs.
+INTERNAL = Path(os.environ.get("ELLA_CSM_INTERNAL", HOME / ".config/ella-csm"))
+
+
+def internal(name):
+    p = INTERNAL / name
+    if not p.exists():
+        raise RuntimeError(f"missing {p}: internal setup isn't in the public repo (README, 'Make it yours')")
+    return json.loads(p.read_text()) if name.endswith(".json") else p.read_text().strip()
+
+
+
+
+# Where the email domain isn't the brand's own site.
+SITE_OVERRIDES = {"wonka": "wonka.com", "soylent": "soylent.com"}
+# Herdr only loads images from its own folder; mods get the path relative to it.
+LOGOS = Path(os.environ.get("BOOK_LOGOS_DIR", HOME / ".config/herdr-app/logos"))
+LOGO_MAX_AGE = timedelta(days=30)
+
+FREE_MAIL = {"gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "icloud.com", "yahoo.com",
+             "me.com", "proton.me", "protonmail.com", "live.com", "aol.com"}
+# Note-takers and calendar robots that sit in on calls: never an account.
+BOTS = re.compile(r"(^|\.)(gong\.io|fireflies\.ai|otter\.ai|read\.ai|fathom\.video|zoom\.us|calendly\.com|"
+                  r"google\.com|granola\.so|tldv\.io|avoma\.com|chorus\.ai)$")
+
+
+def parse_table(text):
+    """The PostHog exec tool's pipe table -> list of dicts."""
+    lines = [l for l in text.splitlines() if "|" in l and not l.startswith("- ")]
+    if not lines:
+        return []
+    head = lines[0].split("|")
+    return [dict(zip(head, l.split("|"))) for l in lines[1:] if len(l.split("|")) == len(head)]
+
+
+def refresh_cadence():
+    accounts = roster()
+    if not accounts:
+        raise RuntimeError("hp book show gave no accounts")
+    orgs = ",".join(f"'{a['org']}'" for a in accounts)
+    one = lambda sql: json.dumps({"query": " ".join(sql.split())})
+    prompt = ("Use the PostHog exec tool for exactly these four commands, in order, and nothing else. "
+              "First: call switch-project {\"project_id\": " + str(internal("internal.json")["ca_project_id"]) + "} (if it hands back a conversation_id, pass it "
+              "on the later calls). Second: call execute-sql " + one(internal("sql/cadence.sql").format(orgs=orgs, me=ME)) +
+              " . Third: call execute-sql " + one(internal("sql/domains.sql").format(orgs=orgs)) +
+              " . Fourth: call execute-sql " + one(internal("sql/sites.sql").format(orgs=orgs)) +
+              " . Then reply with the single word: done.")
+    results = tool_results(["--allowedTools", "mcp__claude_ai_PostHog__exec,mcp__plugin_posthog_posthog__exec"], prompt)
+    tables = [parse_table(text) for text in results]
+    rows = next((t for t in tables if t and "org" in t[0]), None)
+    if rows is None:
+        raise RuntimeError("no result table from PostHog: " + " / ".join(r[:160] for r in results)[-400:])
+    domains = next((t for t in tables if t and "domain_org" in t[0]), [])
+    sites = {r["site_org"]: r["site"] for r in next((t for t in tables if t and "site_org" in t[0]), [])}
+    by_org = {r["org"]: r for r in rows}
+    if len(by_org) < len(accounts) // 2:
+        raise RuntimeError(f"only {len(by_org)} of {len(accounts)} accounts came back")
+    data = {"fetched_at": now().isoformat(timespec="seconds"), "accounts": []}
+    for a in accounts:
+        r = by_org.get(a["org"], {})
+        a = dict(a)
+        a["last_meeting"] = iso(r.get("last_meeting"))
+        a["last_email"] = iso(r.get("last_email"))
+        a["contract_ends_at"] = (r.get("contract_ends_at") or "")[:10] if r.get("contract_ends_at", "(null)") != "(null)" else None
+        a["contract_phase"] = r.get("contract_phase") if r.get("contract_phase", "(null)") != "(null)" else None
+        a["domains"] = sorted({d["domain"] for d in domains if d["domain_org"] == a["org"]
+                               and d["domain"] and d["domain"] not in FREE_MAIL and not BOTS.search(d["domain"])})
+        a["site"] = SITE_OVERRIDES.get(a["slug"]) or sites.get(a["org"]) or None
+        data["accounts"].append(a)
+    fetch_logos(data["accounts"])
+    merge_touches(data)
+    save("cadence.json", data)
+    log(f"cadence: {len(data['accounts'])} accounts, {sum(1 for a in data['accounts'] if a['last_touch'])} with a touch on record")
+    return data
+
+
+def fetch_logos(accounts):
+    """Each account's favicon, once a month, into ~/.config/herdr-app/logos/<slug>.png|jpg;
+    a["logo"] = that path relative to Herdr's folder, or None."""
+    import urllib.error, urllib.request
+    LOGOS.mkdir(parents=True, exist_ok=True)
+    for a in accounts:
+        have = sorted(LOGOS.glob(f"{a['slug']}.*"))
+        fresh = have and datetime.fromtimestamp(have[0].stat().st_mtime, timezone.utc) > now() - LOGO_MAX_AGE
+        if a.get("site") and not fresh:
+            url = f"https://www.google.com/s2/favicons?domain={a['site']}&sz=64"
+            try:
+                with urllib.request.urlopen(url, timeout=15) as r:
+                    body = r.read()
+                ext = "jpg" if body[:3] == b"\xff\xd8\xff" else "png" if body[:4] == b"\x89PNG" else None
+                if ext:
+                    for old in have:
+                        old.unlink()
+                    (LOGOS / f"{a['slug']}.{ext}").write_bytes(body)
+            except (urllib.error.URLError, TimeoutError, OSError):
+                pass  # 404 = no icon there: keep what we had, or the letter tile
+            have = sorted(LOGOS.glob(f"{a['slug']}.*"))
+        a["logo"] = f"logos/{have[0].name}" if have else None
+
+
+def iso(text):
+    t = parse_time(text)
+    return t.astimezone(timezone.utc).isoformat(timespec="seconds") if t else None
+
+
+def merge_touches(data):
+    """last_touch = the latest of a CA meeting, an email Ella sent, a call heard by Granola, a manual touch."""
+    touches = load("touches.json", {})
+    for a in data["accounts"]:
+        local = touches.get(a["slug"]) or {}
+        candidates = [(a.get("last_meeting"), "meeting"), (a.get("last_email"), "email"),
+                      (local.get("at"), local.get("source", "marked"))]
+        best = max(((parse_time(t), s) for t, s in candidates if parse_time(t)), default=(None, None))
+        a["last_touch"] = best[0].isoformat(timespec="seconds") if best[0] else None
+        a["touch_source"] = best[1]
+
+
+def record_touch(slug, source, at=None):
+    touches = load("touches.json", {})
+    when = at or now()
+    old = parse_time((touches.get(slug) or {}).get("at"))
+    if not old or when > old:
+        touches[slug] = {"at": when.isoformat(timespec="seconds"), "source": source}
+        save("touches.json", touches)
+    data = load("cadence.json", None)
+    if data:
+        merge_touches(data)
+        save("cadence.json", data)
+
+
+# ---------- matching a meeting to an account ----------
+
+def resolve(emails, title, accounts):
+    """The roster entry a meeting is with, or None (internal or unknown)."""
+    by_hp = {a["hp"]: a for a in accounts}
+    outside = [e for e in emails if not e.endswith("@posthog.com")]
+    known = {a["slug"]: a.get("domains", []) for a in load("cadence.json", {}).get("accounts", [])}
+    squash = lambda text: re.sub(r"[^a-z0-9]", "", text.lower())
+    low = f" {title.lower()} "
+
+    def by_title(pool):
+        for a in sorted(pool, key=lambda a: -len(a["name"])):
+            names = {a["name"].lower(), a["hp"].replace("-", " ")}
+            if any(len(n) >= 4 and re.search(rf"(?<![a-z0-9]){re.escape(n)}(?![a-z0-9])", low) for n in names):
+                return a
+        return None
+
+    # A domain that points at more than one account (tyrell.com) lets the title decide.
+    for e in outside:
+        domain = e.split("@")[-1]
+        if domain in FREE_MAIL or BOTS.search(domain):
+            continue
+        stem = squash(domain.rsplit(".", 1)[0])
+        named = [a for a in accounts if stem in (squash(a["name"]), squash(a["hp"]))]
+        seen = [a for a in accounts if domain in known.get(a["slug"], []) and a not in named]
+        pool = named + seen
+        if len(pool) == 1:
+            return pool[0]
+        if pool:
+            return by_title(pool) or pool[0]
+    for e in outside:
+        r = subprocess.run(["hp", "id", "--json", e], capture_output=True, text=True)
+        try:
+            hit = json.loads(r.stdout)
+        except ValueError:
+            continue
+        if hit.get("status") == "ok" and hit.get("account") in by_hp:
+            return by_hp[hit["account"]]
+    return by_title(accounts)
+
+
+# ---------- Herdr ----------
+
+def herdr(cmd, args):
+    r = subprocess.run([HA, "do", cmd, json.dumps(args)], capture_output=True, text=True)
+    data = json.loads(r.stdout or "{}")
+    if r.returncode or "error" in data:
+        raise RuntimeError(f"herdr {cmd}: {data.get('error', r.stdout)}")
+    return data
+
+
+def herdr_spaces():
+    if subprocess.run([HA, "status"], capture_output=True).returncode:
+        subprocess.run(["open", "-ga", "Herdr"])
+        for _ in range(30):
+            if not subprocess.run([HA, "status"], capture_output=True).returncode:
+                break
+            time.sleep(1)
+    r = subprocess.run([HA, "ls"], capture_output=True, text=True)
+    return json.loads(r.stdout or "{}").get("spaces", [])
+
+
+def terminal_alive(terminal, spaces):
+    return any(t["terminal"] == terminal for s in spaces for tab in s["tabs"] for t in tab["terminals"])
+
+
+def open_tab(slug, tab_name, prompt):
+    """A Claude tab in the account's space (the space is made if missing). -> (space, tab, terminal)."""
+    start = ({"argv": ["zsh", "-c", f"echo placeholder: {tab_name}; sleep 900"]} if FAKE
+             else {"argv": ["claude"], "task": prompt})
+    existing = [s for s in herdr_spaces() if s["name"] == slug]
+    if existing:
+        r = herdr("tab.new", {"name": tab_name, "space": existing[0]["id"], "folder": str(HOME / "book"), **start})
+    else:
+        r = herdr("space.new", {"name": slug, "folder": str(HOME / "book"), "tab": tab_name, **start})
+    herdr("space.select", {"id": r["space"]})
+    herdr("tab.select", {"id": r["tab"]})
+    return r["space"], r["tab"], r["terminal"]
+
+
+def notify(title, text):
+    if FAKE:
+        return
+    script = f'display notification {json.dumps(text)} with title {json.dumps(title)}'
+    subprocess.run(["osascript", "-e", script], capture_output=True)
+    if MEEP.exists():
+        subprocess.Popen(["afplay", str(MEEP)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+# ---------- before a call ----------
+
+def prep_prompt(acc, meeting, prep_file):
+    start = parse_time(meeting["start"]).astimezone(LOCAL)
+    who = ", ".join(e for e in meeting["emails"] if not e.endswith("@posthog.com")) or "no outside attendees on the invite"
+    return (
+        f"Ella has a call with {acc['name']} at {start:%H:%M} (\"{meeting['title']}\", with {who}). "
+        f"Get her ready in something she can read in two minutes.\n\n"
+        f"1. Run `hp context {acc['hp']}` first and work from the card; give its captured-through date.\n"
+        f"2. Pull what she owes them: commitment lines on the card, open lines in ~/morning-launch/todo.md "
+        f"that mention {acc['name']}, and anything under ~/morning-launch/heard about this account.\n"
+        f"3. Read ~/book/spaces/cadence.json for this account (slug {acc['slug']}): days since last touch "
+        f"and contract end, if it has one.\n"
+        f"4. Only if the card has nothing from the last month, take one quick live look at what changed.\n\n"
+        f"Write it in her voice (lowercase, chill, short): where things stand in three lines, what she owes "
+        f"them, two or three things worth raising with an eye on more products and usage and on churn risk, "
+        f"and a couple of questions to ask. Mark anything you couldn't confirm. Save it to {prep_file}, show "
+        f"it here, and then wait. Don't message anyone. After the call, what she said she'd do will be "
+        f"pasted into this session."
+    )
+
+
+def before(evt_id, meeting=None, acc=None):
+    calls = load("calls.json", {})
+    if evt_id in calls:
+        log(f"before: {evt_id} already has a prep tab")
+        return calls[evt_id]
+    accounts = roster()
+    if meeting is None:
+        meeting = next((m for m in load("calendar.json", {}).get("meetings", []) if m["id"] == evt_id), None)
+        if not meeting:
+            raise SystemExit(f"{evt_id} isn't in calendar.json (try refresh-calendar)")
+    acc = acc or resolve(meeting["emails"], meeting["title"], accounts)
+    if not acc:
+        raise SystemExit(f"couldn't tell which account \"{meeting['title']}\" is with")
+    start = parse_time(meeting["start"]).astimezone(LOCAL)
+    CALLS_DIR.mkdir(parents=True, exist_ok=True)
+    prep_file = CALLS_DIR / f"{start:%Y-%m-%d-%H%M}-{acc['slug']}.md"
+    tab_name = f"call {start:%H:%M}"
+    space, tab, terminal = open_tab(acc["slug"], tab_name, prep_prompt(acc, meeting, prep_file))
+    calls[evt_id] = {"slug": acc["slug"], "name": acc["name"], "hp": acc["hp"], "title": meeting["title"],
+                     "start": meeting["start"], "end": meeting["end"], "space": space, "tab": tab,
+                     "terminal": terminal, "prep_file": str(prep_file), "opened_at": now().isoformat(timespec="seconds")}
+    save("calls.json", calls)
+    notify(f"{acc['name']} at {start:%H:%M}", "prep is running in its herdr space")
+    log(f"before: {acc['slug']} call at {start:%H:%M} -> tab {tab_name} ({terminal})")
+    return calls[evt_id]
+
+
+# ---------- after a call ----------
+
+def after_text(meeting, items, prep_file):
+    lines = [f"The call's over (\"{meeting.get('title', '')}\"). From the transcript, she said she'd:"]
+    for n, it in enumerate(items, 1):
+        bit = f"{n}. {it.get('text', '').strip()}"
+        if it.get("quote"):
+            bit += f" (she said: {' '.join(str(it['quote']).split())})"
+        if it.get("link"):
+            bit += f" [{it['link']}]"
+        lines.append(bit)
+    if not items:
+        lines.append("(nothing she committed to was picked up)")
+    lines.append(f"Add these under an \"after the call\" heading in {prep_file}, say which need a reply "
+                 f"drafted or a CA note, and wait. Don't message anyone.")
+    return "\n".join(lines)
+
+
+def match_call(calls, slug, ended):
+    """The prep entry for this account's call that ended closest to `ended` (within 3 hours)."""
+    best = None
+    for evt, c in calls.items():
+        if c["slug"] != slug or c.get("after_at"):
+            continue
+        gap = abs((parse_time(c["end"]) - ended).total_seconds()) if parse_time(c["end"]) else 1e9
+        if gap <= 3 * 3600 and (best is None or gap < best[0]):
+            best = (gap, evt)
+    return best[1] if best else None
+
+
+def after(path):
+    heard = json.loads(Path(path).read_text())
+    accounts = roster()
+    key = heard.get("account")
+    acc = next((a for a in accounts if key in (a["hp"], a["slug"], a["org"])), None)
+    if not acc:
+        log(f"after: {path}: account {key!r} isn't in the book, skipped")
+        return None
+    ended = parse_time(heard.get("ended_at")) or now()
+    record_touch(acc["slug"], "call", ended)
+    calls = load("calls.json", {})
+    evt = match_call(calls, acc["slug"], ended)
+    items = heard.get("items") or []
+    spaces = herdr_spaces()
+    if evt and terminal_alive(calls[evt]["terminal"], spaces):
+        c = calls[evt]
+        text = after_text(heard, items, c["prep_file"])
+        subprocess.run(["hc", "send", c["terminal"], text], capture_output=True)
+        where = c["terminal"]
+    else:
+        start = ended.astimezone(LOCAL)
+        prep_file = (calls[evt]["prep_file"] if evt else
+                     str(CALLS_DIR / f"{start:%Y-%m-%d-%H%M}-{acc['slug']}.md"))
+        prompt = (f"Run `hp context {acc['hp']}` first, quietly. " + after_text(heard, items, prep_file))
+        _space, _tab, where = open_tab(acc["slug"], f"after {start:%H:%M}", prompt)
+        evt = evt or f"heard:{heard.get('meeting_id')}"
+        calls.setdefault(evt, {"slug": acc["slug"], "name": acc["name"], "title": heard.get("title"),
+                               "end": heard.get("ended_at"), "prep_file": prep_file})
+    calls[evt]["after_at"] = now().isoformat(timespec="seconds")
+    calls[evt]["heard"] = str(path)
+    save("calls.json", calls)
+    notify(f"{acc['name']}: after the call", f"{len(items)} thing(s) you said you'd do are in its space")
+    log(f"after: {acc['slug']}: {len(items)} items -> {where}")
+    return where
+
+
+# ---------- the launchd tick ----------
+
+def stale(name, every):
+    data = load(name, {})
+    fetched = parse_time(data.get("fetched_at"))
+    tried = parse_time(load("attempts.json", {}).get(name))
+    if tried and now() - tried < min(every, RETRY_AFTER) and (not fetched or tried > fetched):
+        return False
+    return not fetched or now() - fetched > every
+
+
+def attempt(name, fn):
+    attempts = load("attempts.json", {})
+    attempts[name] = now().isoformat(timespec="seconds")
+    save("attempts.json", attempts)
+    try:
+        return fn()
+    except Exception as exc:  # noqa: BLE001 — a tick must never die on one source
+        log(f"{name}: failed: {exc}")
+        return None
+
+
+def due(meetings, at):
+    return [m for m in meetings if parse_time(m["start"]) and -LATE <= parse_time(m["start"]) - at <= LEAD]
+
+
+def tick():
+    local = datetime.now(LOCAL)
+    working = local.weekday() < 5 and local.hour in WORK_HOURS
+    if working and stale("cadence.json", CADENCE_EVERY):
+        attempt("cadence.json", refresh_cadence)
+    if working and stale("calendar.json", CAL_EVERY):
+        attempt("calendar.json", refresh_calendar)
+    if working and stale("alerts.json", ALERTS_EVERY):
+        if attempt("alerts.json", refresh_alerts) is not None:
+            attempt("alert-todos.json", alert_todos)
+    meetings = load("calendar.json", {}).get("meetings", [])
+    calls = load("calls.json", {})
+    skipped = load("skipped.json", {})
+    soon = [m for m in due(meetings, now()) if m["id"] not in calls and m["id"] not in skipped]
+    if not soon:
+        return
+    accounts = roster()
+    for m in soon:
+        acc = resolve(m["emails"], m["title"], accounts)
+        if not acc:
+            skipped[m["id"]] = m["title"]
+            continue
+        try:
+            before(m["id"], m, acc)
+        except Exception as exc:  # noqa: BLE001
+            log(f"before {m['id']}: failed: {exc}")
+    save("skipped.json", {k: v for k, v in skipped.items() if any(m["id"] == k for m in meetings)})
+
+
+def status():
+    data = load("cadence.json", {})
+    print(f"cadence fetched {data.get('fetched_at', 'never')}")
+    for a in data.get("accounts", []):
+        t = parse_time(a.get("last_touch"))
+        days = (now() - t).days if t else None
+        print(f"  {a['slug']:22} {('%3dd' % days) if days is not None else '  --'}  {a.get('touch_source') or '':8} "
+              f"{a.get('contract_ends_at') or ''}")
+    cal = load("calendar.json", {})
+    print(f"calendar fetched {cal.get('fetched_at', 'never')}")
+    for m in cal.get("meetings", []):
+        print(f"  {parse_time(m['start']).astimezone(LOCAL):%a %H:%M}  {m['title']}")
+
+
+def main(argv):
+    if not argv:
+        print(__doc__.strip())
+        return 1
+    cmd, rest = argv[0], argv[1:]
+    if cmd == "tick":
+        tick()
+    elif cmd == "refresh-calendar":
+        refresh_calendar()
+    elif cmd == "refresh-cadence":
+        refresh_cadence()
+    elif cmd == "refresh-alerts":
+        for a in refresh_alerts():
+            print(f"{a['at'][:16]}  {a['slug']:20}  {a['scout']:28}  {a['title'][:70]}")
+    elif cmd == "alert-todos":
+        added = alert_todos(dry="--dry-run" in rest)
+        if "--dry-run" not in rest:
+            for _, line in added:
+                print(f"added: {line}")
+    elif cmd == "before" and rest:
+        before(rest[0])
+    elif cmd == "after" and rest:
+        after(rest[0])
+    elif cmd == "touch" and rest:
+        accounts = roster()
+        acc = next((a for a in accounts if rest[0].lower() in (a["slug"], a["hp"], a["name"].lower())), None)
+        if not acc:
+            raise SystemExit(f"no account called {rest[0]}")
+        record_touch(acc["slug"], "marked")
+        print(f"marked {acc['slug']} as touched today")
+    elif cmd == "roster":
+        print(json.dumps(roster(), indent=1))
+    elif cmd == "status":
+        status()
+    else:
+        print(__doc__.strip())
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

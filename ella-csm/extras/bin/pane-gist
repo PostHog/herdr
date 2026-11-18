@@ -1,0 +1,74 @@
+#!/bin/zsh
+# pane-gist <pid or hc terminal>: one plain sentence on what the Claude Code session running
+# as <pid> is working on. Used by the Herdr pane header (mods/ella-pane) hover.
+# Reads ~/.claude/sessions/<pid>.json -> transcript, asks Haiku, caches the
+# answer per session until the transcript grows by ~4KB or more.
+# Prints the sentence, or nothing (exit 1) when there's no session to read.
+# --cached: print whatever is cached, however old, and never call Haiku (the
+# hover uses this; pane-gist-all keeps the cache fresh in the background).
+
+cached_only=0
+[[ $1 == --cached ]] && { cached_only=1; shift; }
+pid=$1
+[[ -n $pid ]] || { echo "usage: pane-gist <pid|terminal>" >&2; exit 2; }
+# A Herdr terminal address (t21): the foreground program's pid, else the shell's.
+if [[ $pid != <-> ]]; then
+  pid=$(hc get $pid --json 2>/dev/null | python3 -I -c 'import json,sys; t=json.load(sys.stdin); print((t.get("foreground") or {}).get("pid") or t["pid"])' 2>/dev/null) || exit 1
+fi
+reg=~/.claude/sessions/$pid.json
+[[ -f $reg ]] || exit 1
+sid=$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["sessionId"])' $reg 2>/dev/null) || exit 1
+transcript=(~/.claude/projects/*/$sid.jsonl(N))
+[[ -n $transcript ]] || exit 1
+transcript=$transcript[1]
+
+cache_dir=~/.cache/pane-gist
+mkdir -p $cache_dir
+cache=$cache_dir/$sid
+size=$(stat -f %z $transcript)
+if [[ -f $cache ]]; then
+  read -r cached_size < $cache
+  if (( cached_only || size - cached_size < 4096 )); then
+    tail -n +2 $cache
+    exit 0
+  fi
+fi
+
+(( cached_only )) && exit 1
+
+# The opening ask, the latest asks, and the latest thing Claude said.
+digest=$(python3 -I - $transcript <<'PY'
+import json, sys
+asks, said = [], []
+for line in open(sys.argv[1]):
+    try: d = json.loads(line)
+    except Exception: continue
+    m = d.get("message") or {}
+    if d.get("type") == "user" and not d.get("isMeta") and isinstance(m.get("content"), str):
+        t = m["content"].strip()
+        if t and not t.startswith("<"):
+            asks.append(t)
+    elif d.get("type") == "assistant":
+        for c in m.get("content") or []:
+            if isinstance(c, dict) and c.get("type") == "text" and c.get("text", "").strip():
+                said.append(c["text"].strip())
+if not asks:
+    sys.exit(1)
+out = ["FIRST ASK:\n" + asks[0][:1500]]
+for a in asks[1:][-3:]:
+    out.append("LATER ASK:\n" + a[:600])
+if said:
+    out.append("CLAUDE'S LATEST REPLY:\n" + said[-1][:1500])
+print("\n\n".join(out))
+PY
+) || exit 1
+
+instructions="Below are excerpts from a Claude Code session belonging to a customer success manager at PostHog. In ONE short plain sentence (under 25 words), say what this session is working on for her right now, naming the customer or account if there is one. No preamble, no quotes, no 'This session'; start with a verb, e.g. 'Checking whether the Acme event spike needs outreach'. If it's finished, say what it did. Reply with the sentence only."
+
+# --tools takes a list, so the system prompt has to sit between it and the digest.
+gist=$(cd $cache_dir && claude -p --model haiku --no-session-persistence --tools "" \
+  --system-prompt "$instructions" "$digest" < /dev/null 2>/dev/null | tr '\n' ' ' | sed 's/  */ /g; s/^ //; s/ $//')
+[[ -n $gist ]] || exit 1
+print -r -- "$size
+$gist" > $cache
+print -r -- $gist

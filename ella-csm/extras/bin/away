@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+"""away — hand a job to Claude on the devbox, so it keeps going with the laptop shut.
+
+    away "<what to work on>"
+
+Starts devbox-you if it's off, waits for Herdr's `devbox` machine to connect,
+then opens a space there running `claude --remote-control` with the job as its first
+message, and switches to it. Check in from the Claude app (Code). The devbox stops
+itself 12 hours after it starts; `hogli devbox:stop` when you're done (it bills).
+The ☁ button in Herdr's tab bar (mods/away) runs this. AWAY_FAKE=1: a placeholder
+shell instead of Claude, for tests.
+"""
+import json, os, re, subprocess, sys, time
+
+HOME = os.path.expanduser("~")
+PATH = f"{HOME}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+ENV = {**os.environ, "PATH": PATH}
+HA = f"{HOME}/.local/bin/herdr-app"
+CODER = f"{HOME}/.hogli/bin/coder"
+WORKSPACE = "devbox-you"
+MACHINE = "devbox"
+FOLDER = "/home/coder"
+
+
+def say(msg):
+    print(msg, flush=True)
+
+
+def sh(*args, timeout=120):
+    return subprocess.run(args, capture_output=True, text=True, env=ENV, timeout=timeout)
+
+
+def devbox_status():
+    r = sh(CODER, "list", "--output", "json", timeout=60)
+    try:
+        rows = json.loads(r.stdout)
+    except ValueError:
+        return None
+    for w in rows:
+        if w.get("name") == WORKSPACE:
+            return w.get("latest_build", {}).get("status")
+    return None
+
+
+def machine_state():
+    try:
+        ms = json.loads(sh("hc", "machine", "ls", "--json").stdout)["machines"]
+    except (ValueError, KeyError):
+        return None
+    return next((m["state"] for m in ms if m["name"] == MACHINE), None)
+
+
+def herdr(cmd, args):
+    r = sh(HA, "do", cmd, json.dumps(args))
+    data = json.loads(r.stdout or "{}")
+    if r.returncode or "error" in data:
+        raise SystemExit(f"herdr {cmd}: {data.get('error', r.stdout.strip())}")
+    return data
+
+
+def short(text, n=32):
+    words = re.sub(r"\s+", " ", text).strip()
+    return words if len(words) <= n else words[: n - 1].rsplit(" ", 1)[0] + "…"
+
+
+def main():
+    job = " ".join(sys.argv[1:]).strip()
+    if not job:
+        print(__doc__.strip())
+        return 1
+    if machine_state() is None:
+        raise SystemExit("Herdr doesn't know a machine called devbox (hc machine add coder.devbox-you --name devbox)")
+
+    status = devbox_status()
+    if status != "running":
+        say("waking the devbox (a minute or two)…")
+        r = sh("hogli", "devbox:start", timeout=900)
+        if r.returncode:
+            raise SystemExit("couldn't start the devbox: " + (r.stderr or r.stdout).strip()[-300:])
+    for _ in range(60):  # Herdr reconnects on its own once ssh answers
+        if machine_state() == "connected":
+            break
+        time.sleep(5)
+    else:
+        raise SystemExit("the devbox is up but Herdr hasn't connected to it (try again in a minute)")
+
+    name = f"away · {short(job)}"
+    if os.environ.get("AWAY_FAKE"):
+        start = {"argv": ["sh", "-c", "echo placeholder; sleep 600"]}
+    else:
+        start = {"argv": ["claude", "--remote-control", name],
+                 "task": job + "\n\n(You're on the devbox, so you keep running while Ella's laptop is shut. "
+                               "She checks in from her phone through Remote Control. Work on your own, and "
+                               "when you finish, write a short summary of what you did and anything she needs to decide.)"}
+    r = herdr("space.new", {"machine": MACHINE, "name": name, "folder": FOLDER, "tab": "claude", **start})
+    herdr("space.select", {"id": r["space"]})
+    say(f"started \"{name}\" on the devbox: find it in the Claude app under Code")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

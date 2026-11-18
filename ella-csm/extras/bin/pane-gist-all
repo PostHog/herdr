@@ -1,0 +1,12 @@
+#!/bin/zsh
+# pane-gist-all: refresh the hover gist for every live Claude Code pane in Herdr,
+# so the "?" chip reads a ready answer. pane-gist only calls Haiku when a
+# transcript has grown ~4KB since its last gist, so quiet panes cost nothing.
+# Run every 2 minutes by ~/Library/LaunchAgents/com.ella-csm.pane-gist.plist.
+export PATH=$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
+for t in $(hc ls --json 2>/dev/null | python3 -I -c 'import json,sys
+for t in json.load(sys.stdin).get("terminals", []):
+    if t.get("agent") == "claude-code" and t.get("state") == "live": print(t["address"])'); do
+  pane-gist $t > /dev/null 2>&1 &
+done
+wait

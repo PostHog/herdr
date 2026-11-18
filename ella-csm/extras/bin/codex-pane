@@ -1,0 +1,99 @@
+#!/usr/bin/env python3
+"""codex-pane — run a read-only Codex review where you can see it.
+
+    codex-pane <folder> "<prompt>"     start the review, wait, print Codex's final message
+    codex-pane --wait <job>            keep waiting for a review that's still running
+
+In Herdr (HC_TERMINAL_ID set), Codex opens as a pane to the right of the calling
+terminal and stays open after it finishes. Elsewhere it runs out of sight as before.
+Exit 0 = review printed, 1 = Codex failed or said nothing, 2 = still running
+(prints the --wait command). CODEX_BIN and CODEX_PANE_WAIT (seconds) are for tests.
+CODEX_PANE_RECORD=<file> writes {"job", "terminal"} there once the pane is open (alert-check uses it to close the pane).
+"""
+import json, os, subprocess, sys, tempfile, time
+
+HA = os.path.expanduser("~/.local/bin/herdr-app")
+STATE = os.path.expanduser("~/.local/state/codex-pane")
+WAIT = int(os.environ.get("CODEX_PANE_WAIT", "540"))  # under Claude's 10-min Bash limit
+PANE_SCRIPT = r'''job=$1; shift
+printf '\e]0;codex review\a'
+echo "codex is reviewing (read-only). Claude gets the result when it's done."; echo
+"$@" < /dev/null
+echo $? > "$job/exit"; touch "$job/done"
+echo; echo "── review done, Claude has it. close this pane whenever you like ──"
+read -k -s'''
+
+
+def codex_args(folder, prompt, out):
+    return [os.environ.get("CODEX_BIN", "codex"), "exec", "-s", "read-only",
+            "-c", 'model_reasoning_effort="medium"', "--skip-git-repo-check",
+            "-C", folder, "-o", out, prompt]
+
+
+def caller_pane():
+    me = os.environ.get("HC_TERMINAL_ID")
+    if not me:
+        return None
+    try:
+        r = subprocess.run([HA, "ls"], capture_output=True, text=True, timeout=10)
+        for s in json.loads(r.stdout)["spaces"]:
+            for tab in s["tabs"]:
+                for t in tab["terminals"]:
+                    if t["terminal"] == me:
+                        return t["pane"]
+    except Exception:
+        return None
+    return None
+
+
+def report(job):
+    text = open(f"{job}/out.md").read().strip() if os.path.exists(f"{job}/out.md") else ""
+    if not text:
+        print("Codex finished without a review (exit %s)." % (open(f"{job}/exit").read().strip() if os.path.exists(f"{job}/exit") else "?"))
+        return 1
+    print(text)
+    return 0
+
+
+def wait(job):
+    end = time.time() + WAIT
+    while time.time() < end:
+        if os.path.exists(f"{job}/done"):
+            return report(job)
+        time.sleep(2)
+    print(f"Codex is still reviewing in the pane beside you. To keep waiting, run: codex-pane --wait {job}")
+    return 2
+
+
+def main():
+    if len(sys.argv) == 3 and sys.argv[1] == "--wait":
+        return wait(sys.argv[2])
+    if len(sys.argv) != 3:
+        print(__doc__.strip()); return 1
+    folder, prompt = sys.argv[1], sys.argv[2]
+    os.makedirs(STATE, exist_ok=True)
+    job = tempfile.mkdtemp(prefix="review-", dir=STATE)
+    args = codex_args(folder, prompt, f"{job}/out.md")
+    pane = caller_pane()
+    if pane:
+        r = subprocess.run([HA, "do", "pane.split", json.dumps(
+            {"pane": pane, "direction": "right", "argv": ["zsh", "-c", PANE_SCRIPT, "codex-pane", job, *args]})],
+            capture_output=True, text=True)
+        if r.returncode == 0:
+            if os.environ.get("CODEX_PANE_RECORD"):
+                try:
+                    term = json.loads(r.stdout or "{}").get("terminal")
+                except ValueError:
+                    term = None
+                json.dump({"job": job, "terminal": term}, open(os.environ["CODEX_PANE_RECORD"], "w"))
+            return wait(job)
+    # Not in Herdr (or the split failed): run out of sight, with stdin closed so Codex can't hang.
+    try:
+        subprocess.run(args, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=WAIT)
+    except subprocess.TimeoutExpired:
+        print("Codex timed out."); return 1
+    return report(job)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
