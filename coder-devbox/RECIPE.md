@@ -20,20 +20,23 @@ A Herdr machine whose ssh target ends in `.coder` is a Coder devbox. This piece 
 
 ## How it behaves
 
-- The box's hogli target comes from its Coder name: `devbox-<user>-<label>` is `<label>`, and `devbox-<user>` is `@<user>`.
+- The box's hogli target comes from its ssh target, `<workspace>.coder` (yours) or `[<agent>.]<workspace>.<owner>.coder` (someone else's), and your Coder username from `coder whoami`.
+  Your `devbox-<you>-<label>` is `<label>` and your `devbox-<you>` is `@<you>`; someone else's are `@<owner>/<label>` and `@<owner>`.
+  The owner is never guessed by splitting the name, so hyphenated usernames work. A box not named `devbox-<owner>[-label]` can't be targeted, and the menu says so; Doctor still runs.
 - hogli runs from your PostHog checkout's `bin/hogli` through your login shell (`$SHELL -lic`), so `coder` and the venv are found as in your terminal.
   The checkout is `checkouts["PostHog/posthog"]` from the `pull-requests` settings when set, else the first of `~/workspace/posthog`, `~/posthog`, `~/code/posthog`, `~/src/posthog`, `~/dev/posthog`, `~/projects/posthog`, `~/repos/posthog`, `~/git/posthog`, or a local space's folder, that has `bin/hogli`.
 - **The UI forward** is `hogli devbox:forward <target>` started as a background herdr-core terminal (`hc run --bg`), labelled `coder-devbox.ui=<machine>`.
   hogli picks the local port (8010 for your default box, a port kept per box in 18000–18999 for labelled ones), so it's the same one the CLI gives you.
-  The menu reads it from hogli's output, labels the terminal `coder-devbox.port=<port>`, waits until the port answers, then opens `http://localhost:<port>`.
+  The terminal runs a small `sh` script around hogli (with `PYTHONUNBUFFERED=1`): when hogli prints its URL, the script waits for the port to answer, labels its own terminal `coder-devbox.port=<port>` (`hc label "$HC_TERMINAL_ID"`), and opens `http://localhost:<port>`.
+  So the forward finishes starting and opens the browser even when the menu has closed. If the port doesn't answer within 90 seconds, the script ends the terminal.
+  The menu waits for the label and closes; when the terminal ends instead, it shows the terminal's last line and removes it. A finished forward is also removed before the next one starts.
   The terminal has no `herdr.space` label, so it stays out of your spaces, and it keeps running when the window closes. "Stop forwarding" kills it.
-  If it doesn't answer within 90 seconds, it's stopped and the menu says so.
-- **Open in VS Code / Cursor** run `hogli devbox:open --vscode|--cursor <target>` in the background; a failure shows as a notification.
-- **The other commands** open a terminal tab running `bin/hogli <command> <target>` in the local space whose folder is the checkout, or a new "PostHog" space there.
+- **Open in VS Code / Cursor** run `hogli devbox:open --vscode|--cursor <target>` while the menu stays open, its row saying "opening…"; the menu closes when it succeeds and shows the error when it fails.
+- **The other commands** open a terminal tab running `bin/hogli <command> <target>` in the local space whose folder is the checkout, or a new "PostHog" space there on this computer (`machine: ""`).
   The tab becomes a shell in the checkout when hogli finishes, so the output stays. Doctor runs without a target.
   Stop devbox, Restart and Update run in that tab, so hogli's own prompts and output are where you can see them.
 - `flat-spaces` shows the globe and the menu only when `mods/coder-devbox/main.js` exists, so the spaces list is unchanged without this piece.
-- It runs programs: `hc`, `nc`, `test`, your login shell with `bin/hogli`, and `open` (`xdg-open` on Linux). It reads `data/prs-config.json`.
+- It runs programs: `hc`, `nc`, `test`, `coder whoami`, your login shell with `bin/hogli`, and `open` (`xdg-open` on Linux). It reads `data/prs-config.json`.
 
 ## Built from
 

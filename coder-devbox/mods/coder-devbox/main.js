@@ -1,9 +1,9 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { checking, closeOverlay, notify, props, run, spaces, theme, window as appWindow } from "herdr";
+import { checking, closeOverlay, props, run, spaces, theme, window as appWindow } from "herdr";
 import {
-  boxName, commandInTab, findCheckout, loginShell, openInBrowser,
-  runDetached, startUiForward, stopUiForward, uiForward,
+  browserOpener, coderUsername, coderWorkspace, collectEndedForward, commandInTab, findCheckout,
+  hogliTarget, loginShell, openInBrowser, runDetached, startUiForward, stopUiForward, uiForward,
 } from "./hogli.js";
 
 const COMMANDS = [
@@ -19,21 +19,36 @@ const COMMANDS = [
   { label: "Stop devbox", args: ["devbox:stop"], danger: true },
 ];
 
+const START_WATCH_MS = 500;
+
 export default class DevboxMenu extends View {
   init(_props, cx) {
     const { machine = null, target = "", action = null } = props() ?? {};
     this.machineName = machine;
-    this.box = target ? boxName({ target }) : "";
+    this.box = target ? coderWorkspace(target) : { workspace: "", owner: null };
+    this.target = null;
     this.checkout = undefined;
     this.shell = null;
     this.starting = false;
+    this.busyCommand = null;
     this.error = null;
     if (checking()) return;
     cx.spawn(async (cx) => {
-      [this.checkout, this.shell] = await Promise.all([findCheckout(), loginShell()]);
+      const [checkout, shell, me] = await Promise.all([findCheckout(), loginShell(), coderUsername()]);
+      this.checkout = checkout;
+      this.shell = shell;
+      try {
+        this.target = hogliTarget(this.box, me);
+      } catch (error) {
+        this.error = String(error.message ?? error);
+      }
       cx.notify();
       if (action === "ui") this.openUi(cx);
     });
+  }
+
+  ready() {
+    return Boolean(this.checkout && this.shell && this.target);
   }
 
   close() {
@@ -48,20 +63,31 @@ export default class DevboxMenu extends View {
       this.close();
       return;
     }
-    if (running || !this.checkout || this.starting) return;
+    if (running || !this.ready() || this.starting) return;
     this.starting = true;
     this.error = null;
     cx.notify();
     cx.spawn(async (cx) => {
       try {
-        const port = await startUiForward({ machineName: this.machineName, box: this.box, checkout: this.checkout, shell: this.shell, cx });
-        await openInBrowser(port, appWindow().platform);
-        this.close();
+        await collectEndedForward(this.machineName);
+        await startUiForward({
+          machineName: this.machineName, target: this.target, checkout: this.checkout,
+          shell: this.shell, opener: browserOpener(appWindow().platform),
+        });
+        for (;;) {
+          await cx.sleep(START_WATCH_MS);
+          const forward = uiForward(this.machineName);
+          if (forward?.port) return this.close();
+          if (!forward) {
+            this.error = (await collectEndedForward(this.machineName)) ?? "hogli devbox:forward stopped.";
+            break;
+          }
+        }
       } catch (error) {
         this.error = String(error.message ?? error);
-        this.starting = false;
-        cx.notify();
       }
+      this.starting = false;
+      cx.notify();
     });
   }
 
@@ -72,30 +98,35 @@ export default class DevboxMenu extends View {
   }
 
   runCommand(command, cx) {
-    const request = { args: command.args, box: this.box, checkout: this.checkout, shell: this.shell, targeted: command.targeted !== false };
+    const request = { args: command.args, target: command.targeted === false ? null : this.target, checkout: this.checkout, shell: this.shell };
     if (command.detached) {
-      cx.spawn(async () => {
+      this.busyCommand = command.label;
+      this.error = null;
+      cx.notify();
+      cx.spawn(async (cx) => {
         try {
           await runDetached(request);
+          this.close();
         } catch (error) {
-          notify({ title: `${command.label} failed`, body: String(error.message ?? error), level: "error" });
+          this.error = `${command.label} failed: ${error.message ?? error}`;
         }
+        this.busyCommand = null;
+        cx.notify();
       });
-      this.close();
       return;
     }
     const argv = commandInTab(request);
-    const name = `${this.box} · ${command.label}`;
+    const name = `${this.box.workspace} · ${command.label}`;
     const home = spaces().find((s) => !s.machine && s.folder === this.checkout);
     if (home) run("tab.new", { space: home.id, folder: this.checkout, name, argv });
-    else run("space.new", { name: "PostHog", folder: this.checkout, argv });
+    else run("space.new", { name: "PostHog", folder: this.checkout, argv, machine: "" });
     this.close();
   }
 
   render(_cx) {
     const t = theme();
     const running = uiForward(this.machineName);
-    const ready = Boolean(this.checkout && this.shell);
+    const ready = this.ready();
 
     const item = (id, label, { detail = null, detailColor = t.dim, color = t.foreground, enabled = ready, onClick }) =>
       h_flex().id(id).h(28).px(10).gap(8).items_center().rounded(6).text_size(12.5)
@@ -104,9 +135,9 @@ export default class DevboxMenu extends View {
         .child(div().flex_1().truncate().child(label))
         .when(Boolean(detail), (el) => el.child(div().flex_none().text_size(11.5).text_color(detailColor).child(detail)));
 
-    const uiDetail = this.starting ? "starting…" : running?.port ? `localhost:${running.port}` : running ? "starting…" : null;
+    const uiDetail = running?.port ? `localhost:${running.port}` : running || this.starting ? "starting…" : null;
     const menu = v_flex().w_full().p(5).gap(1).bg(t.popover).text_color(t.foreground)
-      .child(h_flex().h(26).px(10).items_center().text_size(11.5).text_color(t.dim).child(div().truncate().child(this.box)))
+      .child(h_flex().h(26).px(10).items_center().text_size(11.5).text_color(t.dim).child(div().truncate().child(this.box.workspace)))
       .child(item("ui", "Open PostHog UI", {
         detail: uiDetail,
         detailColor: running?.port ? t.accent : t.dim,
@@ -127,6 +158,8 @@ export default class DevboxMenu extends View {
     for (const command of COMMANDS) {
       menu.child(item(`cmd-${command.args.join("-")}`, command.label, {
         color: command.danger ? t.blocked : t.foreground,
+        detail: this.busyCommand === command.label ? "opening…" : null,
+        enabled: (command.targeted === false ? Boolean(this.checkout && this.shell) : ready) && !this.busyCommand,
         onClick: (cx) => this.runCommand(command, cx),
       }));
     }
