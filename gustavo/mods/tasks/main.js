@@ -396,13 +396,19 @@ const WT_SIZE_MS = 30 * 60 * 1000; // how long a worktree's measured size holds
 // A worktree's uncommitted changes, from git status. `real` is work that removing it would lose:
 // modified, added and untracked files. Deleted tracked files lose nothing (git has them), and flox
 // rewrites its lock file on activation, so neither counts; git still needs --force for them (`any`).
+// A worktree whose folder is already gone (git lists it as prunable) has nothing to lose: `gone`.
 async function worktreeChanges(path) {
+  if (!(await folderExists(path))) return { any: false, real: [], deleted: 0, gone: true };
   const r = await exec("git", ["-C", path, "status", "--porcelain"]).catch((e) => ({ code: 1, stdout: "", stderr: String(e?.message ?? e) }));
   if (r.code !== 0) return { any: false, real: [], deleted: 0, error: r.stderr.trim().split("\n").pop() || `git exited ${r.code}` };
   const lines = r.stdout.split("\n").filter(Boolean);
   const gone = (l) => l.slice(0, 2).trim() === "D";
   return { any: lines.length > 0, deleted: lines.filter(gone).length,
     real: lines.filter((l) => !gone(l)).map((l) => l.slice(3)).filter((f) => f !== FLOX_LOCK) };
+}
+
+async function folderExists(path) {
+  return (await exec("test", ["-d", path]).catch(() => ({ code: 1 }))).code === 0;
 }
 
 // 1536 (KB) → "1.5 GB".
@@ -1433,16 +1439,13 @@ export default class Tasks extends View {
         if (box) done.push(box);
         for (const w of wts) {
           if (hog?.path === w.path) { kept.push(`${short(w.path)}: hogli runs there`); continue; }
-          const st = await git(["-C", w.path, "status", "--porcelain"]);
-          if (st.code !== 0) { kept.push(`${short(w.path)}: ${why(st)}`); continue; }
-          // flox rewrites its lock file on activation; that change alone isn't work to keep.
-          const changed = st.stdout.split("\n").filter(Boolean).map((l) => l.slice(3));
-          const real = changed.filter((f) => f !== FLOX_LOCK);
+          const changes = await worktreeChanges(w.path);
+          if (changes.error) { kept.push(`${short(w.path)}: ${changes.error}`); continue; }
+          const real = changes.real;
           if (real.length) { kept.push(`${short(w.path)}: uncommitted changes (${real.slice(0, 3).join(", ")}${real.length > 3 ? ", …" : ""})`); continue; }
-          if (w.locked) await git(["-C", w.repoDir, "worktree", "unlock", w.path]);
-          const rm = await git(["-C", w.repoDir, "worktree", "remove", ...(changed.length ? ["--force"] : []), w.path]);
-          if (rm.code !== 0) { kept.push(`${short(w.path)}: ${why(rm)}`); continue; }
-          this.wts?.delete(w.path);
+          // Not `git worktree remove`: on a 4 GB checkout it outlives exec's 30 s and is killed
+          // halfway, leaving a half-deleted folder that git still lists.
+          try { await this.dropWorktree(w); } catch (e) { kept.push(`${short(w.path)}: ${String(e?.message ?? e)}`); continue; }
           done.push(`removed ${short(w.path)}`);
         }
         for (const pr of merged) {
@@ -1868,12 +1871,16 @@ export default class Tasks extends View {
     // git worktree remove deletes the files itself, and a worktree with node_modules takes
     // longer than exec's 30 s. So the folder is renamed aside (instant, same disk), git prunes
     // the worktree it no longer finds, and the files go in the background.
+    // A folder that's already gone only needs the prune.
     const aside = `${w.path.replace(/\/[^/]+$/, "")}/.removing-${w.path.split("/").pop()}-${Date.now()}`;
-    const mv = await exec("mv", [w.path, aside]);
-    if (mv.code !== 0) throw new Error(mv.stderr.trim().split("\n").pop() || `mv exited ${mv.code}`);
+    const there = await folderExists(w.path);
+    if (there) {
+      const mv = await exec("mv", [w.path, aside]);
+      if (mv.code !== 0) throw new Error(mv.stderr.trim().split("\n").pop() || `mv exited ${mv.code}`);
+    }
     const prune = await git(["worktree", "prune"]);
     if (prune.code !== 0) throw new Error(prune.stderr.trim().split("\n").pop() || `git exited ${prune.code}`);
-    await exec("sh", ["-c", 'nohup rm -rf "$1" >/dev/null 2>&1 &', "sh", aside]);
+    if (there) await exec("sh", ["-c", 'nohup rm -rf "$1" >/dev/null 2>&1 &', "sh", aside]);
     this.wts?.delete(w.path);
     this.wtChanges?.delete(w.path);
     const sizes = this.wtSizes();
@@ -1937,6 +1944,7 @@ export default class Tasks extends View {
           const changes = await worktreeChanges(w.path);
           this.wtChanges?.set(w.path, changes);
           if (changes.error) { kept.push({ w, why: changes.error }); continue; }
+          if (changes.gone) { ready.push({ w, pr: merged }); continue; } // folder already gone: only git's record is left
           if (changes.real.length) { kept.push({ w, why: `${plural(changes.real.length, "uncommitted change")}` }); continue; }
           const head = (await git(["-C", w.path, "rev-parse", "HEAD"])).stdout.trim();
           const behind = head === merged.headRefOid
