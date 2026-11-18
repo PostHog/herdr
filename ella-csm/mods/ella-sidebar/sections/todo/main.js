@@ -10,6 +10,9 @@
 // An item that came from Slack gets a "slack ↗" chip opening that message: from a
 // <!-- slack:… --> comment on its line, a pasted link, or ~/morning-launch/todo-slack, which
 // searches Slack once per item (one at a time) and records the answer in todo-links/<slug>.json.
+// Alert to-dos get a second line from ~/morning-launch/alert-check (double-checking / kept open: why),
+// and items it closed by itself are listed at the bottom for the day (see auto.js); their Slack posts
+// are marked read in the alerts list.
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
@@ -19,6 +22,7 @@ const FOLD_ID = "todo";
 const FOLD_DEPS = { layout, shared, setShared, run, readTextFile, appHome };
 import { parse, serialize, add, toggle, remove, rollover, slug, slackLink } from "./list.js";
 import { pending, todoText, source, swipe, SWIPE_AT } from "./heard.js";
+import { autoLine, closedToday, markClosedRead } from "./auto.js";
 
 const pad = (n) => String(n).padStart(2, "0");
 const today = () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
@@ -49,6 +53,7 @@ export default class Todo extends View {
     this.heardDir = `${this.dir}/heard`;
     this.heardBin = `${this.heardDir}/heard.py`;
     this.heard = [];
+    this.autoClosed = [];
     this.decided = new Set();
     this.swipes = {};
     this.load(cx);
@@ -73,6 +78,10 @@ export default class Todo extends View {
       if (archived.length) await this.save(keep, archived);
       await this.loadPrep(cx);
       this.heard = pending(await readTextFile(`${this.heardDir}/heard.json`).catch(() => null), this.decided);
+      this.autoClosed = closedToday(await readTextFile(`${this.prepDir}/autoclosed.json`).catch(() => null), today());
+      const read = shared("alerts.read") ?? {};
+      const marked = markClosedRead(read, this.autoClosed);
+      if (marked !== read) setShared("alerts.read", marked);
       cx.notify();
     });
   }
@@ -189,6 +198,25 @@ export default class Todo extends View {
       .child(label);
   }
 
+  autoRow(item, i, t) {
+    const line = autoLine(this.prep[slug(item.text)]);
+    if (!line) return null;
+    const color = line.kind === "kept" ? t.blocked : t.dim;
+    return div().id(`todo-auto-${i}`).text_size(10.5).text_color(color).child(line.kind === "kept" ? `⚑ ${line.text}` : `${line.text}…`);
+  }
+
+  closedRow(c, i, t) {
+    return v_flex().id(`todo-closed-${i}`).gap(2).px(8).py(4).rounded(6).cursor_pointer()
+      .hover((s) => s.bg(t.hover))
+      .on_click((_e, cx) => { if (c.handover) cx.open_url(`file://${c.handover}`); })
+      .child(div().text_size(12).text_color(t.dim).line_through().child(c.text))
+      .child(div().text_size(10.5).text_color(t.muted).child(`no action: ${c.reason}${c.ca?.note ? " · CA note logged" : ""}`))
+      .when(Boolean(c.slack), (el) => el.child(div().id(`todo-closed-slack-${i}`).text_size(10.5).text_color(t.muted)
+        .hover((s) => s.text_color(t.foreground))
+        .on_click((_e, cx) => { cx.stop_propagation(); cx.open_url(c.slack); })
+        .child("slack ↗")));
+  }
+
   async save(items, archived = []) {
     const text = serialize(items);
     try {
@@ -240,7 +268,8 @@ export default class Todo extends View {
         .when(this.copiedAt === i, (el) => el.child(div().text_size(10.5).text_color(t.done).child("copied")))
         .when(Boolean(this.slackChip(item, i, t)) || (!item.done && Boolean(this.helper(item, i, t))), (el) => el.child(h_flex().gap(8).items_center()
           .when(!item.done && Boolean(this.helper(item, i, t)), (r) => r.child(this.helper(item, i, t)))
-          .when(Boolean(this.slackChip(item, i, t)), (r) => r.child(this.slackChip(item, i, t))))))
+          .when(Boolean(this.slackChip(item, i, t)), (r) => r.child(this.slackChip(item, i, t)))))
+        .when(!item.done && Boolean(this.autoRow(item, i, t)), (el) => el.child(this.autoRow(item, i, t))))
       .when(hovered, (el) => el.child(
         div().id(`todo-x-${i}`).px(4).rounded(4).text_size(12).text_color(t.dim).hover((s) => s.text_color(t.blocked))
           .on_click((_e, cx) => { cx.stop_propagation(); this.hover = null; this.change(cx, (items) => remove(items, i)); })
@@ -267,6 +296,9 @@ export default class Todo extends View {
       .children(open.map(([x, i]) => this.row(x, i, t)))
       .when(done.length > 0, (el) => el
         .child(div().px(8).pt(6).text_size(11).text_color(t.dim).child(`done today · ${done.length}`))
-        .children(done.map(([x, i]) => this.row(x, i, t))));
+        .children(done.map(([x, i]) => this.row(x, i, t))))
+      .when(this.autoClosed.length > 0, (el) => el
+        .child(div().px(8).pt(6).text_size(11).text_color(t.dim).child(`closed by itself today · ${this.autoClosed.length}`))
+        .children(this.autoClosed.map((c, i) => this.closedRow(c, i, t))));
   }
 }

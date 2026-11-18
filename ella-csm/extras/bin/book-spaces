@@ -351,7 +351,7 @@ def read_shared(accounts, since):
 
 def open_todos(md, done_on=None):
     """Open items' text; with done_on (YYYY-MM-DD), items ticked that day too, marked as done."""
-    text = lambda l: re.sub(r"\s*<!--.*?-->", "", l[6:]).strip()
+    text = lambda l: re.sub(r"\s*<!--.*?-->", "", l[6:], flags=re.S).strip()
     out = [text(l) for l in md.splitlines() if l.startswith("- [ ] ")]
     if done_on:
         out += ["(done) " + text(l) for l in md.splitlines() if l.startswith("- [x] ") and f"done:{done_on}" in l]

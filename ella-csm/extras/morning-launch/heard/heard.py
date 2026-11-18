@@ -270,7 +270,7 @@ def book_slugs():
 def account_from_emails(emails, book):
     """The meeting's account from external attendee domains, via hp id (domain → org)."""
     for dom in sorted({e.split("@")[1].lower() for e in emails}):
-        if dom.endswith("posthog.com"):
+        if dom == "posthog.com" or dom.endswith(".posthog.com"):
             continue
         try:
             r = subprocess.run([HP, "id", "--json", dom], capture_output=True, text=True, timeout=30)
