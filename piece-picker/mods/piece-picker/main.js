@@ -21,9 +21,11 @@ export default class PiecePicker extends View {
   async read() {
     try {
       const repo = (await readTextFile(`${appHome()}/.posthog-herdr-repo`))?.trim();
-      if (!repo) {
+      if (!repo || (await readTextFile(`${repo}/install.sh`)) === null) {
+        this.repo = null;
         this.pieces = [];
-        this.message = { level: "error", text: "Run ./install.sh once in your herdr checkout, then open this again." };
+        const where = repo ? `No install.sh at ${repo}. ` : "";
+        this.message = { level: "error", text: `${where}Run ./install.sh once in your herdr checkout, then open this again.` };
         return;
       }
       const found = await exec("find", [repo, "-mindepth", "2", "-maxdepth", "3", "-type", "f", "(", "-name", "RECIPE.md", "-o", "-path", "*/layouts/*.json", ")"]);
@@ -46,7 +48,9 @@ export default class PiecePicker extends View {
     cx.notify();
     cx.spawn(async (cx) => {
       try {
-        this.message = reportOf(await exec(`${this.repo}/install.sh`, args, { timeout: 120000 }));
+        const env = [`HERDR_APP_HOME=${appHome()}`, "GIT_TERMINAL_PROMPT=0"];
+        const result = await exec("env", [...env, `${this.repo}/install.sh`, ...args], { timeout: 600000 });
+        this.message = reportOf(result, { keys: label !== "update" });
       } catch (e) {
         this.message = { level: "error", text: String(e?.message ?? e) };
       }
@@ -134,7 +138,13 @@ export default class PiecePicker extends View {
         h_flex()
           .items_center()
           .justify_between()
-          .child(div().text_size(16).font_semibold().text_color(t.foreground).child("Herdr pieces"))
+          .child(
+            v_flex()
+              .min_w(0)
+              .gap(2)
+              .child(div().text_size(16).font_semibold().text_color(t.foreground).child("Herdr pieces"))
+              .when(Boolean(this.repo), (el) => el.child(div().text_size(12).text_color(t.dim).truncate().child(this.repo))),
+          )
           .child(
             this.busy === "update"
               ? svg("mods/workspace-chrome/spinner.svg").size(14).text_color(t.working).spin(900)

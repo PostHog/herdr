@@ -14,9 +14,13 @@ test("summaryOf takes the first sentence after headings and images, as install.s
   assert.equal(summaryOf("# Title\n\n![shot](p.png)\nOne thing. Then more.\n"), "One thing.");
 });
 
-test("reportOf gives the last stderr line on failure", () => {
-  const r = reportOf({ code: 1, stdout: "", stderr: "\x1b[31mNo piece named x. ./install.sh list shows them.\x1b[0m\n" });
-  assert.deepEqual(r, { level: "error", text: "No piece named x. ./install.sh list shows them." });
+test("reportOf gives moved files and the last stderr line on failure", () => {
+  const stderr = "  moved your layouts/a.json to .posthog-herdr-backup/1/\n  noise\n\x1b[31mAnother install.sh is running (pid 7). Try again when it ends.\x1b[0m\n";
+  const r = reportOf({ code: 1, stdout: "", stderr });
+  assert.deepEqual(r, {
+    level: "error",
+    text: "moved your layouts/a.json to .posthog-herdr-backup/1/\nAnother install.sh is running (pid 7). Try again when it ends.",
+  });
 });
 
 test("reportOf surfaces key binding warnings and new pieces on success, and nothing otherwise", () => {
@@ -25,4 +29,5 @@ test("reportOf surfaces key binding warnings and new pieces on success, and noth
   assert.match(warn.text, /keys\.json/);
   assert.match(warn.text, /^New: y/m);
   assert.equal(reportOf({ code: 0, stdout: "x\n  up to date\n", stderr: "" }), null);
+  assert.equal(reportOf({ code: 0, stdout: "x\n", stderr: "  x/keys.json has key bindings.\n" }, { keys: false }), null);
 });

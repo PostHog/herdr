@@ -25,10 +25,14 @@ export function plain(text) {
   return (text ?? "").replace(/\x1b\[[0-9;]*m/g, "").trim();
 }
 
-export function reportOf(result) {
-  const err = plain(result.stderr).split("\n").filter(Boolean);
-  if (result.code !== 0) return { level: "error", text: err.at(-1) ?? `install.sh exited with ${result.code}` };
+export function reportOf(result, { keys = true } = {}) {
+  const err = plain(result.stderr).split("\n").map((l) => l.trim()).filter(Boolean);
+  if (result.code !== 0) {
+    const moved = err.slice(0, -1).filter((l) => l.startsWith("moved your "));
+    return { level: "error", text: [...moved, err.at(-1) ?? `install.sh exited with ${result.code}`].join("\n") };
+  }
+  const notes = keys ? err : err.filter((l) => !l.includes("keys.json has key bindings"));
   const fresh = plain(result.stdout).split("\n").filter((l) => l.startsWith("New: "));
-  const lines = [...err, ...fresh];
+  const lines = [...notes, ...fresh];
   return lines.length ? { level: "warn", text: lines.join("\n") } : null;
 }

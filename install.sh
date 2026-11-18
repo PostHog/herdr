@@ -21,6 +21,8 @@ ENABLED_FILE="$HOME_DIR/.posthog-herdr-enabled"
 SEEN_FILE="$HOME_DIR/.posthog-herdr-seen"
 # One line per placed file: <piece><TAB><path under HOME_DIR>.
 MANIFEST="$HOME_DIR/.posthog-herdr-files"
+REPO_FILE="$HOME_DIR/.posthog-herdr-repo"
+LOCK_DIR="$HOME_DIR/.posthog-herdr-lock"
 BACKUP_DIR="$HOME_DIR/.posthog-herdr-backup/$(date +%Y%m%d-%H%M%S)"
 TAB=$'\t'
 
@@ -187,6 +189,23 @@ prune() {
   mv "$keep" "$MANIFEST"
 }
 
+lock() {
+  local pid
+  if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+    pid="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+      die "Another install.sh is running (pid $pid). Try again when it ends."
+    fi
+    if [ -z "$pid" ] && [ -z "$(find "$LOCK_DIR" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then
+      die "Another install.sh is starting. Try again in a moment."
+    fi
+    rm -rf "$LOCK_DIR"
+    mkdir "$LOCK_DIR" 2>/dev/null || die "Another install.sh is running. Try again when it ends."
+  fi
+  printf '%s\n' "$$" >"$LOCK_DIR/pid"
+  trap 'rm -rf "$LOCK_DIR"' EXIT
+}
+
 ask() {
   local piece="$1" answer
   [ -t 0 ] || return 1
@@ -233,7 +252,6 @@ list() {
 }
 
 [ -d "$HOME_DIR" ] || die "No Herdr config folder at $HOME_DIR. Open Herdr once first."
-printf '%s\n' "$REPO" >"$HOME_DIR/.posthog-herdr-repo"
 
 do_pull=1
 args=()
@@ -251,6 +269,10 @@ set -- ${args[@]+"${args[@]}"}
 
 cmd="${1:-update}"
 [ $# -gt 0 ] && shift
+
+case "$cmd" in
+  update | enable | disable) lock ;;
+esac
 
 case "$cmd" in
   update)
@@ -274,4 +296,8 @@ case "$cmd" in
     prune
     ;;
   *) die "Unknown command: $cmd. Run ./install.sh --help." ;;
+esac
+
+case "$cmd" in
+  update | enable | disable) printf '%s\n' "$REPO" >"$REPO_FILE" ;;
 esac
