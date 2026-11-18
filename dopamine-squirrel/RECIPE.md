@@ -21,7 +21,7 @@ Laid out for a vertical monitor; works on a wide one too. [README.md](README.md)
 
 - Tabs on the left, hidden while you only have one. `+`, Changes, GitHub, standup, search, settings on the right.
 - **GitHub badge**: the number of PRs waiting on your review that you haven't triaged. Click it for the Reviews view.
-- **Fact-check button** (Slack icon): opens a pane below with Claude (Opus, high effort) primed to fact-check the Slack link or screenshot you paste next. It answers "Paste it." and waits.
+- **Fact-check button** (Slack icon): opens a pane below with Claude (Opus, high effort) and the fact-check request already typed in, unsent, so you paste a Slack link or screenshot and press Enter. It borrows the clipboard to type the request and puts all of it back, images included (`mods/squirrel-topbar/clipboard.js`).
 - **Standup button** (megaphone): opens a pane below running Claude with your standup skill. A second click jumps to that pane.
 - **Glow**: soft neon bands drifting behind the bar, 7 s per colour, with a rim of the normal bar colour. `glow.js`.
 - `cmd-w` asks before closing a pane, so a stray key never kills an agent.
@@ -33,7 +33,7 @@ Laid out for a vertical monitor; works on a wide one too. [README.md](README.md)
 - **Background work**: Herdr reports an agent as idle while its shells, monitors or background agents still run. The panel reads Claude's footer ("· 1 shell, 1 monitor") every 10 s and shows it on the third line with a slow blue spinner.
 - **Helpers**: cards group by tab. Every tab after the first starts folded into one-line pills (status, name, a blue dot for background work, context %); click its header or any pill to unfold them into cards. A helper says "helper of <parent>", its parent counts its helpers, and a tab of helpers is labelled with whose they are. The parent is the terminal that started it with `hc run`. For helpers opened another way (`herdr-app do tab.new`, `pane.split`, `terminal.open`), the panel finds the agent whose Claude transcript holds the command that launched it and labels the helper (`squirrel.parent`).
 - A helper without a pane shows as "+N in background" on its parent; click it to give it a pane.
-- **Plan limits strip**: one line per Claude subscription, with the same columns on each: 5-hour, week, per-model weeks such as Fable, and usage credits, each with when it resets. `usage.js` reads Claude Code's own `/usage` screen every 10 minutes: it starts a hidden Claude session in an empty folder, types `/usage`, reads the screen and closes the session. That sends nothing to the model. Between reads, the statusline keeps 5-hour and week current after every reply.
+- **Plan limits strip**: one line per Claude subscription, with the same columns on each: 5-hour, week, per-model weeks such as Fable, and usage credits, each with when it resets. `usage.js` reads Claude Code's own `/usage` screen every 3 minutes: it starts a hidden Claude session in an empty folder, types `/usage`, reads the screen and closes the session. That sends nothing to the model. Between reads, the statusline keeps 5-hour and week current after every reply.
 - The panel sizes itself to the rows of cards.
 
 ### Reviews (`mods/squirrel-panel/reviews.js`)
@@ -45,6 +45,7 @@ Laid out for a vertical monitor; works on a wide one too. [README.md](README.md)
 - **CC**: opens a pane below running Claude with your review skill on that PR. A second click jumps to that pane. If you closed that pane, the click resumes the same conversation (`claude --resume`), so a PR that comes back picks up where you left off.
 - **DONE**: hide it for good. **WATCH**: hide it until new commits, a new comment or a new request, then it comes back on top with an amber `↻` tag. The row shows the tick, then fades out. Ticking the last one plays confetti (`mods/squirrel-confetti/`).
 - At most 10 rows show; the rest scroll under a sticky header.
+- **Merged without your review**: below the open PRs, PRs from the last week that asked for you by name and merged before you reviewed. Team requests don't count. Click a row to see who asked and who reviewed instead; **SEEN** hides it. The section shows only while one is unchecked.
 
 ### My PRs (`mods/squirrel-panel/my-prs.js`)
 
@@ -69,7 +70,7 @@ Laid out for a vertical monitor; works on a wide one too. [README.md](README.md)
 | --- | --- |
 | `cmd-1` / `cmd-2` / `cmd-3` | Running agents / Reviews / My PRs, showing the panel if it's hidden |
 | `cmd-b` | Show or hide the panel |
-| `cmd-t`, `cmd-shift-d` | New pane below, straight into Claude (no shell start-up) |
+| `cmd-t`, `cmd-shift-d` | New pane below, straight into Claude (no shell start-up); quitting Claude leaves a shell |
 | `cmd-shift-t` | New tab |
 | `cmd-r` | Rename the focused pane |
 | `cmd-w` | Close the focused pane, after asking |
@@ -95,6 +96,7 @@ Laid out for a vertical monitor; works on a wide one too. [README.md](README.md)
 - `reviewSkill`, `standupSkill`: project skills the CC and standup buttons ask Claude to load from the PostHog MCP.
 - `standupCommand`: how the standup pane starts Claude. Defaults to `["claude"]`; the example uses a second Claude subscription.
 - `posthogCheckout`: where `trunk` runs. Uses that checkout's flox `trunk` when there is one, else `trunk` on your PATH.
+- `nicknames`: short names for GitHub logins on the teammate-approved chips, e.g. `{"octocat": "cat"}`.
 - `claudeProfiles`: the Claude subscriptions the plan limits strip reads, by config folder. Defaults to `~/.claude`, named "claude". The first `/usage` read in a profile trusts the empty folder `~/.config/herdr-app/data/squirrel/usage` for it.
 
 ## Claude status
@@ -111,6 +113,6 @@ Context % and session cost come from Claude Code's statusline input, and so do l
 
 ## For agents changing this
 
-- Shared state keys: `squirrel.github` (PR lists, written by the top bar), `squirrel.triaged`, `squirrel.visited`, `squirrel.view`, `squirrel.pane-names`, `squirrel.review-panes`, `squirrel.review-sessions`, `squirrel.standup-pane`, `squirrel.settings`.
+- Shared state keys: `squirrel.github` (PR lists, written by the top bar), `squirrel.triaged`, `squirrel.visited`, `squirrel.view`, `squirrel.pane-names`, `squirrel.review-panes`, `squirrel.review-sessions`, `squirrel.standup-pane`, `squirrel.settings`, `squirrel.ai-triage`, `squirrel.ai-triage-feedback`, `squirrel.ai-triage-learned`.
 - The top bar owns fetching. The panel only reads `squirrel.github`, so a different fetcher can feed it.
 - Panel views are mixins on one `View`: `agents.js`, `reviews.js`, `my-prs.js`, with `table.js` for the shared cells and `shared.js` for constants.

@@ -1,7 +1,8 @@
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex, ScrollHandle } from "gpui-base";
-import { spaces, panes, run, openOverlay, theme, window, shared, setShared, layout, updates, nextCommand, home, hc, exec } from "herdr";
+import { spaces, panes, run, openOverlay, theme, window, shared, setShared, layout, updates, nextCommand, home, hc, exec, appHome } from "herdr";
 import { fetchGh, GH_EVERY_MS } from "./github.js";
+import { tagReviews } from "./triage-ai.js";
 import { glow } from "./glow.js";
 import { loadSettings, squirrelSettings } from "./settings.js";
 
@@ -23,6 +24,8 @@ function find(node, id) {
 export default class SquirrelTopbar extends View {
   init(_props, cx) {
     cx.spawn(async (cx) => { for (;;) { await loadSettings(); await fetchGh(); await cx.sleep(GH_EVERY_MS); } });
+    // Tags new team review requests a few at a time, so a backlog clears in minutes (triage-ai.js).
+    cx.spawn(async (cx) => { for (;;) { await cx.sleep(60000); await tagReviews().catch(() => null); } });
     // squirrel.json edits show up within 30 seconds.
     cx.spawn(async (cx) => { for (;;) { await cx.sleep(30000); await loadSettings(); } });
     cx.spawn(async (cx) => { for (;;) { await cx.sleep(50); cx.notify(); } });
@@ -94,13 +97,16 @@ export default class SquirrelTopbar extends View {
   // One click starts the standup: Claude (standupCommand) with the standup skill from the PostHog MCP. A second click focuses that pane.
   // Fact-check: a pane below with Claude (Opus, high effort) and the fact-check request typed into its input,
   // not sent, ending in "Here it is: " so you paste the Slack link or screenshot and press Enter.
-  // Herdr can only paste from the clipboard, so this borrows it and puts your text back after.
+  // Herdr can only type into a terminal by pasting, so this borrows the clipboard and puts all of it back after,
+  // images included (clipboard.js).
   factCheck(cx) {
     const template = "Fact-check this before I send it. Verify each claim against the code, docs, PRs or data you can reach "
       + "(read Slack links with the Slack tools). Tell me plainly if I'm wrong, overstating, missing context, or about to look "
       + "like a retard. Verdict first, then corrected wording ready to paste into Slack: Slack formatting (*bold*, _italic_, "
       + "`code`, bullets) is fine, but no blockquote bars or other terminal-only gutter characters. Be clear, concise and direct. Here it is: ";
     const checkout = squirrelSettings().posthogCheckout.replace(/^~/, home());
+    const clip = (mode) => exec("/bin/sh", ["-c", 'osascript -l JavaScript "$1" "$2" "${TMPDIR:-/tmp}/squirrel-clipboard" 2>/dev/null',
+      "sh", `${appHome()}/mods/squirrel-topbar/clipboard.js`, mode]).catch(() => null);
     const before = new Set(panes().map((p) => p.pane));
     run("pane.split", { direction: "down", argv: ["/bin/sh", "-c", 'cd "$1" 2>/dev/null || cd; exec claude --model opus --effort high -n "Fact check"', "sh", checkout] });
     cx.spawn(async (cx) => {
@@ -113,12 +119,12 @@ export default class SquirrelTopbar extends View {
         if (/auto mode|shift\+tab|\? for shortcuts|❯/.test(r?.stdout ?? "")) break;
         await cx.sleep(250);
       }
-      const saved = await exec("pbpaste", []).catch(() => null);
+      await clip("save");
       await exec("/bin/sh", ["-c", 'printf "%s" "$1" | pbcopy', "sh", template]).catch(() => null);
       run("pane.focus", { pane: pane.pane });
       run("terminal.paste");
       await cx.sleep(400);
-      await exec("/bin/sh", ["-c", 'printf "%s" "$1" | pbcopy', "sh", saved?.stdout ?? ""]).catch(() => null);
+      await clip("restore");
     });
   }
 

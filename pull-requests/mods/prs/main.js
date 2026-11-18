@@ -2,9 +2,9 @@ import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { theme, props, openOverlay, closeOverlay, shared, setShared, run, machines, notify, layout, nextCommand, focused, window } from "herdr";
 import { loadStore, store, updateStore, prKey, newId } from "./store.js";
-import { fetchMyPrs, fetchReviews, fetchDetail, statusPill, needsReview, readyToMerge, comparePriority, isOrgWide, ownerOf } from "./github.js";
+import { fetchMyPrs, fetchReviews, fetchDetail, statusPill, needsReview, readyToMerge, comparePriority, isOrgWide, ownerOf, applyTrunk, rateLimitPause, RateLimited } from "./github.js";
 import { mergePr, markReady, updateBranch, rerunFailed, approvePr, commentOnPr, resolveThread, openUrl, copyText, markdownLink, toggleWatch, toggleHidden, report, usesTrunk, isTrunkPr, mergesThroughQueue } from "./actions.js";
-import { startFixSession, startReview, syncRuns, fixPrompt, findingsFixPrompt, reviewPromptForOthers, setFindingState, findingsMarkdown } from "./agents.js";
+import { startFixSession, startReview, syncRuns, fixPrompt, findingsFixPrompt, reviewPromptForOthers, reusedSessionPrompt, setFindingState, findingsMarkdown } from "./agents.js";
 import { processSnapshot, TRIGGERS, ACTION_KINDS } from "./automation.js";
 import { loadConfig, config, updateConfig, configPath, machineLabel } from "./config.js";
 import { forgetCheckouts, checkoutFor } from "./runner.js";
@@ -12,7 +12,7 @@ import { loadTrunk, dequeue, resetTrunk } from "./trunk.js";
 import { fetchServices, isIncident, queueService, statusOverview } from "./status.js";
 import { sidebarHeader, sidebarMine, sidebarReviews, sidebarRail, statusLine, prIcon, progressLine, stackHeader, gatesFor, splitByNeed, isQuiet, rowButtons, nextFor, needsYou, workRank } from "./sidebar.js";
 import { visualAsks, stackGroups, withoutDraftStacks, step, queueFor, withTrunkQueue } from "./steps.js";
-import { openClaude, CLAUDE_ICON } from "./claude.js";
+import { openClaude, pasteIntoClaude, CLAUDE_ICON } from "./claude.js";
 import { ago, button, iconButton, glyphButton, textIconButton, chip, badge, section, empty, field, menuItem, SPINNER, tone, TEXT, tint, avatar, countPill, codePill, gateStrip, titleText, readable } from "./ui.js";
 import { readiness, groupChecks, rowMatches, tallyChecks, tallyText, tallyLabel, worstBucket, mergeStateNote, changeShape, parseMarkdown } from "./sheet.js";
 
@@ -23,6 +23,7 @@ const TRUNK_EVERY_MS = 45000;
 const SERVICES_EVERY_MS = 120000;
 const FAILURES_BEFORE_ERROR = 3;
 const STALE_AFTER_MS = 20000;
+const UNFOCUSED_SLOWDOWN = 3;
 const VIEW_STACK = "pr-center";
 const PAGE_NODE = "prs-page";
 const WORK_NODE = "work";
@@ -122,6 +123,14 @@ function cleanBody(body) {
   return text.trim();
 }
 const keepFocus = (_e, cx) => cx.stop_propagation();
+async function handOff(pr, prompt, what, started) {
+  const text = reusedSessionPrompt(pr, prompt);
+  const copied = await copyText(text);
+  if (!copied.ok) return copied;
+  const agent = started?.shown?.agent;
+  if (agent && (await pasteIntoClaude(agent))) return { ok: true, message: `Claude is already open on this PR, so the ${what} prompt is pasted there. Press Enter to send it.` };
+  return { ok: true, message: `This PR is already open in a space, so it's shown instead. The ${what} prompt is on your clipboard to paste into Claude there.` };
+}
 const samePr = (a, b) => a.repo === b.repo && a.number === b.number;
 
 function claudeOn(pr) {
@@ -166,16 +175,20 @@ export const NAMED = {
   updateBranch: (pr) => act(pr, "update", `Update #${pr.number}`, () => updateBranch(pr)),
   rerunFailed: (pr) => act(pr, "rerun", `Rerun failed checks on #${pr.number}`, () => rerunFailed(pr)),
   fix: (pr) => act(pr, "fix", `Fix #${pr.number}`, async () => {
-    const started = await startFixSession(pr, fixPrompt(pr));
-    return started === false ? { ok: true, quiet: true } : { ok: true, message: `Opened a Claude session on ${agentsWhere()}.` };
+    const prompt = fixPrompt(pr);
+    const started = await startFixSession(pr, prompt);
+    if (started !== true) return handOff(pr, prompt, "fix", started);
+    return { ok: true, message: `Opened a Claude session on ${agentsWhere()}.` };
   }),
   agentReview: (pr) => act(pr, "review", `Agent review of #${pr.number}`, async () => {
     await startReview(pr);
     return { ok: true, message: `Started on ${agentsWhere()}: four lenses, then a judge.` };
   }),
   reviewInClaude: (pr) => act(pr, "claude-review", `Review #${pr.number}`, async () => {
-    const started = await startFixSession(pr, reviewPromptForOthers(pr), "review");
-    return started === false ? { ok: true, quiet: true } : { ok: true, message: `Opened a Claude review session on ${agentsWhere()}.` };
+    const prompt = reviewPromptForOthers(pr);
+    const started = await startFixSession(pr, prompt, "review");
+    if (started !== true) return handOff(pr, prompt, "review", started);
+    return { ok: true, message: `Opened a Claude review session on ${agentsWhere()}.` };
   }),
   approve: (pr) => act(pr, "approve", `Approve #${pr.number}`, () => approvePr(pr)),
   watch: (pr) => act(pr, "watch", pr.watching ? "Stopped watching" : "Watching", async () => {
@@ -312,9 +325,6 @@ export default class Prs extends View {
     if (this.leader) {
       this.loadMine(cx);
       this.loadReviews(cx);
-      cx.timer.every(MINE_EVERY_MS, (cx) => this.loadMine(cx));
-      cx.timer.every(REVIEWS_EVERY_MS, (cx) => this.loadReviews(cx));
-      cx.timer.every(TRUNK_EVERY_MS, (cx) => this.loadTrunkData(cx));
       this.loadServices(cx);
       cx.timer.every(SERVICES_EVERY_MS, (cx) => this.loadServices(cx));
       cx.timer.every(RUNS_EVERY_MS, (cx) => cx.spawn(async (cx) => {
@@ -337,6 +347,7 @@ export default class Prs extends View {
     cx.timer.every(1500, (cx) => {
       if (this.leader) this.publishStatus();
       if (this.leader) this.refreshOnReturn(cx);
+      if (this.leader) this.pollDue(cx);
       const refreshAll = shared("prs.refreshAll") ?? null;
       if (this.leader && refreshAll !== this.seenRefreshAll) {
         this.seenRefreshAll = refreshAll;
@@ -385,15 +396,36 @@ export default class Prs extends View {
     if (now - (this.reviewsStartedAt ?? 0) > STALE_AFTER_MS) this.loadReviews(cx);
   }
 
+  pollDue(cx) {
+    const slowdown = window()?.active ? 1 : UNFOCUSED_SLOWDOWN;
+    const now = Date.now();
+    const due = (startedAt, every) => startedAt === undefined || now - startedAt >= every * slowdown;
+    if (due(this.mineStartedAt, MINE_EVERY_MS)) this.loadMine(cx);
+    if (due(this.reviewsStartedAt, REVIEWS_EVERY_MS)) this.loadReviews(cx);
+    if (due(this.trunkStartedAt, TRUNK_EVERY_MS)) this.loadTrunkData(cx);
+  }
+
+  githubError(error, current, failures) {
+    if (error instanceof RateLimited) return error.message;
+    if (!current || failures >= FAILURES_BEFORE_ERROR) return String(error?.message ?? error);
+    return null;
+  }
+
   loadMine(cx) {
     if (this.loadingMine) return;
-    this.loadingMine = true;
     this.mineStartedAt = Date.now();
+    const pause = rateLimitPause();
+    if (pause) {
+      this.mineError = pause.message;
+      cx.notify();
+      return;
+    }
+    this.loadingMine = true;
     cx.notify();
     cx.spawn(async (cx) => {
       try {
         await Promise.all([loadStore(), loadConfig()]);
-        this.mine = await fetchMyPrs(repos(), store().watched, config().trunk?.repo ?? null);
+        this.mine = await fetchMyPrs(repos(), store().watched, config().trunk?.repo ?? null, this.trunk);
         this.mineFailures = 0;
         this.mineError = null;
         setShared("prs.cache.mine", this.mine);
@@ -401,7 +433,7 @@ export default class Prs extends View {
         await processSnapshot({ viewer: this.mine.viewer, prs: this.mine.prs, reviews: this.reviews });
       } catch (error) {
         this.mineFailures++;
-        if (!this.mine || this.mineFailures >= FAILURES_BEFORE_ERROR) this.mineError = String(error?.message ?? error);
+        this.mineError = this.githubError(error, this.mine, this.mineFailures) ?? this.mineError;
       }
       this.loadingMine = false;
       this.announce();
@@ -412,11 +444,14 @@ export default class Prs extends View {
   loadTrunkData(cx) {
     if (this.loadingTrunk || !this.mine) return;
     this.loadingTrunk = true;
+    this.trunkStartedAt = Date.now();
     cx.spawn(async (cx) => {
       try {
         const result = await loadTrunk(this.mine.prs);
         this.trunk = !result.listing && this.trunk?.listing && result.available ? { ...this.trunk, error: result.error } : result;
         setShared("prs.cache.trunk", this.trunk);
+        applyTrunk(this.mine.prs, this.trunk);
+        setShared("prs.cache.mine", this.mine);
       } catch (error) {
         this.trunk = { ...(this.trunk ?? {}), error: String(error?.message ?? error) };
       }
@@ -608,19 +643,25 @@ export default class Prs extends View {
 
   loadReviews(cx) {
     if (this.loadingReviews) return;
-    this.loadingReviews = true;
     this.reviewsStartedAt = Date.now();
+    const pause = rateLimitPause();
+    if (pause) {
+      this.reviewsError = pause.message;
+      cx.notify();
+      return;
+    }
+    this.loadingReviews = true;
     cx.notify();
     cx.spawn(async (cx) => {
       try {
         await loadConfig();
-        this.reviews = await fetchReviews(repos());
+        this.reviews = await fetchReviews(repos(), this.trunk);
         this.reviewsFailures = 0;
         this.reviewsError = null;
         setShared("prs.cache.reviews", this.reviews);
       } catch (error) {
         this.reviewsFailures++;
-        if (!this.reviews || this.reviewsFailures >= FAILURES_BEFORE_ERROR) this.reviewsError = String(error?.message ?? error);
+        this.reviewsError = this.githubError(error, this.reviews, this.reviewsFailures) ?? this.reviewsError;
       }
       this.loadingReviews = false;
       cx.notify();
@@ -2097,7 +2138,8 @@ export default class Prs extends View {
         .child(button(t, "prs-f-review", reviewRunning ? "Review running…" : findings.length ? "Review again" : "Start review", () => NAMED.agentReview(pr), { primary: !findings.length, disabled: reviewRunning }))
         .when(open.length > 0 && pr.mine, (el) => el.child(button(t, "prs-f-fix", `Fix ${open.length} in Claude`, () => act(pr, "fix", `Fix findings on #${pr.number}`, async () => {
           const prompt = findingsFixPrompt(pr, open);
-          if ((await startFixSession(pr, prompt)) === false) return copyText(prompt, "A fix session is already open on this PR, so it's shown instead. The findings prompt is on your clipboard to paste into it.");
+          const started = await startFixSession(pr, prompt);
+          if (started !== true) return handOff(pr, prompt, "findings", started);
           return { ok: true, message: `Opened a Claude session on ${agentsWhere()}.` };
         }), { primary: true })))
         .when(open.length > 0, (el) => el.child(button(t, "prs-f-post", "Post to PR", () => act(pr, "post", `Post findings to #${pr.number}`, () => commentOnPr(pr, findingsMarkdown(open)))))),

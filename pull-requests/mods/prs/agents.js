@@ -1,7 +1,7 @@
 import { notify } from "herdr";
 import { store, updateStore, prKey, newId } from "./store.js";
 import { config, loadConfig } from "./config.js";
-import { showIfOpen, prRef, launchOnce } from "./claude.js";
+import { showPrWork, prRef, launchOnce } from "./claude.js";
 import { runnerMachine, runsDir, checkoutFor, launchClaudeOnPr, startHeadless, readRuns, readRunFile } from "./runner.js";
 
 const LENSES = {
@@ -66,12 +66,20 @@ export function reviewPromptForOthers(pr) {
   return `Review the pull request ${pr.url} (${pr.repo}#${pr.number} by @${pr.author}). You're in a worktree with its branch checked out. Read the description and diff with gh pr view and gh pr diff, read the touched code around the changes, and tell me what a careful reviewer would block on or ask about: correctness, security, reliability, and missing tests. Don't post anything to GitHub.`;
 }
 
-export async function startFixSession(pr, prompt, label = "fix") {
+export function reusedSessionPrompt(pr, prompt) {
+  return `Before anything else, check that this checkout is on the PR's branch: run \`gh pr view --json url -q .url\` here. If it doesn't print ${pr.url}, and \`git status --porcelain\` is empty, run \`gh pr checkout ${pr.number} -R ${pr.repo}\`; if the working tree has changes, stop and ask me what to do.
+
+${prompt}`;
+}
+
+export async function startFixSession(pr, prompt, label = "fix", { bareSpaces = true } = {}) {
   const tabName = `${label} ${prRef(pr)}`;
-  if (showIfOpen(tabName)) return false;
   return launchOnce(tabName, async () => {
+    const shown = await showPrWork(pr, { bareSpaces });
+    if (shown) return { shown };
     await loadConfig();
-    if (showIfOpen(tabName)) return false;
+    const shownLater = await showPrWork(pr, { bareSpaces });
+    if (shownLater) return { shown: shownLater };
     const machine = await launchClaudeOnPr(pr, [prompt], tabName);
     await updateStore((state) => {
       const id = newId();

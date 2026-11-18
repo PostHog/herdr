@@ -1,5 +1,5 @@
 import { LISTING_CAP } from "./trunk.js";
-import { readyToMerge } from "./github.js";
+import { readyToMerge, trunkQueue } from "./github.js";
 
 const ordinal = (n) => `${n}${n % 10 === 1 && n % 100 !== 11 ? "st" : n % 10 === 2 && n % 100 !== 12 ? "nd" : n % 10 === 3 && n % 100 !== 13 ? "rd" : "th"}`;
 const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
@@ -24,25 +24,32 @@ export function fixable(pr) {
 }
 
 export function queueFor(pr, group, trunk) {
-  if (!trunk?.items || pr.repo !== trunk.repo) return null;
-  const own = trunk.items[pr.number];
+  const items = trunk?.items && pr.repo === trunk.repo ? trunk.items : {};
+  const own = items[pr.number];
   if (own) return { ...own, via: null };
   if (!group) return null;
-  const index = group.members.findIndex((member) => member.pr === pr);
-  for (const member of group.members.slice(index + 1)) {
-    const hit = trunk.items[member.pr.number];
+  const descendants = descendantsOf(group, pr);
+  for (const member of descendants) {
+    const hit = items[member.pr.number];
     if (hit) return { ...hit, via: member.pr.number };
   }
-  return null;
+  if (pr.queue?.active) return null;
+  const queued = descendants.find((member) => member.pr.queue?.active);
+  return queued ? { state: "Queued", via: queued.pr.number, queue: queued.pr.queue } : null;
 }
 
-const TRUNK_QUEUE_STATE = { Testing: "testing", "Tests Passed": "tests_passed", Pending: "pending", "Not Ready": "not_ready", "Pending Failure": "pending_failure", Failed: "failed", Cancelled: "cancelled", Merged: "merged" };
-const TRUNK_QUEUE_DONE = ["failed", "cancelled", "merged"];
+function descendantsOf(group, pr) {
+  const index = group.members.findIndex((member) => member.pr === pr);
+  if (index < 0) return [];
+  const depth = group.members[index].depth;
+  const end = group.members.findIndex((member, at) => at > index && member.depth <= depth);
+  return group.members.slice(index + 1, end < 0 ? undefined : end);
+}
 
 export function withTrunkQueue(pr, entry) {
-  const state = entry ? TRUNK_QUEUE_STATE[entry.state] : null;
-  if (!state) return pr;
-  return { ...pr, queue: { provider: "trunk", state, position: null, active: !TRUNK_QUEUE_DONE.includes(state) } };
+  if (entry?.queue) return { ...pr, queue: entry.queue };
+  const queue = trunkQueue(entry);
+  return queue ? { ...pr, queue } : pr;
 }
 
 export function step(pr, entry, trunk) {
@@ -56,6 +63,8 @@ export function step(pr, entry, trunk) {
         return { icon: "fail", tone: "bad", label: `Queue ${entry.state === "Failed" ? "failed" : "failing"}${via}`, requeue: entry.state === "Failed" && !entry.via };
       case "Cancelled":
         return { icon: "ban", tone: "dim", label: "Removed from queue", requeue: !entry.via };
+      case "Queued":
+        return { icon: "queue", tone: "accent", label: `In merge queue${via}` };
       case "Tests Passed":
         return { icon: "rocket", tone: "ok", label: "Merging" };
       case "Testing": {

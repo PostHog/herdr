@@ -1,4 +1,4 @@
-import { run, spaces, agents, panes, exec, shared, setShared, knownAgents, notify } from "herdr";
+import { run, spaces, agents, panes, exec, hc, shared, setShared, knownAgents, notify } from "herdr";
 import { config, loadConfig } from "./config.js";
 import { launchClaudeInCheckout } from "./runner.js";
 
@@ -14,7 +14,7 @@ function setLaunching(key, at) {
   setShared("prs.launching", launching);
 }
 
-export function showIfOpen(...names) {
+function showIfOpen(...names) {
   const open = findTab(...names);
   if (open) showTab(open);
   return Boolean(open);
@@ -45,17 +45,51 @@ export function findTab(...names) {
   return null;
 }
 
+const prTabNames = (pr) => [`PR ${prRef(pr)}`, `fix ${prRef(pr)}`, `review ${prRef(pr)}`];
+
+const isClaude = (agent) => agent.app === "claude-code";
+
+async function showNamedTab(pr) {
+  const open = findTab(...prTabNames(pr));
+  if (!open) return null;
+  showTab(open);
+  const address = agents().find((candidate) => candidate.tab === open.tab && isClaude(candidate))?.address;
+  const claude = address ? await claudeIn(address) : null;
+  return { ...open, agent: claude ? { address, pid: claude.pid } : null };
+}
+
+export async function showPrWork(pr, { bareSpaces = true } = {}) {
+  const named = await showNamedTab(pr);
+  if (named) return named;
+  const checkouts = await branchSpaces(pr);
+  const namedLater = await showNamedTab(pr);
+  if (namedLater) return namedLater;
+  const working = await claudeOnBranch(pr);
+  if (working) {
+    showTab({ space: working.space, tab: working.tab });
+    return { space: working.space, tab: working.tab, agent: { address: working.address, pid: working.pid } };
+  }
+  if (!bareSpaces || !checkouts.length) return null;
+  const space = checkouts.find((candidate) => candidate.active) ?? checkouts[0];
+  run("space.select", { id: space.id });
+  return { space: space.id, tab: null, agent: null };
+}
+
+export async function pasteIntoClaude({ address, pid }) {
+  if ((await claudeIn(address))?.pid !== pid) return false;
+  run("agent.focus", { terminal: address });
+  run("terminal.paste");
+  return true;
+}
+
 export function openClaude(pr, context = {}) {
   const name = `PR ${prRef(pr)}`;
-  const showOpen = () => showIfOpen(name, `fix ${prRef(pr)}`, `review ${prRef(pr)}`);
+  const showOpen = () => showIfOpen(...prTabNames(pr));
   return launchOnce(`claude ${prRef(pr)}`, async () => {
-    if (showOpen()) return;
-    const checkouts = await branchSpaces(pr);
-    const agent = agents().find((candidate) => checkouts.some((space) => space.id === candidate.space));
-    if (agent) return showTab({ space: agent.space, tab: agent.tab });
+    if (await showPrWork(pr)) return;
     const claudeArgs = ["--name", name, "--append-system-prompt", systemPrompt(pr, context)];
     try {
-      const space = checkouts[0] ?? (await repoSpace(pr));
+      const space = await repoSpace(pr);
       if (space) {
         const [claude, folder] = await Promise.all([claudeArgv(space.machine), rootOf(space)]);
         if (showOpen()) return;
@@ -71,11 +105,53 @@ export function openClaude(pr, context = {}) {
   });
 }
 
+const hasOwnBranch = (pr) => Boolean(pr.headRef) && pr.headRef !== pr.baseRef && !DEFAULT_BRANCHES.has(pr.headRef);
+
 async function branchSpaces(pr) {
-  if (!pr.headRef || pr.headRef === pr.baseRef || DEFAULT_BRANCHES.has(pr.headRef)) return [];
+  if (!hasOwnBranch(pr)) return [];
   const candidates = spaces().filter((candidate) => candidate.branch === pr.headRef);
   const inPrRepo = await Promise.all(candidates.map((space) => inRepo(space, pr.repo)));
   return candidates.filter((_space, index) => inPrRepo[index]);
+}
+
+async function claudeOnBranch(pr) {
+  if (!hasOwnBranch(pr)) return null;
+  const machineOf = new Map(spaces().map((space) => [space.id, space.machine]));
+  return firstMatch(agents().filter(isClaude), async (agent) => {
+    const machine = machineOf.get(agent.space) ?? null;
+    const claude = await claudeIn(agent.address);
+    if (!claude?.cwd || (await branchAt(claude.cwd, machine)) !== pr.headRef) return null;
+    return (await repoAt(claude.cwd, pr.repo, machine)) ? { ...agent, pid: claude.pid } : null;
+  });
+}
+
+function firstMatch(items, test) {
+  return new Promise((resolve) => {
+    let left = items.length;
+    if (!left) return resolve(null);
+    for (const item of items) {
+      test(item)
+        .then((match) => match && resolve(match), () => null)
+        .finally(() => --left === 0 && resolve(null));
+    }
+  });
+}
+
+async function claudeIn(address) {
+  const result = await hc(["get", address, "--json"]).catch(() => null);
+  if (result?.code !== 0) return null;
+  try {
+    const terminal = JSON.parse(result.stdout);
+    if (terminal.status?.app !== "claude-code" || !terminal.foreground?.pid) return null;
+    return { pid: terminal.foreground.pid, cwd: terminal.foreground.cwd || terminal.cwd || null };
+  } catch {
+    return null;
+  }
+}
+
+async function branchAt(cwd, machine) {
+  const result = await exec("git", ["branch", "--show-current"], { cwd, on: machine, timeout: 5000 }).catch(() => null);
+  return result?.code === 0 ? result.stdout.trim() : null;
 }
 
 // A space already in the PR's repo, whatever branch it's on: the shown one first.
@@ -102,8 +178,11 @@ async function rootOf(space) {
 async function inRepo(space, repo, folder = null) {
   const tabs = new Set(space.tabs.map((tab) => tab.id));
   const cwd = folder ?? panes().find((pane) => tabs.has(pane.tab) && pane.branch === space.branch && pane.cwd)?.cwd;
-  if (!cwd) return false;
-  const result = await exec("git", ["remote", "-v"], { cwd, on: space.machine, timeout: 5000 }).catch(() => null);
+  return cwd ? repoAt(cwd, repo, space.machine) : false;
+}
+
+async function repoAt(cwd, repo, machine) {
+  const result = await exec("git", ["remote", "-v"], { cwd, on: machine, timeout: 5000 }).catch(() => null);
   if (result?.code !== 0) return false;
   const want = repo.toLowerCase();
   return result.stdout.toLowerCase().split("\n").some((line) => {

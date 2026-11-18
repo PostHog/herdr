@@ -109,7 +109,7 @@ export async function launchTab(name, argv, machine = runnerMachine(), { checkou
 }
 
 const PR_WORKTREE_SCRIPT = `set -e
-checkout="$1"; repo="$2"; number="$3"; tree="$4"; shift 4
+checkout="$1"; repo="$2"; number="$3"; tree="$4"; head_ref="$5"; head_sha="$6"; shift 6
 give_up() { echo "$1"; read -r -p "Press Enter to close. " _ || true; exit 1; }
 discard() { cd "$checkout"; git worktree remove --force "$tree" || true; git worktree prune; }
 marker() { printf '%s/herdr-pr-checked-out' "$(git -C "$tree" rev-parse --absolute-git-dir)"; }
@@ -117,9 +117,23 @@ marker() { printf '%s/herdr-pr-checked-out' "$(git -C "$tree" rev-parse --absolu
 if [ -d "$tree" ] && [ ! -f "$(marker)" ] && ! git -C "$tree" symbolic-ref -q HEAD >/dev/null && [ -z "$(git -C "$tree" status --porcelain)" ]; then
   discard
 fi
-if [ ! -d "$tree" ]; then
-  git -C "$checkout" fetch -q origin
-  git -C "$checkout" worktree add -q --detach "$tree" "origin/HEAD"
+same_repo_head() {
+  [ -n "$head_ref" ] && [ -n "$head_sha" ] || return 1
+  ! git -C "$checkout" show-ref -q --verify "refs/heads/$head_ref" || return 1
+  git -C "$checkout" fetch -q origin "+refs/heads/$head_ref:refs/remotes/origin/$head_ref" 2>/dev/null || return 1
+  [ "$(git -C "$checkout" rev-parse "refs/remotes/origin/$head_ref")" = "$head_sha" ]
+}
+add_on_head_branch() {
+  git -C "$checkout" worktree add -q -b "$head_ref" "$tree" "origin/$head_ref" 2>/dev/null || { git -C "$checkout" worktree prune; return 1; }
+  git -C "$tree" config "branch.$head_ref.remote" origin
+  git -C "$tree" config "branch.$head_ref.merge" "refs/heads/$head_ref"
+}
+if [ ! -d "$tree" ] && same_repo_head && add_on_head_branch; then
+  cd "$tree"
+elif [ ! -d "$tree" ]; then
+  start=FETCH_HEAD
+  git -C "$checkout" fetch -q origin "pull/$number/head" || start=origin/HEAD
+  git -C "$checkout" worktree add -q --detach "$tree" "$start"
   cd "$tree"
   gh pr checkout "$number" -R "$repo" || gh pr checkout "$number" -R "$repo" --detach || {
     discard
@@ -154,7 +168,7 @@ export async function launchClaudeOnPr(pr, claudeArgs, tabName) {
   const treePrefix = `${home}/.herdr/worktrees/prs/${pr.repo.replace("/", "-")}-`;
   const tree = `${treePrefix}${pr.number}`;
   const checkout = await checkoutFor(pr.repo, machine);
-  const argv = ["bash", "-lc", `${PATH_PRELUDE} ${PR_WORKTREE_SCRIPT}`, "prs", checkout, pr.repo, String(pr.number), tree, ...claudeArgs];
+  const argv = ["bash", "-lc", `${PATH_PRELUDE} ${PR_WORKTREE_SCRIPT}`, "prs", checkout, pr.repo, String(pr.number), tree, ...(pr.headInRepo ? [pr.headRef, pr.headSha ?? ""] : ["", ""]), ...claudeArgs];
   await launchTab(tabName, argv, machine, { checkout, treePrefix });
   return machine;
 }

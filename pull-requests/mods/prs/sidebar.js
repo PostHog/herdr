@@ -226,7 +226,7 @@ export function stackHeader(view, t, group, { plain = true } = {}) {
   const top = group.members.at(-1).pr;
   const steps = group.members.map((member) => step(member.pr, queueFor(member.pr, group, trunk), trunk));
   const ready = steps.filter((item) => item.ready).length;
-  const queued = trunk?.items?.[top.number];
+  const queued = trunk?.items?.[top.number] ?? (top.queue?.active ? { state: "In merge queue" } : null);
   const all = ready === group.members.length;
   return h_flex()
     .id(`prs-stack-${group.id}`)

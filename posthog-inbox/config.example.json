@@ -1,0 +1,8 @@
+{
+  "api_key": "phx_REPLACE_WITH_A_PERSONAL_API_KEY",
+  "default_repo": "PostHog/posthog",
+  "repos": {
+    "PostHog/posthog": "~/github.com/PostHog/posthog"
+  },
+  "agent": "claude"
+}
