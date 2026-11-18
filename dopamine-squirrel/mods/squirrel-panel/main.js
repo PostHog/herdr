@@ -84,7 +84,7 @@ export default class SquirrelPanel extends View {
     const t = theme();
     const view = this.view();
     // Each tab keeps its own undo list; the button shows only on the tab whose list has something.
-    const undo = view === "reviews" ? this.undo : view === "mine" ? this.undoMine : [];
+    const undo = view === "reviews" ? this.undo : view === "mine" ? this.undoMine : null;
     const gh = shared(GITHUB) ?? {};
     const marks = shared(TRIAGED) ?? {};
     const reviewCount = (gh.prs ?? []).filter((p) => !p.draft && (!marks[p.url] || this.resurfaced(p, marks[p.url]))).length;
@@ -131,9 +131,9 @@ export default class SquirrelPanel extends View {
         .when(view !== "agents", (el) => el
           .when(Boolean(gh.error), (el) => el.child(div().id("gh-error").max_w(320).truncate().text_size(10.5).text_color(t.ansi1).cursor_pointer().underline()
             .tooltip("Show the full error").on_click(() => openOverlay({ mod: "squirrel-error" })).child(gh.error)))
-          .when(undo.length > 0, (el) => el.child(div().id("undo").h(22).px(6).mr(4).flex().items_center().rounded(4)
-            .text_size(11).text_color(t.foreground).hover((s) => s.bg(t.hover).text_color(t.foreground))
-            .tooltip(`Undo ${undo.at(-1).label} on #${undo.at(-1).number}`)
+          .when(Boolean(undo), (el) => el.child(div().id("undo").h(22).px(6).mr(4).flex().items_center().rounded(4).text_size(11)
+            .text_color(undo.length ? t.foreground : t.dim).when(undo.length > 0, (el) => el.hover((s) => s.bg(t.hover)))
+            .tooltip(undo.length ? `Undo ${undo.at(-1).label} on #${undo.at(-1).number}` : "Nothing to undo yet")
             .on_click((_e, cx) => { undo.pop()?.restore(cx); cx?.notify(); }).child("↶ Undo")))
           .child(div().text_size(10.5).text_color(t.dim).child(gh.loading ? "refreshing…" : gh.at ? `updated ${ago(gh.at)} ago` : "loading…"))
           .child(div().id("gh-refresh").h(22).px(6).flex().items_center().rounded(4).text_size(11).text_color(t.muted)
