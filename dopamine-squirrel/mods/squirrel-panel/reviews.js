@@ -80,7 +80,12 @@ export const reviewViews = {
       return;
     }
     const marks = { ...(shared(TRIAGED) ?? {}) };
-    this.undo.push({ url: pr.url, number: pr.number, mode, prev: marks[pr.url] });
+    const prev = marks[pr.url];
+    this.undo.push({ number: pr.number, label: { done: "Done", watch: "Watch" }[mode] ?? "untick", restore: () => {
+      const now = { ...(shared(TRIAGED) ?? {}) };
+      if (prev === undefined) delete now[pr.url]; else now[pr.url] = prev;
+      setShared(TRIAGED, now);
+    } });
     if (mode === "done") marks[pr.url] = Date.now();
     else if (mode === "watch") marks[pr.url] = { at: Date.now(), watch: true };
     else delete marks[pr.url];
@@ -89,21 +94,15 @@ export const reviewViews = {
       run("mod.open", { name: "squirrel-confetti" });
   },
 
-  // Puts the newest Done, Watch or Seen click back the way it was.
-  undoTriage() {
-    const last = this.undo.pop();
-    if (!last) return;
-    const marks = { ...(shared(TRIAGED) ?? {}) };
-    if (last.prev === undefined) delete marks[last.url];
-    else marks[last.url] = last.prev;
-    setShared(TRIAGED, marks);
-  },
+  // Puts the newest Done, Watch, Seen or tag click back the way it was.
+  undoLast() { this.undo.pop()?.restore(); },
 
   // Clicking an AI tag flips it to your call; clicking again hands the call back to the AI. A flip or a
   // note becomes an example for the next tags.
   correctTag(p) {
     const tag = (shared(AI_TRIAGE) ?? {})[p.url];
     if (!tag) return;
+    this.undo.push({ number: p.number, label: "tag change", restore: () => this.saveTag(p, tag) });
     this.saveTag(p, tag.corrected
       ? { ...tag, verdict: tag.aiVerdict, reason: tag.aiReason, corrected: false }
       : { ...tag, verdict: tag.verdict === "needs" ? "skip" : "needs", aiVerdict: tag.verdict, aiReason: tag.reason, reason: `Your call (AI said: ${tag.reason})`, corrected: true });
@@ -194,7 +193,10 @@ export const reviewViews = {
     // You care (asked by name, tagged You care, or not tagged yet): approved with CI passed, then CI passed, then the rest.
     // Not important last. Longest waiting first in each group.
     const group = (p) => p.mine || aiTags[p.url]?.verdict !== "skip" ? (p.ci !== "SUCCESS" ? 2 : p.review === "APPROVED" ? 0 : 1) : 3;
-    const sorted = prs.slice().sort((a, b) => group(a) - group(b) || Date.parse(a.requestedAt) - Date.parse(b.requestedAt));
+    // The order is set when GitHub data arrives, so a click (a tag flip) never moves rows under the pointer.
+    if (this.reviewOrder?.at !== gh.at) this.reviewOrder = { at: gh.at,
+      pos: new Map(prs.slice().sort((a, b) => group(a) - group(b) || Date.parse(a.requestedAt) - Date.parse(b.requestedAt)).map((p, i) => [p.url, i])) };
+    const sorted = prs.slice().sort((a, b) => (this.reviewOrder.pos.get(a.url) ?? 1e9) - (this.reviewOrder.pos.get(b.url) ?? 1e9));
     const open = sorted.filter((p) => !isDone(p)), done = sorted.filter(isDone);
     const prW = Math.ceil(Math.max(2 * 6.2, ...prs.map((p) => `#${p.number}`.length * 7.2))) + 6;
     const sizeW = Math.ceil(Math.max(4 * 6.2, ...prs.map((p) => `+${p.additions} −${p.deletions}`.length * 6.4))) + 6;
