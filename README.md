@@ -14,6 +14,7 @@ Each top-level folder with a `RECIPE.md` is one piece. You pick the pieces you w
 | [`space-tree`](space-tree/RECIPE.md) | The `Pull-Requests` layout with one sidebar tree: spaces (with each repo's own icon), their terminals and agents, and each agent's sub-agents, grouped by machine. The tabs move from the top bar into the tree. Needs `pull-requests`. |
 | [`gustavo`](gustavo/README.md) | Gustavo Strassburger's task-first setup: each space is a task with its Claude sessions, PRs and worktrees, an Inbox of what waits on you, a Grafana view, a pixel-art Dungeon of your tasks with PostHog's hoggies, a history bar, and PostHog's dev stack on the right. Built around Feature Flags team work; take the parts you like. |
 | [`hogpilot`](hogpilot/RECIPE.md) | A side panel for CSMs: hogpilot's book of accounts with open signals and ARR at stake, and the account card for whichever account the focused terminal is working on, with buttons to ask Claude about it or open its dossier. Needs hogpilot installed. |
+| [`piece-picker`](piece-picker/RECIPE.md) | A dialog with one switch per piece in this repo. Each switch runs `install.sh enable` or `disable` for you, and Update runs `install.sh`. Herdr's command palette can't list mods, so a key opens it (`cmd-shift-p` in its `keys.json`). |
 
 ## Install
 
@@ -61,6 +62,8 @@ It skips the pull when your checkout has local changes.
 `cmd-shift-l` cycles through every layout in Herdr's config folder.
 That's Herdr's own `main`, `terminals` and `win98`, which Herdr puts back on every start, plus the pieces you enabled.
 Herdr has no setting to hide a layout from the cycle, so enabling a piece is how you add its layout.
+
+Or enable `piece-picker`, and turn pieces on and off from a dialog in Herdr.
 
 What you enabled is kept per machine in `~/.config/herdr-app/.posthog-herdr-enabled`.
 If something of yours is in the way, the script moves it to `~/.config/herdr-app/.posthog-herdr-backup/` first.

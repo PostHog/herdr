@@ -233,6 +233,7 @@ list() {
 }
 
 [ -d "$HOME_DIR" ] || die "No Herdr config folder at $HOME_DIR. Open Herdr once first."
+printf '%s\n' "$REPO" >"$HOME_DIR/.posthog-herdr-repo"
 
 do_pull=1
 args=()
