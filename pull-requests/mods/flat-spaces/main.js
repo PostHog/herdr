@@ -5,7 +5,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout } from "herdr";
+import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout, terminals, readTextFile, appHome } from "herdr";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -15,6 +15,9 @@ function find(node, id) {
   }
   return null;
 }
+
+const isDevbox = (machine) => Boolean(machine?.target?.endsWith(".coder"));
+const devboxUi = (name) => terminals().find((t) => t.labels?.["devbox.ui"] === name && t.state === "live" && !String(t.address).includes("/"));
 
 // The sidebar's rail goes by its width, not a flag: dragging its edge narrows it too.
 const narrow = () => (find(layout(), "sidebar")?.size?.px ?? Infinity) < 160;
@@ -62,6 +65,11 @@ export default class Spaces extends View {
     this.reconnecting = JSON.parse(localStorage.getItem("machines.reconnecting") ?? "{}");
     for (const state of Object.values(this.reconnecting)) state.busy = false;
     this.folded = new Set(JSON.parse(localStorage.getItem("machines.folded") ?? "[]"));
+    this.devboxMenu = false;
+    cx.spawn(async (cx) => {
+      this.devboxMenu = Boolean(await readTextFile(`${appHome()}/mods/devbox/main.js`).catch(() => null));
+      cx.notify();
+    });
     this.refreshMachines(cx);
     cx.timer.every(15000, cx => this.refreshMachines(cx));
     // `git status` walks the whole tree, on another machine a process there:
@@ -239,6 +247,27 @@ export default class Spaces extends View {
     });
   }
 
+  devbox(machine, action = null) {
+    openOverlay({ mod: "devbox", kind: "popup", width: 240, height: 440, props: { machine: machine.name, target: machine.target, action } });
+  }
+
+  devboxChip(machine, t) {
+    const forward = devboxUi(machine.name);
+    const port = Number(forward?.labels?.["devbox.port"]) || null;
+    const icon = forward && !port
+      ? svg("mods/workspace-chrome/spinner.svg").size(12).spin(900)
+      : svg("mods/devbox/globe.svg").size(13);
+    return div().id(`machine-ui-${machine.name}`).flex_none().p(2).rounded(4)
+      .text_color(port ? t.accent : t.dim).hover(s => s.bg(t.hover).text_color(port ? t.accent : t.foreground))
+      .tooltip(port ? `PostHog UI at http://localhost:${port}` : forward ? "Forwarding the PostHog UI…" : "Forward the PostHog UI and open it")
+      .on_click((_e, cx) => {
+        cx.stop_propagation();
+        if (port) exec(window().platform === "macos" ? "open" : "xdg-open", [`http://localhost:${port}`]);
+        else this.devbox(machine, "ui");
+      })
+      .child(icon);
+  }
+
   menu(w) {
     // A popup is as tall as its items; height is only the most.
     openOverlay({ mod: "menu", kind: "popup", width: 200, height: 260, props: { tab: "space", target: { id: w.id } } });
@@ -278,6 +307,7 @@ export default class Spaces extends View {
           localStorage.setItem("machines.folded", JSON.stringify([...this.folded]));
           cx.notify();
         })
+        .when(this.devboxMenu && isDevbox(machine), el => el.on_mouse_down("right", () => this.devbox(machine)))
         .when(!collapsed, el => el.child(icon))
         .when(collapsed, el => el.child(div().relative().flex_none().child(icon).when(Boolean(m), el => el.child(badge))))
         .when(!collapsed, el => el.child(div().flex_1().truncate().child(m ?? "This computer"))
@@ -289,6 +319,7 @@ export default class Spaces extends View {
               .tooltip(repair?.error || "This machine was rebuilt or replaced. Click to connect to the new one.")
               .on_click((_e, cx) => { cx.stop_propagation(); this.reconnect(machine, cx); })
               .child(repair?.busy ? "Connecting…" : "Connect"))))
+          .when(connected && this.devboxMenu && isDevbox(machine), el => el.child(this.devboxChip(machine, t)))
           .when(connected, el => el.child(div().id(`machine-add-${m ?? "local"}`).flex_none().px(4).rounded(4).hover(s => s.bg(t.hover).text_color(t.foreground))
             .on_click((_e, cx) => { cx.stop_propagation(); run("space.new", { machine: m ?? "" }); }).child("+")))
           .child(div().size(6).rounded(3).flex_none().bg(connected ? t.ansi2 : t.dim))
