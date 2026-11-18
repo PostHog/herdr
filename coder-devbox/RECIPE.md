@@ -2,7 +2,7 @@
 
 Your PostHog devbox's hogli commands and its PostHog UI forward on its machine header in the spaces sidebar.
 
-A Herdr machine whose ssh target ends in `.coder` is a Coder devbox. This piece adds two things to its header in `flat-spaces` (the `pull-requests` piece's spaces list), and nothing else to the window.
+A Herdr machine whose ssh target ends in `.coder` (Coder's default) or starts with `coder.` (what `hogli devbox:setup` writes) is a Coder devbox. This piece adds two things to its header in `flat-spaces` (the `pull-requests` piece's spaces list), and nothing else to the window.
 
 ## What you see
 
@@ -22,7 +22,7 @@ A Herdr machine whose ssh target ends in `.coder` is a Coder devbox. This piece 
 
 ## How it behaves
 
-- The box's hogli target comes from its ssh target, `<workspace>.coder` (yours) or `[<agent>.]<workspace>.<owner>.coder` (someone else's), and your Coder username from `coder whoami`.
+- The box's hogli target comes from its ssh target, `<workspace>.coder` or `coder.<workspace>` (yours) or `[<agent>.]<workspace>.<owner>.coder` (someone else's), and your Coder username from `coder whoami`.
   Your `devbox-<you>-<label>` is `<label>` and your `devbox-<you>` is `@<you>`; someone else's are `@<owner>/<label>` and `@<owner>`.
   The owner is never guessed by splitting the name, so hyphenated usernames work. A box not named `devbox-<owner>[-label]` can't be targeted, and the menu says so; Doctor still runs.
 - hogli runs from your PostHog checkout's `bin/hogli` through your login shell (`$SHELL -lic`), so `coder` and the venv are found as in your terminal.
