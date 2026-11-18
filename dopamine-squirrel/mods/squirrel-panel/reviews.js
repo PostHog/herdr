@@ -90,7 +90,10 @@ export const reviewViews = {
     else if (mode === "watch") marks[pr.url] = { at: Date.now(), watch: true };
     else delete marks[pr.url];
     setShared(TRIAGED, marks);
-    if (mode && open.length === 1 && open[0].url === pr.url)
+    // Confetti when this clears the list. Checked on save, not on click, so fast clicks on the last few rows
+    // (each still fading when the next is clicked) still count: those were all marked in the last minute.
+    const fresh = (v) => (typeof v === "number" ? v : v?.at ?? 0) > Date.now() - 60000;
+    if (mode && open.some((o) => o.url === pr.url) && open.every((o) => o.url === pr.url || (!this.leaving[o.url] && fresh(marks[o.url]))))
       run("mod.open", { name: "squirrel-confetti" });
   },
 
