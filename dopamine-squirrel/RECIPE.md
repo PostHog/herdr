@@ -62,7 +62,7 @@ Laid out for a vertical monitor; works on a wide one too. [README.md](README.md)
 - `mods/squirrel-pane-header/`: pane headers with the pane's name, folder, and split, zoom and close buttons.
 - `mods/squirrel-rename/`: `cmd-r` names the focused pane. Herdr only names tabs, so names live in shared state.
 - `mods/squirrel-error/`: clicking a failed GitHub refresh in the panel header shows the full error. Every failure is also appended to `~/.config/herdr-app/squirrel-errors.log`.
-- `mods/squirrel-new-menu/`: the `+` menu.
+- `mods/squirrel-new-menu/`: a new-pane menu. Nothing in the top bar opens it any more.
 - `layouts/Dopamine-Squirrel.json`: the top bar, the panel under it (`agents-panel`), then panes with Herdr's Files and Changes column on the right. No spaces list: this setup lives in one space.
 
 ## Keys
