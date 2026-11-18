@@ -21,6 +21,14 @@ function find(node, id) {
   return null;
 }
 
+// A popup from the top bar opens just under it, centred on the pointer and kept inside the window,
+// instead of at the pointer (over the bar).
+function belowBar(width) {
+  const w = globalThis.window, m = w?.mouse_position?.(), vw = w?.viewport_size?.()?.width;
+  if (m?.x == null || !vw) return "pointer";
+  return { x: Math.round(Math.max(8, Math.min(m.x - width / 2, vw - width - 8))), y: 46 };
+}
+
 export default class SquirrelTopbar extends View {
   init(_props, cx) {
     cx.spawn(async (cx) => { for (;;) { await loadSettings().catch(() => null); await fetchGh(cx); await cx.sleep(GH_EVERY_MS); } });
@@ -230,7 +238,7 @@ export default class SquirrelTopbar extends View {
       .child(div().id("standup").size(26).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.ansi3)
         .hover(s => s.bg(t.hover)).tooltip("Start today's standup").on_mouse_down("left", stop).on_click((_e, cx) => this.standup(cx))
         .child(this.standupStarting ? svg("mods/workspace-chrome/spinner.svg").size(14).spin(900) : svg("mods/squirrel-topbar/megaphone.svg").size(15)))
-      .child(button("reopen", svg("mods/workspace-chrome/clock.svg").size(15), () => openOverlay({ mod: "squirrel-reopen", kind: "popup", width: 460, height: 380 })).tooltip("Reopen a closed Claude pane"))
+      .child(button("reopen", svg("mods/workspace-chrome/clock.svg").size(15), () => openOverlay({ mod: "squirrel-reopen", kind: "popup", width: 460, height: 380, at: belowBar(460) })).tooltip("Reopen a closed Claude pane"))
       .child(button("search", svg("mods/workspace-chrome/search.svg").size(15), () => run("mod.open", { name: "picker" })))
       .child(button("machine", svg("mods/workspace-chrome/server.svg").size(15), () => run("mod.open", { name: "machine-add" })))
       .child(button("settings", svg("mods/workspace-chrome/settings.svg").size(15), () => run("app.settings"))

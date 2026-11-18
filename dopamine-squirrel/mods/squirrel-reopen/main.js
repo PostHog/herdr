@@ -76,11 +76,41 @@ async function accountNames() {
   } catch { return new Map(); }
 }
 
+// Embers: each session glows in its own colour (from its id, so it never changes), hottest when just closed
+// and cooling to ash over the 3 days. Behind each row a haze breathes on its own rhythm, and a wick on the
+// left flickers like a candle.
+const DAYS_MS = 3 * 864e5;
+const HAZE_SLICES = 14;
+const hueOf = (id) => { let h = 7; for (const ch of id) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return h % 360; };
+function hex(h, s, l, a = 1) {
+  s /= 100; l /= 100;
+  const f = (n) => { const k = (n + h / 30) % 12, c = l - s * Math.min(l, 1 - l) * Math.max(-1, Math.min(k - 3, 9 - k, 1)); return Math.round(c * 255); };
+  return "#" + [f(0), f(8), f(4), Math.round(Math.max(0, Math.min(1, a)) * 255)].map((v) => v.toString(16).padStart(2, "0")).join("");
+}
+function ember(s, now, hot) {
+  const hue = hueOf(s.id), phase = (hue / 360) * Math.PI * 2, sec = now / 1000;
+  const heat = Math.max(0, 1 - (now - s.at) / DAYS_MS) ** 0.7;
+  const sat = 18 + 70 * heat, light = 52 + 12 * heat;
+  const breath = 0.5 + 0.5 * Math.sin(sec * 0.7 + phase);
+  const haze = (0.07 + 0.07 * breath) * (0.35 + 0.65 * heat) * (hot ? 2.2 : 1);
+  const reach = 38 + 22 * Math.sin(sec * 0.31 + phase * 1.7);
+  const flicker = 0.55 + 0.2 * Math.sin(sec * 3.1 + phase) + 0.13 * Math.sin(sec * 7.3 + 2 * phase) + 0.08 * Math.sin(sec * 13.7 + 3 * phase);
+  return {
+    // Elements take only flat colours, so the haze is thin slices fading out to the right.
+    reach: Math.round(4.4 * reach),
+    haze: Array.from({ length: HAZE_SLICES }, (_, k) => hex(hue, sat, light, haze * (1 - k / HAZE_SLICES) ** 2)),
+    wick: hex(hue, sat + 10, light + 8, flicker * (0.3 + 0.7 * heat) * (hot ? 1.3 : 1)),
+    label: hex(hue, sat * 0.8, 68, 0.55 + 0.4 * heat),
+  };
+}
+
 export default class SquirrelReopen extends View {
   init(_props, cx) {
     this.handle = cx.focus_handle();
     this.handle.focus();
     this.sessions = shared(CACHE) ?? null;
+    this.hot = null;
+    cx.spawn(async (cx) => { for (;;) { await cx.sleep(50); cx.notify(); } });
     cx.spawn(async (cx) => {
       try {
         const [sessions, names] = await Promise.all([closedSessions(), accountNames()]);
@@ -103,11 +133,17 @@ export default class SquirrelReopen extends View {
     const t = theme();
     const list = this.sessions ?? [];
     const others = new Set(list.map((s) => s.dir)).size > 1;
-    const row = (s) => h_flex().id(s.id).h(30).px(9).gap(10).rounded(6).items_center().flex_none().cursor_pointer()
-      .hover((el) => el.bg(t.selected)).on_click(() => this.reopen(s))
-      .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(s.title || s.aiTitle || s.prompt))
-      .when(others, (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(s.account ?? s.dir.split("/").pop())))
-      .child(div().w(32).flex_none().text_size(11).text_color(t.dim).text_right().child(ago(s.at)));
+    const now = Date.now();
+    const row = (s) => {
+      const e = ember(s, now, this.hot === s.id);
+      return h_flex().id(s.id).relative().h(30).px(9).gap(10).rounded(6).items_center().flex_none().cursor_pointer().overflow_hidden()
+        .on_hover((over) => { this.hot = over ? s.id : this.hot === s.id ? null : this.hot; }).on_click(() => this.reopen(s))
+        .child(div().absolute().top(0).bottom(0).left(0).w(e.reach).flex().children(e.haze.map((c) => div().h_full().flex_1().bg(c))))
+        .child(div().absolute().left(1).top(8).bottom(8).w(2).rounded(1).bg(e.wick))
+        .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(s.title || s.aiTitle || s.prompt))
+        .when(others, (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(s.account ?? s.dir.split("/").pop())))
+        .child(div().w(32).flex_none().text_size(11).text_color(e.label).text_right().child(ago(s.at)));
+    };
     return v_flex().id("squirrel-reopen").track_focus(this.handle).w_full().h(370).min_h(0).p(5).bg(t.popover).text_size(12.5)
       .on_key_down((e, cx) => { if (e.key === "escape") { closeOverlay(props().overlay); cx.stop_propagation(); } })
       .child(div().px(9).pt(6).pb(4).text_size(11).text_color(t.dim).child("Closed Claude panes, last 3 days"))
