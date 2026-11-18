@@ -103,6 +103,7 @@ async function runAction(action, pr) {
       await startReview(pr);
       return { ok: true, message: "Agent review started." };
     case "agent_review_fix":
+      if (!pr.mine) return { ok: false, message: "Agent review (fix) only hands findings to Claude on your own PRs." };
       await startReview(pr, { then: "fix" });
       return { ok: true, message: "Agent review started; a new Claude session fixes its findings." };
     case "fix_session":

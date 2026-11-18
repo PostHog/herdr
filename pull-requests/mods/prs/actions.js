@@ -66,7 +66,7 @@ export async function postFindingsReview(pr, findings, headSha) {
   const inline = headSha ? findings.filter((finding) => finding.path && finding.line) : [];
   if (inline.length) {
     const placed = await gh(reviewArgs(pr, headSha, reviewBody(findings, findings.filter((finding) => !inline.includes(finding))), inline));
-    if (placed.ok) return placed;
+    if (placed.ok || !/HTTP 422/.test(placed.stderr ?? "")) return placed;
   }
   return gh(reviewArgs(pr, headSha, reviewBody(findings, findings), []));
 }

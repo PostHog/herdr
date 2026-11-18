@@ -129,7 +129,7 @@ export async function graphql(query, variables = {}) {
 export async function gh(args) {
   const result = await exec("gh", args);
   const text = (result.stdout.trim() || result.stderr.trim()).split("\n").filter(Boolean).pop() ?? "";
-  return { ok: result.code === 0, message: text || (result.code === 0 ? "Done." : `gh exited ${result.code}`) };
+  return { ok: result.code === 0, message: text || (result.code === 0 ? "Done." : `gh exited ${result.code}`), stderr: result.stderr };
 }
 
 const PASSED = ["SUCCESS", "NEUTRAL", "SKIPPED"];
