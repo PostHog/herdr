@@ -12,7 +12,7 @@ import { loadTrunk, dequeue, resetTrunk } from "./trunk.js";
 import { fetchServices, isIncident, queueService, statusOverview } from "./status.js";
 import { sidebarHeader, sidebarMine, sidebarReviews, sidebarRail, statusLine, prIcon, progressLine, stackHeader, gatesFor, splitByNeed, isQuiet, rowButtons, nextFor, needsYou, workRank } from "./sidebar.js";
 import { visualAsks, stackGroups, withoutDraftStacks, step, queueFor, withTrunkQueue } from "./steps.js";
-import { openClaude, sendToAgent, CLAUDE_ICON } from "./claude.js";
+import { openClaude, sendToAgent, isSending, CLAUDE_ICON } from "./claude.js";
 import { ago, button, iconButton, glyphButton, textIconButton, chip, badge, section, empty, field, menuItem, SPINNER, tone, TEXT, tint, avatar, countPill, codePill, gateStrip, titleText, readable } from "./ui.js";
 import { readiness, groupChecks, rowMatches, tallyChecks, tallyText, tallyLabel, worstBucket, mergeStateNote, changeShape, parseMarkdown } from "./sheet.js";
 
@@ -125,6 +125,7 @@ const keepFocus = (_e, cx) => cx.stop_propagation();
 async function handOff(pr, prompt, what, started) {
   const text = reusedSessionPrompt(pr, prompt);
   const agent = started?.shown?.agent;
+  if (agent && isSending(agent)) return { ok: true, message: `A prompt is already waiting to go to Claude on this PR, so this one wasn't sent.` };
   if (agent) {
     sendToAgent(agent, text).then(async (sent) => {
       if (sent) return;

@@ -47,23 +47,27 @@ export function findTab(...names) {
 
 const prTabNames = (pr) => [`PR ${prRef(pr)}`, `fix ${prRef(pr)}`, `review ${prRef(pr)}`];
 
-function showNamedTab(pr) {
+const isClaude = (agent) => agent.app === "claude-code";
+
+async function showNamedTab(pr) {
   const open = findTab(...prTabNames(pr));
   if (!open) return null;
   showTab(open);
-  return { ...open, agent: agents().find((candidate) => candidate.tab === open.tab)?.address ?? null };
+  const address = agents().find((candidate) => candidate.tab === open.tab && isClaude(candidate))?.address;
+  const claude = address ? await claudeIn(address) : null;
+  return { ...open, agent: claude ? { address, pid: claude.pid } : null };
 }
 
 export async function showPrWork(pr, { bareSpaces = true } = {}) {
-  const named = showNamedTab(pr);
+  const named = await showNamedTab(pr);
   if (named) return named;
   const checkouts = await branchSpaces(pr);
-  const namedLater = showNamedTab(pr);
+  const namedLater = await showNamedTab(pr);
   if (namedLater) return namedLater;
-  const working = agents().find((candidate) => checkouts.some((space) => space.id === candidate.space)) ?? (await agentOnBranch(pr));
+  const working = await claudeOnBranch(pr);
   if (working) {
     showTab({ space: working.space, tab: working.tab });
-    return { space: working.space, tab: working.tab, agent: working.address };
+    return { space: working.space, tab: working.tab, agent: { address: working.address, pid: working.pid } };
   }
   if (!bareSpaces || !checkouts.length) return null;
   const space = checkouts.find((candidate) => candidate.active) ?? checkouts[0];
@@ -71,9 +75,28 @@ export async function showPrWork(pr, { bareSpaces = true } = {}) {
   return { space: space.id, tab: null, agent: null };
 }
 
-export async function sendToAgent(address, text) {
-  const result = await hc(["send", address, text]).catch(() => null);
-  return result?.code === 0;
+const SEND_TTL_MS = 10 * 60 * 1000;
+
+export function isSending({ address }) {
+  return Date.now() - ((shared("prs.sending") ?? {})[address] ?? 0) < SEND_TTL_MS;
+}
+
+function setSending(address, at) {
+  const sending = { ...(shared("prs.sending") ?? {}) };
+  if (at) sending[address] = at;
+  else delete sending[address];
+  setShared("prs.sending", sending);
+}
+
+export async function sendToAgent({ address, pid }, text) {
+  setSending(address, Date.now());
+  try {
+    if ((await claudeIn(address))?.pid !== pid) return false;
+    const result = await hc(["send", address, text]).catch(() => null);
+    return result?.code === 0;
+  } finally {
+    setSending(address, null);
+  }
 }
 
 export function openClaude(pr, context = {}) {
@@ -108,24 +131,36 @@ async function branchSpaces(pr) {
   return candidates.filter((_space, index) => inPrRepo[index]);
 }
 
-async function agentOnBranch(pr) {
+async function claudeOnBranch(pr) {
   if (!hasOwnBranch(pr)) return null;
   const machineOf = new Map(spaces().map((space) => [space.id, space.machine]));
-  const found = await Promise.all(agents().map(async (agent) => {
+  return firstMatch(agents().filter(isClaude), async (agent) => {
     const machine = machineOf.get(agent.space) ?? null;
-    const cwd = await agentFolder(agent.address);
-    if (!cwd || (await branchAt(cwd, machine)) !== pr.headRef) return null;
-    return (await repoAt(cwd, pr.repo, machine)) ? agent : null;
-  }));
-  return found.find(Boolean) ?? null;
+    const claude = await claudeIn(agent.address);
+    if (!claude?.cwd || (await branchAt(claude.cwd, machine)) !== pr.headRef) return null;
+    return (await repoAt(claude.cwd, pr.repo, machine)) ? { ...agent, pid: claude.pid } : null;
+  });
 }
 
-async function agentFolder(address) {
+function firstMatch(items, test) {
+  return new Promise((resolve) => {
+    let left = items.length;
+    if (!left) return resolve(null);
+    for (const item of items) {
+      test(item)
+        .then((match) => match && resolve(match), () => null)
+        .finally(() => --left === 0 && resolve(null));
+    }
+  });
+}
+
+async function claudeIn(address) {
   const result = await hc(["get", address, "--json"]).catch(() => null);
   if (result?.code !== 0) return null;
   try {
     const terminal = JSON.parse(result.stdout);
-    return terminal.foreground?.cwd || terminal.cwd || null;
+    if (terminal.status?.app !== "claude-code" || !terminal.foreground?.pid) return null;
+    return { pid: terminal.foreground.pid, cwd: terminal.foreground.cwd || terminal.cwd || null };
   } catch {
     return null;
   }
