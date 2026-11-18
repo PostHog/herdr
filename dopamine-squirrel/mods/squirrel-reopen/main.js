@@ -22,12 +22,12 @@ const SCRIPT = `export LC_ALL=C; for d in "$HOME/.claude" "$HOME"/.claude-*; do 
 done`;
 
 const unescape = (s) => { try { return JSON.parse(`"${s.replace(/\\+$/, (m) => m.length % 2 ? m.slice(1) : m)}"`); } catch { return s; } };
-const field = (line, name) => { const m = new RegExp(`"${name}":"((?:[^"\\\\]|\\\\.)*)`).exec(line); return m ? unescape(m[1]) : null; };
+const lensField = (line, name) => { const m = new RegExp(`"${name}":"((?:[^"\\\\]|\\\\.)*)`).exec(line); return m ? unescape(m[1]) : null; };
 
 // The first thing you typed, skipping slash commands, their output and compaction summaries.
 function firstPrompt(lines) {
   for (const line of lines) {
-    let text = field(line, "content") ?? field(line, "text");
+    let text = lensField(line, "content") ?? lensField(line, "text");
     if (!text) continue;
     text = text.replace(/<\/?pasted_content[^>]*>/g, " ").trim();
     if (!text || text.startsWith("<") || text.startsWith("This session is being continued") || text.startsWith("[Request interrupted")) continue;
@@ -56,12 +56,12 @@ async function closedSessions() {
       const [, mtime, dir, path] = line.split("\t");
       cur = { at: Number(mtime) * 1000, dir, id: path.split("/").pop().replace(/\.jsonl$/, ""), lines: [] };
       out.push(cur);
-    } else if (line.startsWith("L\t")) live.add(field(line, "sessionId"));
+    } else if (line.startsWith("L\t")) live.add(lensField(line, "sessionId"));
     else if (!cur) continue;
-    else if (line.startsWith("M\t")) cur.model = field(line, "model");
-    else if (line.startsWith("T\t")) cur.title = field(line, "customTitle");
-    else if (line.startsWith("A\t")) cur.aiTitle = field(line, "aiTitle");
-    else if (line.startsWith("C\t")) cur.cwd = field(line, "cwd");
+    else if (line.startsWith("M\t")) cur.model = lensField(line, "model");
+    else if (line.startsWith("T\t")) cur.title = lensField(line, "customTitle");
+    else if (line.startsWith("A\t")) cur.aiTitle = lensField(line, "aiTitle");
+    else if (line.startsWith("C\t")) cur.cwd = lensField(line, "cwd");
     else cur.lines.push(line);
   }
   return out.filter((s) => !live.has(s.id)).map((s) => ({ ...s, prompt: firstPrompt(s.lines), lines: undefined }))
@@ -76,41 +76,55 @@ async function accountNames() {
   } catch { return new Map(); }
 }
 
-// Embers: each session glows in its own colour (from its id, so it never changes), hottest when just closed
-// and cooling to ash over the 3 days. Behind each row a haze breathes on its own rhythm, and a wick on the
-// left flickers like a candle.
-const DAYS_MS = 3 * 864e5;
-const HAZE_SLICES = 14;
-const hueOf = (id) => { let h = 7; for (const ch of id) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return h % 360; };
-function hex(h, s, l, a = 1) {
-  s /= 100; l /= 100;
-  const f = (n) => { const k = (n + h / 30) % 12, c = l - s * Math.min(l, 1 - l) * Math.max(-1, Math.min(k - 3, 9 - k, 1)); return Math.round(c * 255); };
-  return "#" + [f(0), f(8), f(4), Math.round(Math.max(0, Math.min(1, a)) * 255)].map((v) => v.toString(16).padStart(2, "0")).join("");
-}
-function ember(s, now, hot) {
-  const hue = hueOf(s.id), phase = (hue / 360) * Math.PI * 2, sec = now / 1000;
-  const heat = Math.max(0, 1 - (now - s.at) / DAYS_MS) ** 0.7;
-  const sat = 18 + 70 * heat, light = 52 + 12 * heat;
-  const breath = 0.5 + 0.5 * Math.sin(sec * 0.7 + phase);
-  const haze = (0.07 + 0.07 * breath) * (0.35 + 0.65 * heat) * (hot ? 2.2 : 1);
-  const reach = 38 + 22 * Math.sin(sec * 0.31 + phase * 1.7);
-  const flicker = 0.55 + 0.2 * Math.sin(sec * 3.1 + phase) + 0.13 * Math.sin(sec * 7.3 + 2 * phase) + 0.08 * Math.sin(sec * 13.7 + 3 * phase);
-  return {
-    // Elements take only flat colours, so the haze is thin slices fading out to the right.
-    reach: Math.round(4.4 * reach),
-    haze: Array.from({ length: HAZE_SLICES }, (_, k) => hex(hue, sat, light, haze * (1 - k / HAZE_SLICES) ** 2)),
-    wick: hex(hue, sat + 10, light + 8, flicker * (0.3 + 0.7 * heat) * (hot ? 1.3 : 1)),
-    label: hex(hue, sat * 0.8, 68, 0.55 + 0.4 * heat),
+// Liquid lens: one slow field behind the whole list, like ink turning in water. Two vortices orbit each
+// other and twist the colour around them; the colour comes from a shifting iridescent palette at a few
+// percent opacity, with clear gaps, so text stays easy to read. Between rows, a hairline of the same field
+// carries a pulse of light along it. Elements take only flat colours, so the field is a grid of cells.
+const LENS_W = 460, LENS_H = 370, LENS_CELL = 12;
+const LENS_TAU = Math.PI * 2;
+const hexByte = (v) => Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16).padStart(2, "0");
+// Cosine palette: smooth, saturated, drifting through every hue over about a minute.
+const lensTint = (n, t, alpha, lift = 0) => "#" + [0, 0.33, 0.67].map((d) => hexByte(0.5 + lift + (0.5 - lift) * Math.cos(LENS_TAU * (n * 0.9 + t * 0.05 + d)))).join("") + hexByte(alpha);
+function swirl(x, y, t) {
+  const wx = x + 18 * Math.sin(y * 0.021 + t * 1.3), wy = y + 18 * Math.cos(x * 0.018 - t * 1.1);
+  const vortex = (cx, cy, turns, k) => {
+    const dx = wx - cx, dy = wy - cy, r = Math.hypot(dx, dy);
+    return Math.sin(Math.atan2(dy, dx) * turns + 2.4 * Math.exp(-r / 150) * Math.sin(t * 0.5) * turns + r * k - t * 2);
   };
+  const v = vortex(LENS_W / 2 + 120 * Math.cos(t * 0.7), LENS_H / 2 + 90 * Math.sin(t * 0.9), 3, 0.035)
+    + vortex(LENS_W / 2 - 120 * Math.cos(t * 0.7), LENS_H / 2 - 90 * Math.sin(t * 0.9), 2, -0.03)
+    + 0.6 * Math.sin((wx + wy) * 0.012 + t);
+  return (v / 2.6 + 1) / 2;
 }
+const smoothstep = (a, b, x) => { const u = Math.max(0, Math.min(1, (x - a) / (b - a))); return u * u * (3 - 2 * u); };
+function lensLayer(t) {
+  const rows = [];
+  for (let y = 0; y < LENS_H; y += LENS_CELL) {
+    const cells = [];
+    for (let x = 0; x < LENS_W; x += LENS_CELL) {
+      const n = swirl(x + LENS_CELL / 2, y + LENS_CELL / 2, t);
+      cells.push(div().w(LENS_CELL).h(LENS_CELL).flex_none().bg(lensTint(n, t, 0.035 + 0.075 * smoothstep(0.35, 0.95, n))));
+    }
+    rows.push(h_flex().children(cells));
+  }
+  return div().absolute().top(0).left(0).w(LENS_W).h(LENS_H).children(rows);
+}
+const THREAD_SEGMENTS = 36;
+function lensThread(y, i, t) {
+  const pulse = (((t * 0.35 + i * 0.23) % 1.4) - 0.2) * LENS_W;
+  return h_flex().h(1).mx(9).flex_none().children(Array.from({ length: THREAD_SEGMENTS }, (_, k) => {
+    const x = ((k + 0.5) / THREAD_SEGMENTS) * (LENS_W - 18) + 9, glow = Math.exp(-(((x - pulse) / 40) ** 2));
+    return div().h_full().flex_1().bg(lensTint(swirl(x, y, t), t, 0.2 + 0.5 * glow, 0.15 * glow));
+  }));
+}
+const ACCOUNT_PHASE = [0.1, 0.6];
 
 export default class SquirrelReopen extends View {
   init(_props, cx) {
     this.handle = cx.focus_handle();
     this.handle.focus();
     this.sessions = shared(CACHE) ?? null;
-    this.hot = null;
-    cx.spawn(async (cx) => { for (;;) { await cx.sleep(50); cx.notify(); } });
+    cx.spawn(async (cx) => { for (;;) { await cx.sleep(66); cx.notify(); } });
     cx.spawn(async (cx) => {
       try {
         const [sessions, names] = await Promise.all([closedSessions(), accountNames()]);
@@ -130,26 +144,30 @@ export default class SquirrelReopen extends View {
   }
 
   render() {
-    const t = theme();
+    const th = theme();
     const list = this.sessions ?? [];
     const others = new Set(list.map((s) => s.dir)).size > 1;
-    const now = Date.now();
-    const row = (s) => {
-      const e = ember(s, now, this.hot === s.id);
-      return h_flex().id(s.id).relative().h(30).px(9).gap(10).rounded(6).items_center().flex_none().cursor_pointer().overflow_hidden()
-        .on_hover((over) => { this.hot = over ? s.id : this.hot === s.id ? null : this.hot; }).on_click(() => this.reopen(s))
-        .child(div().absolute().top(0).bottom(0).left(0).w(e.reach).flex().children(e.haze.map((c) => div().h_full().flex_1().bg(c))))
-        .child(div().absolute().left(1).top(8).bottom(8).w(2).rounded(1).bg(e.wick))
-        .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(s.title || s.aiTitle || s.prompt))
-        .when(others, (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(s.account ?? s.dir.split("/").pop())))
-        .child(div().w(32).flex_none().text_size(11).text_color(e.label).text_right().child(ago(s.at)));
+    const t = Date.now() / 1000 * 0.18;
+    const accounts = [...new Set(list.map((s) => s.dir))].sort();
+    const pill = (s) => {
+      const c = lensTint(ACCOUNT_PHASE[accounts.indexOf(s.dir) % 2], t, 0.9, 0.2), edge = lensTint(ACCOUNT_PHASE[accounts.indexOf(s.dir) % 2], t, 0.4);
+      return div().flex_none().px(5).rounded(4).border_1().border_color(edge).text_size(10.5).text_color(c).child(s.account ?? s.dir.split("/").pop());
     };
-    return v_flex().id("squirrel-reopen").track_focus(this.handle).w_full().h(370).min_h(0).p(5).bg(t.popover).text_size(12.5)
+    const row = (s, i) => [
+      ...(i ? [lensThread(40 + i * 31, i, t)] : []),
+      h_flex().id(s.id).h(30).px(9).gap(10).rounded(6).items_center().flex_none().cursor_pointer()
+        .hover((el) => el.bg("#ffffff0e")).on_click(() => this.reopen(s))
+        .child(div().flex_1().min_w(0).truncate().text_color(th.foreground).child(s.title || s.aiTitle || s.prompt))
+        .when(others, (el) => el.child(pill(s)))
+        .child(div().w(32).flex_none().text_size(11).text_color(th.dim).text_right().child(ago(s.at))),
+    ];
+    return v_flex().id("squirrel-reopen").track_focus(this.handle).relative().overflow_hidden().w_full().h(LENS_H).min_h(0).p(5).bg(th.popover).text_size(12.5)
+      .child(lensLayer(t))
       .on_key_down((e, cx) => { if (e.key === "escape") { closeOverlay(props().overlay); cx.stop_propagation(); } })
-      .child(div().px(9).pt(6).pb(4).text_size(11).text_color(t.dim).child("Closed Claude panes, last 3 days"))
+      .child(div().px(9).pt(6).pb(4).text_size(11).text_color(th.dim).child("Closed Claude panes, last 3 days"))
       .child(v_flex().flex_1().min_h(0).overflow_y_scrollbar()
-        .children(list.map(row))
-        .when(!this.sessions || list.length === 0 || Boolean(this.error), (el) => el.child(div().px(9).py(6).text_color(t.dim)
+        .children(list.flatMap(row))
+        .when(!this.sessions || list.length === 0 || Boolean(this.error), (el) => el.child(div().px(9).py(6).text_color(th.dim)
           .child(this.error ? `Couldn't read sessions: ${this.error}` : !this.sessions ? "Loading…" : "Nothing closed in the last 3 days"))));
   }
 }
