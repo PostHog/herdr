@@ -35,6 +35,8 @@ export default class SquirrelTopbar extends View {
       for (;;) {
         const c = await nextCommand();
         if (c === "gh_refresh" || c?.name === "gh_refresh") fetchGh(cx);
+        // From a key or `do`: a centred dialog, since a popup opens at the click.
+        if (c === "reopen" || c?.name === "reopen") openOverlay({ mod: "squirrel-reopen", kind: "dialog", width: 460, height: 380 });
         if (c === "fact_check" || c?.name === "fact_check") this.factCheck(cx);
         for (const v of ["agents", "reviews", "mine"]) {
           if (c === `show_${v}` || c?.name === `show_${v}`) { setShared("squirrel.view", v); run("layout.show", { id: "agents-panel" }); }
@@ -228,6 +230,7 @@ export default class SquirrelTopbar extends View {
       .child(div().id("standup").size(26).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.ansi3)
         .hover(s => s.bg(t.hover)).tooltip("Start today's standup").on_mouse_down("left", stop).on_click((_e, cx) => this.standup(cx))
         .child(this.standupStarting ? svg("mods/workspace-chrome/spinner.svg").size(14).spin(900) : svg("mods/squirrel-topbar/megaphone.svg").size(15)))
+      .child(button("reopen", svg("mods/workspace-chrome/clock.svg").size(15), () => openOverlay({ mod: "squirrel-reopen", kind: "popup", width: 460, height: 380 })).tooltip("Reopen a closed Claude pane"))
       .child(button("search", svg("mods/workspace-chrome/search.svg").size(15), () => run("mod.open", { name: "picker" })))
       .child(button("machine", svg("mods/workspace-chrome/server.svg").size(15), () => run("mod.open", { name: "machine-add" })))
       .child(button("settings", svg("mods/workspace-chrome/settings.svg").size(15), () => run("app.settings"))

@@ -77,6 +77,7 @@ Setting this up or taking a part of it? [RECIPE.md](RECIPE.md) has setup, every 
 | Visualizer | `mods/squirrel-panel/visualizer.js` |
 | Confetti | `mods/squirrel-confetti/` |
 | GitHub refresh error popup | `mods/squirrel-error/` |
+| Reopen a closed Claude pane | `mods/squirrel-reopen/` |
 | Pane headers, rename | `mods/squirrel-pane-header/`, `mods/squirrel-rename/` |
 | Layout, keys | `layouts/Dopamine-Squirrel.json`, `keys.json` |
 
