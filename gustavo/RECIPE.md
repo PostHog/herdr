@@ -10,7 +10,8 @@ It's built around one person's work on the Feature Flags team, so some parts exp
 
 - **Left sidebar** (372 px, `chrome` background): the brand bar; New task and New session; the Claude account new sessions start as; the Work / Inbox / Grafana / Dungeon switch; then the task list.
   - Each task folds open to its sessions (one tab each, side by side when pinned), its pull requests with their CI and review state, and its worktrees.
-  - Below the tasks: loose sessions tied to no task, Support hero tickets (in your rotation weeks), your pull requests, worktrees, devboxes, setup spaces and archived tasks.
+  - Below the tasks: loose sessions tied to no task, Support hero tickets (in your rotation weeks), your pull requests, worktrees (grouped by task), devboxes, setup spaces and archived tasks.
+  - A worktree under `~/.worktrees/<repo>/gustavo/<task-id>/` (the first 8 hex of the space id) belongs to that task, and Clean up removes it with the task. Changes Codex or agents write in `.codex/` and `.agents/` don't block removal.
 - **Main area** (`main-stack`, one view at a time):
   - **Work**: the shown session's terminal, each pane with a `session-head` header (session, task, folder, status, restart, close).
   - **Inbox**: sessions that wait on you (blocked, or ended their turn asking you something), PRs asking for your review, firing alerts, and support tickets that wait on the team; beside it, the Merge view of your PRs and the merge queues.

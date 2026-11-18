@@ -391,11 +391,14 @@ export function stackOrder(keys, info) {
 }
 
 const FLOX_LOCK = ".flox/env/manifest.lock";
+// Agent harnesses (Codex, PostHog Code) write their config into every checkout: not work to keep.
+const TOOL_WRITTEN = [".codex/", ".agents/"];
 const WT_SIZE_MS = 30 * 60 * 1000; // how long a worktree's measured size holds
 
 // A worktree's uncommitted changes, from git status. `real` is work that removing it would lose:
 // modified, added and untracked files. Deleted tracked files lose nothing (git has them), and flox
-// rewrites its lock file on activation, so neither counts; git still needs --force for them (`any`).
+// rewrites its lock file on activation and agent tools write their config (TOOL_WRITTEN), so none
+// of those count; git still needs --force for them (`any`).
 // A worktree whose folder is already gone (git lists it as prunable) has nothing to lose: `gone`.
 async function worktreeChanges(path) {
   if (!(await folderExists(path))) return { any: false, real: [], deleted: 0, gone: true };
@@ -404,8 +407,13 @@ async function worktreeChanges(path) {
   const lines = r.stdout.split("\n").filter(Boolean);
   const gone = (l) => l.slice(0, 2).trim() === "D";
   return { any: lines.length > 0, deleted: lines.filter(gone).length,
-    real: lines.filter((l) => !gone(l)).map((l) => l.slice(3)).filter((f) => f !== FLOX_LOCK) };
+    real: lines.filter((l) => !gone(l)).map((l) => l.slice(3)).filter((f) => f !== FLOX_LOCK && !TOOL_WRITTEN.some((d) => f.startsWith(d))) };
 }
+
+// New worktrees go in ~/.worktrees/<repo>/gustavo/<task id>/<name> (the `task-worktree` script),
+// where the task id is the first 8 hex of the Herdr space id: the path alone names their task.
+const taskFolderId = (spaceId) => spaceId.split("/").pop().replace(/^sp/, "").slice(0, 8);
+const inTaskFolder = (path, spaceId) => path.includes(`/gustavo/${taskFolderId(spaceId)}/`);
 
 async function folderExists(path) {
   return (await exec("test", ["-d", path]).catch(() => ({ code: 1 }))).code === 0;
@@ -1608,6 +1616,7 @@ export default class Tasks extends View {
     const links = shared("hogli.links") ?? {};
     const ok = (s) => marks[s.id]?.[w.path] !== false;
     return tasks.find((s) => marks[s.id]?.[w.path] === true)
+      ?? tasks.find((s) => ok(s) && inTaskFolder(w.path, s.id))
       ?? tasks.find((s) => ok(s) && (branches[s.id] ?? []).includes(w.branch))
       ?? tasks.find((s) => ok(s) && links[w.path] === s.id) ?? null;
   }
@@ -1629,7 +1638,19 @@ export default class Tasks extends View {
     for (const dir of added) {
       const here = all.filter((w) => w.repoDir === dir);
       rows.push(this.repoLabel(t, dir, here.length));
-      rows.push(...here.map((w) => this.globalWorktreeRow(t, w, this.taskOfWorktree(w, tasks))));
+      // Grouped by task, in the order of the task list; worktrees of no task last.
+      const groups = new Map();
+      for (const w of here) {
+        const task = this.taskOfWorktree(w, tasks);
+        const k = task?.id ?? "";
+        if (!groups.has(k)) groups.set(k, { task, wts: [] });
+        groups.get(k).wts.push(w);
+      }
+      const order = (g) => (g.task ? tasks.indexOf(g.task) : tasks.length);
+      for (const g of [...groups.values()].sort((a, b) => order(a) - order(b))) {
+        rows.push(this.worktreeGroupLabel(t, dir, g.task, g.wts.length));
+        rows.push(...g.wts.map((w) => this.globalWorktreeRow(t, w, g.task)));
+      }
     }
     this.sizeWorktrees(open);
     return this.sectionDragRoot(v_flex().id("tk-wts-block").size_full().min_h(0).bg(t.chrome)
@@ -1674,6 +1695,13 @@ export default class Tasks extends View {
     }
   }
 
+  // A task's name over its worktrees in the Worktrees section (or "No task").
+  worktreeGroupLabel(t, dir, task, count) {
+    return h_flex().id(`tk-wtgroup-${dir}-${task?.id ?? "none"}`).px(8).pt(4).h(20).gap(6).items_center().min_w(0)
+      .child(div().flex_1().min_w(0).truncate().text_size(10.5).font_medium().text_color(task ? t.muted : t.dim).child(task ? task.name : "No task"))
+      .child(div().flex_none().text_size(10).text_color(t.dim).child(String(count)));
+  }
+
   globalWorktreeRow(t, w, task) {
     const key = `gwt:${w.path}`;
     const shown = this.prShown === key;
@@ -1702,7 +1730,6 @@ export default class Tasks extends View {
         this.removingWt = { path: w.path, busy: false, force: false, asking: true };
         cx.notify();
       })))
-      .when(Boolean(task), (el) => el.child(div().flex_none().max_w(110).truncate().px(5).rounded(4).bg(t.raised).text_size(10).text_color(t.muted).child(task.name)))
       .when(running, (el) => el.child(div().id(`tk-gwthogli-${w.path}`).flex_none().tooltip("hogli is running here").child(this.icon("hogli", t.ansi2, 12))));
     if (!shown) return line;
     return v_flex().gap(4).child(line)
@@ -2088,7 +2115,7 @@ export default class Tasks extends View {
     const out = [];
     for (const w of (this.wts ?? new Map()).values()) {
       if (w.main || marks[w.path] === false) continue;
-      const why = marks[w.path] ? "attached" : wanted.some((x) => x.repo === w.repo && x.branch === w.branch) ? "pr" : links[w.path] === s.id ? "hogli" : null;
+      const why = marks[w.path] ? "attached" : inTaskFolder(w.path, s.id) ? "folder" : wanted.some((x) => x.repo === w.repo && x.branch === w.branch) ? "pr" : links[w.path] === s.id ? "hogli" : null;
       if (why) out.push({ ...w, why });
     }
     return out.sort((a, b) => a.path.localeCompare(b.path));
@@ -2116,7 +2143,7 @@ export default class Tasks extends View {
       .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.foreground).child(w.branch))
       .when(running, (el) => el.child(div().id(`tk-wthogli-${s.id}-${w.path}`).flex_none().tooltip("hogli is running here").child(this.icon("hogli", t.ansi2, 12))));
     if (!shown) return line;
-    const why = { pr: "Linked by a PR's branch", hogli: "Linked by hogli, started here for this task", attached: "Attached by hand" }[w.why];
+    const why = { folder: "In this task's worktree folder", pr: "Linked by a PR's branch", hogli: "Linked by hogli, started here for this task", attached: "Attached by hand" }[w.why];
     return v_flex().gap(4).child(line)
       .child(v_flex().ml(28).mr(8).mb(4).p(8).gap(6).rounded(6).bg(t.background).border_1().border_color(t.border)
         .child(div().text_size(11).font_family("JetBrains Mono").text_color(t.foreground).child(short))
