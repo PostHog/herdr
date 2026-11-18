@@ -47,7 +47,7 @@ export function findTab(...names) {
 
 const prTabNames = (pr) => [`PR ${prRef(pr)}`, `fix ${prRef(pr)}`, `review ${prRef(pr)}`];
 
-export async function showPrWork(pr) {
+export async function showPrWork(pr, { bareSpaces = true } = {}) {
   if (showIfOpen(...prTabNames(pr))) return true;
   const checkouts = await branchSpaces(pr);
   if (showIfOpen(...prTabNames(pr))) return true;
@@ -56,7 +56,7 @@ export async function showPrWork(pr) {
     showTab({ space: agent.space, tab: agent.tab });
     return true;
   }
-  if (!checkouts.length) return false;
+  if (!bareSpaces || !checkouts.length) return false;
   const space = checkouts.find((candidate) => candidate.active) ?? checkouts[0];
   run("space.select", { id: space.id });
   return true;
