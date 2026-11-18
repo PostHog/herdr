@@ -1,10 +1,12 @@
 // Fetches the PRs Dopamine Squirrel shows, with the gh CLI, across every repo the gh login can see.
-import { shared, setShared, exec } from "herdr";
+import { shared, setShared, exec, appHome } from "herdr";
 import { squirrelSettings } from "./settings.js";
 import { cloudTaskPrs } from "./cloud.js";
 import { AI_TRIAGE } from "./triage-ai.js";
 
 const mergedDays = () => squirrelSettings().mergedDays;
+// Cuts text without splitting an emoji: Herdr can't store half of one, and setShared throws on it.
+const clip = (s, n) => s.slice(0, n).replace(/[\uD800-\uDBFF]$/, "");
 const mergedSince = () => new Date(Date.now() - mergedDays() * 864e5).toISOString().slice(0, 10);
 
 // My teams' names and my teammates' logins, in the orgs the PRs come from, refreshed daily.
@@ -67,7 +69,7 @@ async function ghGraphql(query) {
       try { return JSON.parse(r.stdout).data; } catch { last = "GitHub sent back a cut-off reply"; continue; }
     }
     last = r.stderr.split("\n").filter((l) => l && !l.startsWith("*")).pop() || `gh exited ${r.code}`;
-    if (!/50[234]|timeout|timed out|EOF|connection/i.test(last)) break;
+    if (!/50[234]|timeout|timed out|EOF|connection|unexpected end of JSON/i.test(last)) break;
   }
   throw new Error(last);
 }
@@ -106,7 +108,7 @@ function trunkState(n) {
     state, at: c.updatedAt,
     url: /https:\/\/app\.trunk\.io\/[^\s)]+/.exec(text)?.[0] ?? null,
     by: /Submitted to Merge by ([^.(]+?)\s*(\(@[\w-]+\))?\./.exec(first)?.[1]?.trim() ?? null,
-    text: first.replace(/^[^\p{L}]+/u, "").slice(0, 200),
+    text: clip(first.replace(/^[^\p{L}]+/u, ""), 200),
   };
 }
 
@@ -125,20 +127,23 @@ function toPr(n, me, notes) {
     ...n.comments.nodes.map((c) => ({ bot: c.author?.__typename === "Bot", who: c.author?.login ?? "ghost", at: c.createdAt, text: c.bodyText, url: c.url })),
     ...reviews.filter((r) => r.bodyText).map((r) => ({ bot: r.author.__typename === "Bot", who: r.author.login, at: r.submittedAt, text: r.bodyText, url: r.url, state: r.state })),
   ].filter((a) => !a.bot && a.who !== me).sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
-  const since = myLast ? Date.parse(myLast.submittedAt) : Date.parse(requestedAt);
   const note = notes.get(`${n.repository.nameWithOwner}#${n.number}`);
+  const mineAt = (s) => (n.author?.login === me && s ? Date.parse(s) : 0);
+  // On my own PRs, anything before my last push, comment, reply or view on GitHub is already seen.
+  const since = Math.max(myLast ? Date.parse(myLast.submittedAt) : Date.parse(requestedAt), mineAt(head?.committedDate), mineAt(note?.readAt),
+    mineAt(n.comments.nodes.filter((c) => c.author?.login === me).at(-1)?.createdAt));
   return {
     headAt: head?.committedDate ?? n.createdAt, headSha: head?.oid ?? null, requestedAt,
     // My PRs only (the query asks for threads there): comments still waiting on an answer or a resolve.
     threads: (n.threads?.nodes ?? []).filter((x) => !x.isResolved && x.comments.nodes[0]).map((x) => {
       const c = x.comments.nodes[0];
-      return { who: c.author?.login ?? "ghost", at: c.createdAt, text: c.bodyText.replace(/\s+/g, " ").slice(0, 200), url: c.url, path: x.path };
+      return { who: c.author?.login ?? "ghost", at: c.createdAt, text: clip(c.bodyText.replace(/\s+/g, " "), 200), url: c.url, path: x.path };
     }),
     commentCount: activity.length,
-    activity: activity.slice(-4).map((a) => ({ ...a, text: a.text.replace(/\s+/g, " ").slice(0, 200), mentionsMe: a.text.includes(`@${me}`) })),
+    activity: activity.slice(-4).map((a) => ({ ...a, text: clip(a.text.replace(/\s+/g, " "), 200), mentionsMe: a.text.includes(`@${me}`) })),
     newActivity: activity.filter((a) => Date.parse(a.at) > since).length,
     mentioned: activity.some((a) => a.text.includes(`@${me}`)),
-    notification: note ? { reason: note.reason, unread: note.unread } : null,
+    notification: note?.unread ? { reason: note.reason, unread: true } : null,
     number: n.number, title: n.title, url: n.url, draft: n.isDraft, repo: n.repository.nameWithOwner,
     author: n.author?.login ?? "ghost", created: n.createdAt, updated: n.updatedAt,
     additions: n.additions, deletions: n.deletions, review: n.reviewDecision,
@@ -165,23 +170,44 @@ function toSkipped(n, me) {
     // Comments and review bodies that @-mention me: usually what I was asked.
     mentions: [...n.comments.nodes.map((c) => ({ who: c.author?.login ?? "ghost", at: c.createdAt, text: c.bodyText, url: c.url })),
       ...n.reviews.nodes.filter((r) => r.bodyText).map((r) => ({ who: r.author?.login ?? "ghost", at: r.submittedAt, text: r.bodyText, url: r.url }))]
-      .filter((m) => m.text.includes(`@${me}`)).map((m) => ({ ...m, text: m.text.replace(/\s+/g, " ").slice(0, 200) })),
+      .filter((m) => m.text.includes(`@${me}`)).map((m) => ({ ...m, text: clip(m.text.replace(/\s+/g, " "), 200) })),
     reviews: n.reviews.nodes.filter((r) => r.author?.login && r.author.__typename !== "Bot" && r.author.login !== n.author?.login && r.state !== "PENDING").map((r) => ({ who: r.author.login, state: r.state, at: r.submittedAt })) };
 }
 
-export async function fetchGh() {
+const logError = (text) => exec("/bin/sh", ["-c", 'printf "%s\\n\\n" "$1" >> "$2"', "sh", text, `${appHome()}/squirrel-errors.log`]).catch(() => null);
+const REFRESH_LIMIT_MS = 5 * 60 * 1000;
+let running = null;
+
+// One refresh at a time. A failure or a hang clears "refreshing…", shows in the header (click it for the
+// full error) and goes to ~/.config/herdr-app/squirrel-errors.log, and the next refresh starts clean.
+export function fetchGh(cx) {
+  running ??= Promise.race([
+    fetchGhOnce(),
+    cx.sleep(REFRESH_LIMIT_MS).then(() => { throw new Error(`no answer after ${REFRESH_LIMIT_MS / 60000} minutes`); }),
+  ]).catch(async (e) => {
+    const at = new Date().toISOString(), detail = `${e?.message ?? e}\n${e?.stack ?? ""}`.trim();
+    setShared("squirrel.github", { ...(shared("squirrel.github") ?? {}), loading: false,
+      error: `Refresh failed: ${clip(String(e?.message ?? e), 100)}`, errorDetail: `${at}\n${detail}` });
+    await logError(`${at} refresh failed\n${detail}`);
+  }).finally(() => { running = null; });
+  return running;
+}
+
+async function fetchGhOnce() {
   const prev = shared("squirrel.github") ?? {};
   setShared("squirrel.github", { ...prev, loading: true });
   const [notesResult, ...results] = await Promise.allSettled([
-    exec("gh", ["api", "notifications?participating=true&per_page=100"], { timeout: 60000 }),
+    exec("gh", ["api", "notifications?participating=true&all=true&per_page=100"], { timeout: 60000 }),
     ...Object.values(GH_QUERIES).map((q) => ghGraphql(q())),
   ]);
   const [reviews, reviewed, mine, merged, skipped] = results;
   // GitHub inbox threads I'm part of, keyed "owner/repo#number" (reason: mention, comment, review_requested…).
   const notes = new Map();
-  if (notesResult.status === "fulfilled" && notesResult.value.code === 0) for (const t of JSON.parse(notesResult.value.stdout)) {
+  let threads = [];
+  try { if (notesResult.status === "fulfilled" && notesResult.value.code === 0) threads = JSON.parse(notesResult.value.stdout); } catch { /* cut-off reply: no inbox reasons this round */ }
+  for (const t of threads) {
     const m = /\/pulls\/(\d+)$/.exec(t.subject?.url ?? "");
-    if (m) notes.set(`${t.repository.full_name}#${m[1]}`, { reason: t.reason, unread: t.unread });
+    if (m) notes.set(`${t.repository.full_name}#${m[1]}`, { reason: t.reason, unread: t.unread, readAt: t.last_read_at });
   }
   const next = { ...prev, loading: false };
   const failed = [];
@@ -282,6 +308,8 @@ export async function fetchGh() {
   const capped = (reviews.status === "fulfilled" && reviews.value.list.issueCount > 100) || (mine.status === "fulfilled" && mine.value.list.issueCount > 100);
   if (!failed.length) next.at = Date.now();
   next.error = failed.length ? `GitHub failed (${failed.join("; ")}), showing older data` : capped ? "more than 100 PRs, list is cut off" : null;
+  next.errorDetail = failed.length ? `${new Date().toISOString()}\n${failed.join("\n")}` : null;
+  if (failed.length) await logError(`${new Date().toISOString()} refresh partly failed\n${failed.join("\n")}`);
   // Triage marks outlive a PR dropping off the list (a team re-request brings it back), so prune by age only.
   const triaged = shared("squirrel.triaged") ?? {}, cutoff = Date.now() - 60 * 24 * 3600 * 1000;
   const kept = Object.fromEntries(Object.entries(triaged).filter(([, at]) => (at?.at ?? at) > cutoff));

@@ -3,7 +3,7 @@
 // fetches the PR lists into shared "squirrel.github" every 5 minutes.
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { agents, panes, terminals, run, theme, shared, setShared } from "herdr";
+import { agents, panes, terminals, run, theme, shared, setShared, openOverlay } from "herdr";
 import { VIEW, GITHUB, TRIAGED, ROW, HEADER, COLS, MAX_ROWS, CARD_W, CARD_H, GAP, ago } from "./shared.js";
 import { stepSim, drawSim } from "./visualizer.js";
 import { readContext, readBackground, pruneContext, linkParents, agentsViews, usageHeight } from "./agents.js";
@@ -61,6 +61,7 @@ export default class SquirrelPanel extends View {
     this.queueError = {};
     this.queueAdded = {};
     this.confirm = {};
+    this.mergedNow = {};
     this.expanded = {};
     this.leaving = {};
     this.showTriaged = false;
@@ -125,7 +126,8 @@ export default class SquirrelPanel extends View {
           })
           .children(this.headerViz ? drawSim(this.sims?.header, t.dim) : []))
         .when(view !== "agents", (el) => el
-          .when(Boolean(gh.error), (el) => el.child(div().text_size(10.5).text_color(t.ansi1).child(gh.error)))
+          .when(Boolean(gh.error), (el) => el.child(div().id("gh-error").max_w(320).truncate().text_size(10.5).text_color(t.ansi1).cursor_pointer().underline()
+            .tooltip("Show the full error").on_click(() => openOverlay({ mod: "squirrel-error" })).child(gh.error)))
           .when(view === "reviews" && aiTags.length > 0, (el) => el.child(div().id("ai-score").text_size(10.5).text_color(t.dim).mr(8)
             .tooltip("AI tags you haven't flipped, out of all tagged PRs").child(`AI right ${aiTags.filter((x) => !x.corrected).length}/${aiTags.length}`)))
           .child(div().text_size(10.5).text_color(t.dim).child(gh.loading ? "refreshing…" : gh.at ? `updated ${ago(gh.at)} ago` : "loading…"))

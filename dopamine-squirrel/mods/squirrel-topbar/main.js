@@ -23,7 +23,7 @@ function find(node, id) {
 
 export default class SquirrelTopbar extends View {
   init(_props, cx) {
-    cx.spawn(async (cx) => { for (;;) { await loadSettings(); await fetchGh(); await cx.sleep(GH_EVERY_MS); } });
+    cx.spawn(async (cx) => { for (;;) { await loadSettings().catch(() => null); await fetchGh(cx); await cx.sleep(GH_EVERY_MS); } });
     // Tags new team review requests a few at a time, so a backlog clears in minutes (triage-ai.js).
     cx.spawn(async (cx) => { for (;;) { await cx.sleep(60000); await tagReviews().catch(() => null); } });
     // squirrel.json edits show up within 30 seconds.
@@ -33,7 +33,7 @@ export default class SquirrelTopbar extends View {
     cx.spawn(async () => {
       for (;;) {
         const c = await nextCommand();
-        if (c === "gh_refresh" || c?.name === "gh_refresh") fetchGh();
+        if (c === "gh_refresh" || c?.name === "gh_refresh") fetchGh(cx);
         if (c === "fact_check" || c?.name === "fact_check") this.factCheck(cx);
         for (const v of ["agents", "reviews", "mine"]) {
           if (c === `show_${v}` || c?.name === `show_${v}`) { setShared("squirrel.view", v); run("layout.show", { id: "agents-panel" }); }

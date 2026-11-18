@@ -78,7 +78,7 @@ async function ask(url, header) {
     const text = JSON.parse(r.stdout).result ?? "";
     const answer = JSON.parse(/\{[\s\S]*\}/.exec(text)?.[0] ?? "");
     if (!["needs", "skip"].includes(answer.verdict)) return null;
-    return { verdict: answer.verdict, reason: String(answer.reason ?? "").slice(0, 160) };
+    return { verdict: answer.verdict, reason: String(answer.reason ?? "").slice(0, 160).replace(/[\uD800-\uDBFF]$/, "") };
   } catch { return null; }
 }
 
