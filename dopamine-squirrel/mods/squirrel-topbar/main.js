@@ -1,7 +1,7 @@
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex, ScrollHandle } from "gpui-base";
 import { spaces, panes, run, openOverlay, theme, window, shared, setShared, layout, updates, nextCommand, home, hc, exec, appHome } from "herdr";
-import { fetchGh, GH_EVERY_MS } from "./github.js";
+import { fetchGh, GH_EVERY_MS, myPrsChanged } from "./github.js";
 import { tagReviews } from "./triage-ai.js";
 import { glow } from "./glow.js";
 import { loadSettings, squirrelSettings } from "./settings.js";
@@ -26,6 +26,7 @@ export default class SquirrelTopbar extends View {
     cx.spawn(async (cx) => { for (;;) { await loadSettings().catch(() => null); await fetchGh(cx); await cx.sleep(GH_EVERY_MS); } });
     // Tags new team review requests a few at a time, so a backlog clears in minutes (triage-ai.js).
     cx.spawn(async (cx) => { for (;;) { await cx.sleep(60000); await tagReviews().catch(() => null); } });
+    cx.spawn(async (cx) => { for (;;) { await cx.sleep(60000); if (await myPrsChanged().catch(() => false)) await fetchGh(cx); } });
     // squirrel.json edits show up within 30 seconds.
     cx.spawn(async (cx) => { for (;;) { await cx.sleep(30000); await loadSettings(); } });
     cx.spawn(async (cx) => { for (;;) { await cx.sleep(50); cx.notify(); } });

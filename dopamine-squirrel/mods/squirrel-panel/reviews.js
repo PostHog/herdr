@@ -180,8 +180,10 @@ export const reviewViews = {
     const prs = gh.prs ?? [];
     const back = new Map(prs.map((p) => [p.url + p.number, this.resurfaced(p, marks[p.url])]));
     const isDone = (p) => Boolean(marks[p.url]) && !back.get(p.url + p.number);
-    // Asked by name, then back after triage, then newest first.
-    const sorted = prs.slice().sort((a, b) => (b.mine - a.mine) || (Boolean(back.get(b.url + b.number)) - Boolean(back.get(a.url + a.number))) || Date.parse(b.created) - Date.parse(a.created));
+    // You care (asked by name, tagged You care, or not tagged yet): approved with CI passed, then CI passed, then the rest.
+    // Not important last. Longest waiting first in each group.
+    const group = (p) => p.mine || aiTags[p.url]?.verdict !== "skip" ? (p.ci !== "SUCCESS" ? 2 : p.review === "APPROVED" ? 0 : 1) : 3;
+    const sorted = prs.slice().sort((a, b) => group(a) - group(b) || Date.parse(a.requestedAt) - Date.parse(b.requestedAt));
     const open = sorted.filter((p) => !isDone(p)), done = sorted.filter(isDone);
     const prW = Math.ceil(Math.max(2 * 6.2, ...prs.map((p) => `#${p.number}`.length * 7.2))) + 6;
     const sizeW = Math.ceil(Math.max(4 * 6.2, ...prs.map((p) => `+${p.additions} −${p.deletions}`.length * 6.4))) + 6;
