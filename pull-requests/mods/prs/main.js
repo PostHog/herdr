@@ -4,7 +4,7 @@ import { theme, props, openOverlay, closeOverlay, shared, setShared, run, machin
 import { loadStore, store, updateStore, prKey, newId } from "./store.js";
 import { fetchMyPrs, fetchReviews, fetchDetail, statusPill, needsReview, readyToMerge, comparePriority, isOrgWide, ownerOf } from "./github.js";
 import { mergePr, markReady, updateBranch, rerunFailed, approvePr, commentOnPr, resolveThread, openUrl, copyText, markdownLink, toggleWatch, toggleHidden, report, usesTrunk, isTrunkPr, mergesThroughQueue } from "./actions.js";
-import { startFixSession, startReview, syncRuns, fixPrompt, findingsFixPrompt, reviewPromptForOthers, setFindingState, findingsMarkdown } from "./agents.js";
+import { startFixSession, startReview, syncRuns, fixPrompt, findingsFixPrompt, reviewPromptForOthers, reusedSessionPrompt, setFindingState, findingsMarkdown } from "./agents.js";
 import { processSnapshot, TRIGGERS, ACTION_KINDS } from "./automation.js";
 import { loadConfig, config, updateConfig, configPath, machineLabel } from "./config.js";
 import { forgetCheckouts, checkoutFor } from "./runner.js";
@@ -122,6 +122,7 @@ function cleanBody(body) {
   return text.trim();
 }
 const keepFocus = (_e, cx) => cx.stop_propagation();
+const handOff = (pr, prompt, what) => copyText(reusedSessionPrompt(pr, prompt), `This PR is already open in a space, so it's shown instead. The ${what} prompt is on your clipboard to paste into Claude there.`);
 const samePr = (a, b) => a.repo === b.repo && a.number === b.number;
 
 function claudeOn(pr) {
@@ -166,16 +167,18 @@ export const NAMED = {
   updateBranch: (pr) => act(pr, "update", `Update #${pr.number}`, () => updateBranch(pr)),
   rerunFailed: (pr) => act(pr, "rerun", `Rerun failed checks on #${pr.number}`, () => rerunFailed(pr)),
   fix: (pr) => act(pr, "fix", `Fix #${pr.number}`, async () => {
-    const started = await startFixSession(pr, fixPrompt(pr));
-    return started === false ? { ok: true, quiet: true } : { ok: true, message: `Opened a Claude session on ${agentsWhere()}.` };
+    const prompt = fixPrompt(pr);
+    if ((await startFixSession(pr, prompt)) === false) return handOff(pr, prompt, "fix");
+    return { ok: true, message: `Opened a Claude session on ${agentsWhere()}.` };
   }),
   agentReview: (pr) => act(pr, "review", `Agent review of #${pr.number}`, async () => {
     await startReview(pr);
     return { ok: true, message: `Started on ${agentsWhere()}: four lenses, then a judge.` };
   }),
   reviewInClaude: (pr) => act(pr, "claude-review", `Review #${pr.number}`, async () => {
-    const started = await startFixSession(pr, reviewPromptForOthers(pr), "review");
-    return started === false ? { ok: true, quiet: true } : { ok: true, message: `Opened a Claude review session on ${agentsWhere()}.` };
+    const prompt = reviewPromptForOthers(pr);
+    if ((await startFixSession(pr, prompt, "review")) === false) return handOff(pr, prompt, "review");
+    return { ok: true, message: `Opened a Claude review session on ${agentsWhere()}.` };
   }),
   approve: (pr) => act(pr, "approve", `Approve #${pr.number}`, () => approvePr(pr)),
   watch: (pr) => act(pr, "watch", pr.watching ? "Stopped watching" : "Watching", async () => {
@@ -2097,7 +2100,7 @@ export default class Prs extends View {
         .child(button(t, "prs-f-review", reviewRunning ? "Review running…" : findings.length ? "Review again" : "Start review", () => NAMED.agentReview(pr), { primary: !findings.length, disabled: reviewRunning }))
         .when(open.length > 0 && pr.mine, (el) => el.child(button(t, "prs-f-fix", `Fix ${open.length} in Claude`, () => act(pr, "fix", `Fix findings on #${pr.number}`, async () => {
           const prompt = findingsFixPrompt(pr, open);
-          if ((await startFixSession(pr, prompt)) === false) return copyText(prompt, "A fix session is already open on this PR, so it's shown instead. The findings prompt is on your clipboard to paste into it.");
+          if ((await startFixSession(pr, prompt)) === false) return handOff(pr, prompt, "findings");
           return { ok: true, message: `Opened a Claude session on ${agentsWhere()}.` };
         }), { primary: true })))
         .when(open.length > 0, (el) => el.child(button(t, "prs-f-post", "Post to PR", () => act(pr, "post", `Post findings to #${pr.number}`, () => commentOnPr(pr, findingsMarkdown(open)))))),
