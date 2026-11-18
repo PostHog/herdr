@@ -109,13 +109,12 @@ export async function loadTrunk(prs) {
       }),
     );
     const runs = new Map();
-    await Promise.all(
-      [...items.values()].filter((item) => item.testPr).map(async (item) => {
-        try {
-          runs.set(item.testPr, await testRun(item.testPr));
-        } catch {}
-      }),
-    );
+    for (const item of items.values()) {
+      if (!item.testPr || runs.has(item.testPr)) continue;
+      try {
+        runs.set(item.testPr, await testRun(item.testPr));
+      } catch {}
+    }
     return { available: true, repo, error: null, listing, items: Object.fromEntries(items), runs: Object.fromEntries(runs) };
   } catch (error) {
     return { available: !(error instanceof TrunkUnavailable), repo, error: String(error?.message ?? error) };

@@ -2,7 +2,7 @@ import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { theme, props, openOverlay, closeOverlay, shared, setShared, run, machines, notify, layout, nextCommand, focused, window } from "herdr";
 import { loadStore, store, updateStore, prKey, newId } from "./store.js";
-import { fetchMyPrs, fetchReviews, fetchDetail, statusPill, needsReview, readyToMerge, comparePriority, isOrgWide, ownerOf } from "./github.js";
+import { fetchMyPrs, fetchReviews, fetchDetail, statusPill, needsReview, readyToMerge, comparePriority, isOrgWide, ownerOf, applyTrunk, rateLimitPause, RateLimited } from "./github.js";
 import { mergePr, markReady, updateBranch, rerunFailed, approvePr, commentOnPr, resolveThread, openUrl, copyText, markdownLink, toggleWatch, toggleHidden, report, usesTrunk, isTrunkPr, mergesThroughQueue } from "./actions.js";
 import { startFixSession, startReview, syncRuns, fixPrompt, findingsFixPrompt, reviewPromptForOthers, reusedSessionPrompt, setFindingState, findingsMarkdown } from "./agents.js";
 import { processSnapshot, TRIGGERS, ACTION_KINDS } from "./automation.js";
@@ -23,6 +23,7 @@ const TRUNK_EVERY_MS = 45000;
 const SERVICES_EVERY_MS = 120000;
 const FAILURES_BEFORE_ERROR = 3;
 const STALE_AFTER_MS = 20000;
+const UNFOCUSED_SLOWDOWN = 3;
 const VIEW_STACK = "pr-center";
 const PAGE_NODE = "prs-page";
 const WORK_NODE = "work";
@@ -324,9 +325,6 @@ export default class Prs extends View {
     if (this.leader) {
       this.loadMine(cx);
       this.loadReviews(cx);
-      cx.timer.every(MINE_EVERY_MS, (cx) => this.loadMine(cx));
-      cx.timer.every(REVIEWS_EVERY_MS, (cx) => this.loadReviews(cx));
-      cx.timer.every(TRUNK_EVERY_MS, (cx) => this.loadTrunkData(cx));
       this.loadServices(cx);
       cx.timer.every(SERVICES_EVERY_MS, (cx) => this.loadServices(cx));
       cx.timer.every(RUNS_EVERY_MS, (cx) => cx.spawn(async (cx) => {
@@ -349,6 +347,7 @@ export default class Prs extends View {
     cx.timer.every(1500, (cx) => {
       if (this.leader) this.publishStatus();
       if (this.leader) this.refreshOnReturn(cx);
+      if (this.leader) this.pollDue(cx);
       const refreshAll = shared("prs.refreshAll") ?? null;
       if (this.leader && refreshAll !== this.seenRefreshAll) {
         this.seenRefreshAll = refreshAll;
@@ -397,15 +396,36 @@ export default class Prs extends View {
     if (now - (this.reviewsStartedAt ?? 0) > STALE_AFTER_MS) this.loadReviews(cx);
   }
 
+  pollDue(cx) {
+    const slowdown = window()?.active ? 1 : UNFOCUSED_SLOWDOWN;
+    const now = Date.now();
+    const due = (startedAt, every) => startedAt === undefined || now - startedAt >= every * slowdown;
+    if (due(this.mineStartedAt, MINE_EVERY_MS)) this.loadMine(cx);
+    if (due(this.reviewsStartedAt, REVIEWS_EVERY_MS)) this.loadReviews(cx);
+    if (due(this.trunkStartedAt, TRUNK_EVERY_MS)) this.loadTrunkData(cx);
+  }
+
+  githubError(error, current, failures) {
+    if (error instanceof RateLimited) return error.message;
+    if (!current || failures >= FAILURES_BEFORE_ERROR) return String(error?.message ?? error);
+    return null;
+  }
+
   loadMine(cx) {
     if (this.loadingMine) return;
-    this.loadingMine = true;
     this.mineStartedAt = Date.now();
+    const pause = rateLimitPause();
+    if (pause) {
+      this.mineError = pause.message;
+      cx.notify();
+      return;
+    }
+    this.loadingMine = true;
     cx.notify();
     cx.spawn(async (cx) => {
       try {
         await Promise.all([loadStore(), loadConfig()]);
-        this.mine = await fetchMyPrs(repos(), store().watched, config().trunk?.repo ?? null);
+        this.mine = await fetchMyPrs(repos(), store().watched, config().trunk?.repo ?? null, this.trunk);
         this.mineFailures = 0;
         this.mineError = null;
         setShared("prs.cache.mine", this.mine);
@@ -413,7 +433,7 @@ export default class Prs extends View {
         await processSnapshot({ viewer: this.mine.viewer, prs: this.mine.prs, reviews: this.reviews });
       } catch (error) {
         this.mineFailures++;
-        if (!this.mine || this.mineFailures >= FAILURES_BEFORE_ERROR) this.mineError = String(error?.message ?? error);
+        this.mineError = this.githubError(error, this.mine, this.mineFailures) ?? this.mineError;
       }
       this.loadingMine = false;
       this.announce();
@@ -424,11 +444,14 @@ export default class Prs extends View {
   loadTrunkData(cx) {
     if (this.loadingTrunk || !this.mine) return;
     this.loadingTrunk = true;
+    this.trunkStartedAt = Date.now();
     cx.spawn(async (cx) => {
       try {
         const result = await loadTrunk(this.mine.prs);
         this.trunk = !result.listing && this.trunk?.listing && result.available ? { ...this.trunk, error: result.error } : result;
         setShared("prs.cache.trunk", this.trunk);
+        applyTrunk(this.mine.prs, this.trunk);
+        setShared("prs.cache.mine", this.mine);
       } catch (error) {
         this.trunk = { ...(this.trunk ?? {}), error: String(error?.message ?? error) };
       }
@@ -620,19 +643,25 @@ export default class Prs extends View {
 
   loadReviews(cx) {
     if (this.loadingReviews) return;
-    this.loadingReviews = true;
     this.reviewsStartedAt = Date.now();
+    const pause = rateLimitPause();
+    if (pause) {
+      this.reviewsError = pause.message;
+      cx.notify();
+      return;
+    }
+    this.loadingReviews = true;
     cx.notify();
     cx.spawn(async (cx) => {
       try {
         await loadConfig();
-        this.reviews = await fetchReviews(repos());
+        this.reviews = await fetchReviews(repos(), this.trunk);
         this.reviewsFailures = 0;
         this.reviewsError = null;
         setShared("prs.cache.reviews", this.reviews);
       } catch (error) {
         this.reviewsFailures++;
-        if (!this.reviews || this.reviewsFailures >= FAILURES_BEFORE_ERROR) this.reviewsError = String(error?.message ?? error);
+        this.reviewsError = this.githubError(error, this.reviews, this.reviewsFailures) ?? this.reviewsError;
       }
       this.loadingReviews = false;
       cx.notify();
