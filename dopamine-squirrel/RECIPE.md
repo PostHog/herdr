@@ -54,13 +54,14 @@ Laid out for a vertical monitor; works on a wide one too. [README.md](README.md)
 - The REVIEWS column counts approvals, open threads and comments from others, so non-blocking notes on an approved PR don't get missed. Click an open PR's row to read them: open threads first, then the latest comments, each linking to GitHub.
 - **RFR** next to a draft's chip marks it ready for review (`gh pr ready`). Every action refreshes the board.
 - **CI failed** chip: opens a pane below running Claude (Opus, high effort) in the PR's checkout. It fixes what's obvious without pushing, or stops and summarises what needs your call. A second click jumps to that pane.
-- **Add to queue** shows only on approved PRs whose CI isn't failing. **Add to queue** and **Remove** run `trunk merge` and `trunk merge cancel` from your PostHog checkout. Add runs at once and shows "Added ✓"; Remove asks for a second click within 4 s. Needs `trunk login` once.
+- **Add to queue** shows only on approved PRs whose CI isn't failing. **Add to queue** and **Remove** run `trunk merge` and `trunk merge cancel` from your PostHog checkout. Add runs at once and shows "Added ✓"; Remove asks for a second click within 4 s. Needs `trunk login` once. In repos other than PostHog/posthog the button is **Merge** instead: it runs `gh pr merge` with the method the repo allows (squash first) and asks for a second click.
 - The empty cells of merged rows are a visualizer: two live simulations (flow fields, a spectrum analyser, warp stars, orbs, rain, fireworks, Game of Life, random walkers, plasma) with random palettes, swapping every 9 to 17 s. `visualizer.js`.
 
 ### The rest
 
 - `mods/squirrel-pane-header/`: pane headers with the pane's name, folder, and split, zoom and close buttons.
 - `mods/squirrel-rename/`: `cmd-r` names the focused pane. Herdr only names tabs, so names live in shared state.
+- `mods/squirrel-error/`: clicking a failed GitHub refresh in the panel header shows the full error. Every failure is also appended to `~/.config/herdr-app/squirrel-errors.log`.
 - `mods/squirrel-new-menu/`: the `+` menu.
 - `layouts/Dopamine-Squirrel.json`: the top bar, the panel under it (`agents-panel`), then panes with Herdr's Files and Changes column on the right. No spaces list: this setup lives in one space.
 

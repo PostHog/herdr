@@ -99,7 +99,7 @@ export const reviewViews = {
   },
 
   saveNote(p, text) {
-    const tag = (shared(AI_TRIAGE) ?? {})[p.url], note = text.trim().slice(0, 300);
+    const tag = (shared(AI_TRIAGE) ?? {})[p.url], note = text.trim().slice(0, 300).replace(/[\uD800-\uDBFF]$/, "");
     if (tag && (tag.note ?? "") !== note) this.saveTag(p, { ...tag, note });
   },
 
