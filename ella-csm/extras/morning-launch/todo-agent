@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """todo-agent <slug> <text> — decide whether a new to-do is agent work and, if so,
 start a Claude session for it as a pane in the shared "to-do helpers" space.
-Started by the Herdr to-do panel. Alert to-dos (todo-links/<slug>.json with how "alert") skip the check, get todo-alert-preamble.md, and start alert-check in the background. Writes ~/morning-launch/todo-prep/<slug>.json
+Started by the Herdr to-do panel. Alert to-dos (todo-links/<slug>.json with how "alert") skip the check and get todo-alert-preamble.md. Writes ~/morning-launch/todo-prep/<slug>.json
 (status: checking | skip | running); the session writes <slug>.md when done.
 Test hooks: TODO_TRIAGE (fixed answer), TODO_FAKE (placeholder session), TODO_SPACE."""
 import json, os, subprocess, sys
@@ -112,11 +112,6 @@ def main():
         return 0
     space, tab, terminal = start(slug, text, alert)
     record(slug, status="running", space=space, tab=tab, terminal=terminal, handover=f"{PREP}/{slug}.md")
-    if alert and (not os.environ.get("TODO_FAKE") or os.environ.get("ALERT_CHECK_BIN")):
-        # Second opinion + auto-close when everything agrees it's nothing (see alert-check).
-        os.makedirs(f"{BASE}/logs", exist_ok=True)
-        subprocess.Popen([os.environ.get("ALERT_CHECK_BIN", f"{BASE}/alert-check"), slug], start_new_session=True,
-                         stdin=subprocess.DEVNULL, stdout=open(f"{BASE}/logs/alert-check.out", "a"), stderr=subprocess.STDOUT)
     return 0
 
 
