@@ -83,7 +83,8 @@ export default class SquirrelReopen extends View {
     this.sessions = shared(CACHE) ?? null;
     cx.spawn(async (cx) => {
       try {
-        [this.sessions, this.names] = await Promise.all([closedSessions(), accountNames()]);
+        const [sessions, names] = await Promise.all([closedSessions(), accountNames()]);
+        this.sessions = sessions.map((s) => ({ ...s, account: names.get(s.dir) ?? s.dir.split("/").pop() }));
         setShared(CACHE, this.sessions);
       }
       catch (e) { this.error = String(e?.message ?? e); }
@@ -105,9 +106,9 @@ export default class SquirrelReopen extends View {
     const row = (s) => h_flex().id(s.id).h(30).px(9).gap(10).rounded(6).items_center().flex_none().cursor_pointer()
       .hover((el) => el.bg(t.selected)).on_click(() => this.reopen(s))
       .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(s.title || s.aiTitle || s.prompt))
-      .when(others, (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(this.names?.get(s.dir) ?? s.dir.split("/").pop())))
+      .when(others, (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(s.account ?? s.dir.split("/").pop())))
       .child(div().w(32).flex_none().text_size(11).text_color(t.dim).text_right().child(ago(s.at)));
-    return v_flex().id("squirrel-reopen").track_focus(this.handle).size_full().min_h(0).p(5).bg(t.popover).text_size(12.5)
+    return v_flex().id("squirrel-reopen").track_focus(this.handle).w_full().h(370).min_h(0).p(5).bg(t.popover).text_size(12.5)
       .on_key_down((e, cx) => { if (e.key === "escape") { closeOverlay(props().overlay); cx.stop_propagation(); } })
       .child(div().px(9).pt(6).pb(4).text_size(11).text_color(t.dim).child("Closed Claude panes, last 3 days"))
       .child(v_flex().flex_1().min_h(0).overflow_y_scrollbar()
