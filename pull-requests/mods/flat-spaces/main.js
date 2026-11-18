@@ -256,9 +256,9 @@ export default class Spaces extends View {
     const port = Number(forward?.labels?.["coder-devbox.port"]) || null;
     const icon = forward && !port
       ? svg("mods/workspace-chrome/spinner.svg").size(12).spin(900)
-      : div().text_size(12).line_height(14).when(!port, el => el.opacity(0.55)).child("🌐");
+      : svg("mods/coder-devbox/globe.svg").size(13);
     return div().id(`machine-ui-${machine.name}`).flex_none().p(2).rounded(4)
-      .text_color(t.dim).hover(s => s.bg(t.hover))
+      .text_color(port ? t.accent : t.dim).hover(s => s.bg(t.hover).text_color(port ? t.accent : t.foreground))
       .tooltip(port ? `PostHog UI at http://localhost:${port}` : forward ? "Forwarding the PostHog UI…" : "Forward the PostHog UI and open it")
       .on_click((_e, cx) => {
         cx.stop_propagation();

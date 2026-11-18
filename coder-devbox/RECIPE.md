@@ -6,10 +6,10 @@ A Herdr machine whose ssh target ends in `.coder` is a Coder devbox. This piece 
 
 ## What you see
 
-- **A 🌐** (12 px) on a connected devbox's header, before its `+`, at 55% opacity.
+- **A globe icon** (13 px, `mods/coder-devbox/globe.svg`) on a connected devbox's header, before its `+`, in `dim`.
   A click forwards the PostHog UI with `hogli devbox:forward` and opens it in your browser.
-  While the forward runs, the 🌐 is at full opacity and its tooltip gives the local port; a click opens the page.
-  It is a spinning ring (`workspace-chrome/spinner.svg`) while the forward starts.
+  While the forward runs, the globe is `accent` and its tooltip gives the local port; a click opens the page.
+  It is a spinning ring while the forward starts.
 - **A menu** on a right-click anywhere on a devbox's header, connected or not: a 240 px popup in the `popover` color with 28 px rows.
   - The box's name in 11.5 px `dim`.
   - "Open PostHog UI", with `localhost:18342` in `accent` while it's forwarded or "starting…", and "Stop forwarding" under it while a forward runs.
