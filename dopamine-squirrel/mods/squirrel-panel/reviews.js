@@ -94,9 +94,6 @@ export const reviewViews = {
       run("mod.open", { name: "squirrel-confetti" });
   },
 
-  // Puts the newest Done, Watch, Seen or tag click back the way it was.
-  undoLast() { this.undo.pop()?.restore(); },
-
   // Clicking an AI tag flips it to your call; clicking again hands the call back to the AI. A flip or a
   // note becomes an example for the next tags.
   correctTag(p) {

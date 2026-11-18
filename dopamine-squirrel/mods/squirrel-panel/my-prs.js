@@ -25,16 +25,21 @@ const SECTION_GAP = 9;
 const CI_PANES = "squirrel.ci-panes";
 
 export const myPrViews = {
-  // RFR on a draft: `gh pr ready`, then refresh so the row updates.
-  markReady(pr, cx) {
+  // RFR on a draft: `gh pr ready`, then refresh so the row updates. Undo turns it back into a draft.
+  markReady(pr, cx, undo = false) {
     this.readyBusy ??= {};
     if (this.readyBusy[pr.url]) return;
     this.readyBusy[pr.url] = true;
     cx.notify();
     cx.spawn(async (cx) => {
-      const r = await exec("gh", ["pr", "ready", pr.url], { timeout: 60000 }).catch((e) => ({ code: 1, stderr: String(e?.message ?? e) }));
+      const r = await exec("gh", ["pr", "ready", pr.url, ...(undo ? ["--undo"] : [])], { timeout: 60000 }).catch((e) => ({ code: 1, stderr: String(e?.message ?? e) }));
+      this.readyDone ??= {};
       if (r.code !== 0) this.queueError[pr.url] = (r.stderr || "gh pr ready failed").trim().split("\n").pop();
-      else { this.readyDone ??= {}; this.readyDone[pr.url] = Date.now(); }
+      else if (undo) delete this.readyDone[pr.url];
+      else {
+        this.readyDone[pr.url] = Date.now();
+        this.undoMine.push({ number: pr.number, label: "Ready for review", restore: (cx) => this.markReady(pr, cx, true) });
+      }
       delete this.readyBusy[pr.url];
       cx.notify();
       run("squirrel-topbar.gh_refresh");
@@ -71,10 +76,11 @@ export const myPrViews = {
 
   // Trunk merge queue buttons: Add runs `trunk merge` at once; Remove asks for a second click within 4s.
   // Repos without Trunk get Merge, which also asks for a second click since it can't be undone.
-  queue(p, action, cx) {
+  // Add and Remove go on My PRs' undo list; undoing one runs the other (undo = true keeps it off the list).
+  queue(p, action, cx, undo = false) {
     const key = p.url;
     if (this.queueBusy[key]) return;
-    if (action !== "add" && !this.confirm[key]) {
+    if (action !== "add" && !undo && !this.confirm[key]) {
       this.confirm[key] = true;
       cx.notify();
       cx.spawn(async (cx) => { await cx.sleep(4000); delete this.confirm[key]; cx.notify(); });
@@ -90,6 +96,9 @@ export const myPrViews = {
       if (r.code !== 0) this.queueError[key] = (r.stderr || r.stdout || `${action === "merge" ? "gh pr merge" : "trunk"} failed`).replace(/\x1b\[[0-9;]*m/g, "").trim().split("\n").pop();
       else if (action === "add") this.queueAdded[key] = Date.now();
       else if (action === "merge") this.mergedNow[key] = Date.now();
+      else delete this.queueAdded[key];
+      if (r.code === 0 && !undo && action !== "merge") this.undoMine.push({ number: p.number, label: action === "add" ? "Add to queue" : "Remove",
+        restore: (cx) => this.queue(p, action === "add" ? "remove" : "add", cx, true) });
       delete this.queueBusy[key];
       cx.notify();
       run("squirrel-topbar.gh_refresh");
