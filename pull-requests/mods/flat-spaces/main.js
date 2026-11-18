@@ -17,7 +17,7 @@ function find(node, id) {
 }
 
 const isDevbox = (machine) => Boolean(machine?.target?.endsWith(".coder"));
-const devboxUi = (name) => terminals().find((t) => t.labels?.["devbox.ui"] === name && t.state === "live" && !String(t.address).includes("/"));
+const devboxUi = (name) => terminals().find((t) => t.labels?.["coder-devbox.ui"] === name && t.state === "live" && !String(t.address).includes("/"));
 
 // The sidebar's rail goes by its width, not a flag: dragging its edge narrows it too.
 const narrow = () => (find(layout(), "sidebar")?.size?.px ?? Infinity) < 160;
@@ -67,7 +67,7 @@ export default class Spaces extends View {
     this.folded = new Set(JSON.parse(localStorage.getItem("machines.folded") ?? "[]"));
     this.devboxMenu = false;
     cx.spawn(async (cx) => {
-      this.devboxMenu = Boolean(await readTextFile(`${appHome()}/mods/devbox/main.js`).catch(() => null));
+      this.devboxMenu = Boolean(await readTextFile(`${appHome()}/mods/coder-devbox/main.js`).catch(() => null));
       cx.notify();
     });
     this.refreshMachines(cx);
@@ -248,17 +248,17 @@ export default class Spaces extends View {
   }
 
   devbox(machine, action = null) {
-    openOverlay({ mod: "devbox", kind: "popup", width: 240, height: 440, props: { machine: machine.name, target: machine.target, action } });
+    openOverlay({ mod: "coder-devbox", kind: "popup", width: 240, height: 440, props: { machine: machine.name, target: machine.target, action } });
   }
 
   devboxChip(machine, t) {
     const forward = devboxUi(machine.name);
-    const port = Number(forward?.labels?.["devbox.port"]) || null;
+    const port = Number(forward?.labels?.["coder-devbox.port"]) || null;
     const icon = forward && !port
       ? svg("mods/workspace-chrome/spinner.svg").size(12).spin(900)
-      : svg("mods/devbox/globe.svg").size(13);
+      : div().text_size(12).line_height(14).when(!port, el => el.opacity(0.55)).child("🌐");
     return div().id(`machine-ui-${machine.name}`).flex_none().p(2).rounded(4)
-      .text_color(port ? t.accent : t.dim).hover(s => s.bg(t.hover).text_color(port ? t.accent : t.foreground))
+      .text_color(t.dim).hover(s => s.bg(t.hover))
       .tooltip(port ? `PostHog UI at http://localhost:${port}` : forward ? "Forwarding the PostHog UI…" : "Forward the PostHog UI and open it")
       .on_click((_e, cx) => {
         cx.stop_propagation();

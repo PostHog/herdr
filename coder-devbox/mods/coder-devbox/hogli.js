@@ -1,7 +1,7 @@
 import { appHome, exec, hc, home, readTextFile, spaces, terminals } from "herdr";
 
-const UI_LABEL = "devbox.ui";
-const PORT_LABEL = "devbox.port";
+const UI_LABEL = "coder-devbox.ui";
+const PORT_LABEL = "coder-devbox.port";
 const FORWARD_START_TIMEOUT_MS = 90000;
 const CHECKOUT_PARENTS = ["workspace", "", "code", "src", "dev", "projects", "repos", "git"];
 
