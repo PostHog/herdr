@@ -75,28 +75,11 @@ export async function showPrWork(pr, { bareSpaces = true } = {}) {
   return { space: space.id, tab: null, agent: null };
 }
 
-const SEND_TTL_MS = 10 * 60 * 1000;
-
-export function isSending({ address }) {
-  return Date.now() - ((shared("prs.sending") ?? {})[address] ?? 0) < SEND_TTL_MS;
-}
-
-function setSending(address, at) {
-  const sending = { ...(shared("prs.sending") ?? {}) };
-  if (at) sending[address] = at;
-  else delete sending[address];
-  setShared("prs.sending", sending);
-}
-
-export async function sendToAgent({ address, pid }, text) {
-  setSending(address, Date.now());
-  try {
-    if ((await claudeIn(address))?.pid !== pid) return false;
-    const result = await hc(["send", address, text]).catch(() => null);
-    return result?.code === 0;
-  } finally {
-    setSending(address, null);
-  }
+export async function pasteIntoClaude({ address, pid }) {
+  if ((await claudeIn(address))?.pid !== pid) return false;
+  run("agent.focus", { terminal: address });
+  run("terminal.paste");
+  return true;
 }
 
 export function openClaude(pr, context = {}) {

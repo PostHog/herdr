@@ -12,7 +12,7 @@ import { loadTrunk, dequeue, resetTrunk } from "./trunk.js";
 import { fetchServices, isIncident, queueService, statusOverview } from "./status.js";
 import { sidebarHeader, sidebarMine, sidebarReviews, sidebarRail, statusLine, prIcon, progressLine, stackHeader, gatesFor, splitByNeed, isQuiet, rowButtons, nextFor, needsYou, workRank } from "./sidebar.js";
 import { visualAsks, stackGroups, withoutDraftStacks, step, queueFor, withTrunkQueue } from "./steps.js";
-import { openClaude, sendToAgent, isSending, CLAUDE_ICON } from "./claude.js";
+import { openClaude, pasteIntoClaude, CLAUDE_ICON } from "./claude.js";
 import { ago, button, iconButton, glyphButton, textIconButton, chip, badge, section, empty, field, menuItem, SPINNER, tone, TEXT, tint, avatar, countPill, codePill, gateStrip, titleText, readable } from "./ui.js";
 import { readiness, groupChecks, rowMatches, tallyChecks, tallyText, tallyLabel, worstBucket, mergeStateNote, changeShape, parseMarkdown } from "./sheet.js";
 
@@ -124,17 +124,11 @@ function cleanBody(body) {
 const keepFocus = (_e, cx) => cx.stop_propagation();
 async function handOff(pr, prompt, what, started) {
   const text = reusedSessionPrompt(pr, prompt);
+  const copied = await copyText(text);
+  if (!copied.ok) return copied;
   const agent = started?.shown?.agent;
-  if (agent && isSending(agent)) return { ok: true, message: `A prompt is already waiting to go to Claude on this PR, so this one wasn't sent.` };
-  if (agent) {
-    sendToAgent(agent, text).then(async (sent) => {
-      if (sent) return;
-      const copied = await copyText(text);
-      notify({ title: `#${pr.number} ${pr.title}`, body: copied.ok ? `Couldn't send the ${what} prompt to Claude there, so it's on your clipboard to paste.` : `Couldn't send the ${what} prompt to Claude there.`, level: "warning", timeout: 10000 });
-    });
-    return { ok: true, message: `Claude is already open on this PR, so the ${what} prompt is going there.` };
-  }
-  return copyText(text, `This PR is already open in a space, so it's shown instead. The ${what} prompt is on your clipboard to paste into Claude there.`);
+  if (agent && (await pasteIntoClaude(agent))) return { ok: true, message: `Claude is already open on this PR, so the ${what} prompt is pasted there. Press Enter to send it.` };
+  return { ok: true, message: `This PR is already open in a space, so it's shown instead. The ${what} prompt is on your clipboard to paste into Claude there.` };
 }
 const samePr = (a, b) => a.repo === b.repo && a.number === b.number;
 
