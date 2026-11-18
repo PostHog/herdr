@@ -102,7 +102,7 @@ async function runAction(action, pr) {
       await startReview(pr);
       return { ok: true, message: "Agent review started." };
     case "fix_session":
-      if ((await startFixSession(pr, fixPrompt(pr), "fix", { bareSpaces: false })) === false) {
+      if ((await startFixSession(pr, fixPrompt(pr), "fix", { bareSpaces: false })) !== true) {
         notify({ title: `#${pr.number} ${pr.title}`, body: "A workflow asked for a fix session, but Claude is already open on this PR, so none was started. Use Fix with Claude to copy the fix prompt into it.", level: "info", timeout: 10000 });
         return { ok: true, message: "Claude is already open on this PR, so no fix session was started." };
       }
