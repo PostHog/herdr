@@ -45,8 +45,30 @@ export function approvePr(pr) {
   return gh(["api", "--method", "POST", `repos/${pr.repo}/pulls/${pr.number}/reviews`, "-f", "event=APPROVE", "-f", `commit_id=${pr.headSha}`, "--jq", '"Approved " + .commit_id[0:7] + "."']);
 }
 
-export function commentOnPr(pr, body) {
-  return gh(["pr", "comment", String(pr.number), "-R", pr.repo, "-b", body]);
+const findingHeading = (finding) => `**${finding.title}**${finding.severity ? ` (${finding.severity})` : ""}`;
+
+function reviewBody(findings, unplaced) {
+  const lines = [`**Agent review:** ${findings.length} finding${findings.length === 1 ? "" : "s"}.`];
+  if (unplaced.length) lines.push("", ...unplaced.map((finding) => `- ${findingHeading(finding)}${finding.path ? ` — \`${finding.path}${finding.line ? `:${finding.line}` : ""}\`` : ""}\n  ${finding.body.replace(/\n/g, "\n  ")}`));
+  return lines.join("\n");
+}
+
+function reviewArgs(pr, headSha, body, inline) {
+  const args = ["api", "--method", "POST", `repos/${pr.repo}/pulls/${pr.number}/reviews`, "-f", "event=COMMENT", "-f", `body=${body}`];
+  if (headSha) args.push("-f", `commit_id=${headSha}`);
+  for (const finding of inline) {
+    args.push("-f", `comments[][path]=${finding.path}`, "-F", `comments[][line]=${finding.line}`, "-f", "comments[][side]=RIGHT", "-f", `comments[][body]=${findingHeading(finding)}\n\n${finding.body}`);
+  }
+  return [...args, "--jq", '"Posted a review with " + (.id | tostring) + "."'];
+}
+
+export async function postFindingsReview(pr, findings, headSha) {
+  const inline = headSha ? findings.filter((finding) => finding.path && finding.line) : [];
+  if (inline.length) {
+    const placed = await gh(reviewArgs(pr, headSha, reviewBody(findings, findings.filter((finding) => !inline.includes(finding))), inline));
+    if (placed.ok) return placed;
+  }
+  return gh(reviewArgs(pr, headSha, reviewBody(findings, findings), []));
 }
 
 export async function resolveThread(threadId) {

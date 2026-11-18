@@ -29,6 +29,7 @@ export const ACTION_KINDS = [
   { id: "notify", label: "Notify me", input: "Message" },
   { id: "merge", label: "Merge or send to the merge queue" },
   { id: "agent_review", label: "Run an agent review (read-only)" },
+  { id: "agent_review_fix", label: "Run an agent review (fix)" },
   { id: "fix_session", label: "Open a Claude fix session" },
 ];
 
@@ -101,6 +102,9 @@ async function runAction(action, pr) {
     case "agent_review":
       await startReview(pr);
       return { ok: true, message: "Agent review started." };
+    case "agent_review_fix":
+      await startReview(pr, { then: "fix" });
+      return { ok: true, message: "Agent review started; a new Claude session fixes its findings." };
     case "fix_session":
       if ((await startFixSession(pr, fixPrompt(pr), "fix", { bareSpaces: false })) !== true) {
         notify({ title: `#${pr.number} ${pr.title}`, body: "A workflow asked for a fix session, but Claude is already open on this PR, so none was started. Use Fix with Claude to copy the fix prompt into it.", level: "info", timeout: 10000 });

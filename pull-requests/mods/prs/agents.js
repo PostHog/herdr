@@ -89,7 +89,9 @@ export async function startFixSession(pr, prompt, label = "fix", { bareSpaces = 
   });
 }
 
-export async function startReview(pr) {
+const prSnapshot = (pr) => ({ repo: pr.repo, number: pr.number, title: pr.title, url: pr.url, author: pr.author, headRef: pr.headRef, baseRef: pr.baseRef, headInRepo: pr.headInRepo, headSha: pr.headSha ?? null });
+
+export async function startReview(pr, { then = null } = {}) {
   await loadConfig();
   const id = newId();
   const machine = runnerMachine();
@@ -98,7 +100,7 @@ export async function startReview(pr) {
   const models = config().models;
   const terminal = await startHeadless(id, [dir, pr.repo, String(pr.number), await checkoutFor(pr.repo, machine), models.review, models.judge, ...prompts], machine);
   await updateStore((state) => {
-    state.runs[id] = { id, kind: "review", interactive: false, machine, repo: pr.repo, number: pr.number, title: pr.title, headSha: pr.headSha ?? null, startedAt: new Date().toISOString(), status: "running", terminal };
+    state.runs[id] = { id, kind: "review", interactive: false, machine, repo: pr.repo, number: pr.number, title: pr.title, headSha: pr.headSha ?? null, startedAt: new Date().toISOString(), status: "running", terminal, ...(then ? { then, pr: prSnapshot(pr) } : {}) };
   });
   return id;
 }
@@ -155,6 +157,7 @@ export async function syncRuns() {
   for (const run of finished) {
     if (statuses[run.id].status === "done" && run.kind === "review") findingsByRun[run.id] = parseFindings(await readRunFile(run.machine ?? null, run.id, "findings.jsonl"), run);
   }
+  const followUps = [];
   await updateStore((state) => {
     state.findingsFrom ??= {};
     for (const run of finished) {
@@ -172,31 +175,61 @@ export async function syncRuns() {
         target.summary = `${target.summary} Superseded by a newer review.`;
         continue;
       }
-      const dismissed = new Set((state.findings[key] ?? []).filter((finding) => finding.state === "dismissed").map((finding) => `${finding.path}:${finding.title}`));
+      const identity = (finding) => `${finding.path}:${finding.title}`;
+      const dismissed = new Set((state.findings[key] ?? []).filter((finding) => finding.state === "dismissed").map(identity));
+      const posted = new Set((state.findings[key] ?? []).filter((finding) => finding.posted).map(identity));
       const kept = (state.findings[key] ?? []).filter((finding) => finding.state !== "open");
-      for (const finding of findings) if (dismissed.has(`${finding.path}:${finding.title}`)) finding.state = "dismissed";
+      for (const finding of findings) {
+        if (dismissed.has(identity(finding))) finding.state = "dismissed";
+        if (posted.has(identity(finding))) finding.posted = true;
+      }
       state.findings[key] = [...findings, ...kept.filter((finding) => finding.runId !== run.id)];
       state.findingsFrom[key] = { runId: run.id, startedAt: run.startedAt };
       target.findingCount = findings.filter((finding) => finding.state === "open").length;
+      if (run.then === "fix" && run.pr) followUps.push({ run, findings: findings.filter((finding) => finding.state === "open") });
     }
   });
   for (const run of finished) {
     const ok = statuses[run.id].status === "done";
     notify({ title: `Review of #${run.number} ${ok ? "finished" : "failed"}`, body: statuses[run.id].summary || run.title, level: ok ? "success" : "error", timeout: 10000 });
   }
+  for (const followUp of followUps) await fixFindings(followUp);
   return true;
+}
+
+async function fixFindings({ run, findings }) {
+  if (!findings.length) return;
+  const pr = run.pr;
+  const title = `#${pr.number} ${pr.title}`;
+  try {
+    if ((await startFixSession(pr, findingsFixPrompt(pr, findings), "fix", { bareSpaces: false })) !== true) {
+      notify({ title, body: `The agent review found ${findings.length} finding(s), but Claude is already open on this PR, so no fix session was started. Use "Fix in Claude" on the Findings tab to paste the findings into it.`, level: "info", timeout: 10000 });
+    }
+  } catch (error) {
+    notify({ title, body: String(error?.message ?? error), level: "error", timeout: 10000 });
+  }
+}
+
+export function setRunsArchived(runIds, archived) {
+  const ids = new Set(runIds);
+  return updateStore((state) => {
+    for (const run of Object.values(state.runs)) {
+      if (!ids.has(run.id)) continue;
+      if (archived) run.archivedAt = new Date().toISOString();
+      else delete run.archivedAt;
+    }
+  });
+}
+
+export function markFindingsPosted(key, findingIds) {
+  const ids = new Set(findingIds);
+  return updateStore((state) => {
+    for (const finding of state.findings[key] ?? []) if (ids.has(finding.id)) finding.posted = true;
+  });
 }
 
 export function setFindingState(key, findingId, value) {
   return updateStore((state) => {
     for (const finding of state.findings[key] ?? []) if (finding.id === findingId) finding.state = value;
   });
-}
-
-export function findingsMarkdown(findings) {
-  return [
-    "**Code review findings**",
-    "",
-    ...findings.map((finding) => `- **${finding.title}**${finding.path ? ` — \`${finding.path}${finding.line ? `:${finding.line}` : ""}\`` : ""}${finding.severity ? ` (${finding.severity})` : ""}\n  ${finding.body.replace(/\n/g, "\n  ")}`),
-  ].join("\n");
 }

@@ -3,8 +3,8 @@ import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { theme, props, openOverlay, closeOverlay, shared, setShared, run, machines, notify, layout, nextCommand, focused, window } from "herdr";
 import { loadStore, store, updateStore, prKey, newId } from "./store.js";
 import { fetchMyPrs, fetchReviews, fetchDetail, statusPill, needsReview, readyToMerge, comparePriority, isOrgWide, ownerOf, applyTrunk, rateLimitPause, RateLimited } from "./github.js";
-import { mergePr, markReady, updateBranch, rerunFailed, approvePr, commentOnPr, resolveThread, openUrl, copyText, markdownLink, toggleWatch, toggleHidden, report, usesTrunk, isTrunkPr, mergesThroughQueue } from "./actions.js";
-import { startFixSession, startReview, syncRuns, fixPrompt, findingsFixPrompt, reviewPromptForOthers, reusedSessionPrompt, setFindingState, findingsMarkdown } from "./agents.js";
+import { mergePr, markReady, updateBranch, rerunFailed, approvePr, postFindingsReview, resolveThread, openUrl, copyText, markdownLink, toggleWatch, toggleHidden, report, usesTrunk, isTrunkPr, mergesThroughQueue } from "./actions.js";
+import { startFixSession, startReview, syncRuns, fixPrompt, findingsFixPrompt, reviewPromptForOthers, reusedSessionPrompt, setFindingState, markFindingsPosted, setRunsArchived } from "./agents.js";
 import { processSnapshot, TRIGGERS, ACTION_KINDS } from "./automation.js";
 import { loadConfig, config, updateConfig, configPath, machineLabel } from "./config.js";
 import { forgetCheckouts, checkoutFor } from "./runner.js";
@@ -301,6 +301,7 @@ export default class Prs extends View {
     this.viaFilter = null;
     this.savedFilter = null;
     this.showHidden = false;
+    this.showArchived = false;
     this.mine = shared("prs.cache.mine") ?? null;
     this.reviews = shared("prs.cache.reviews") ?? null;
     this.width = 0;
@@ -1323,24 +1324,55 @@ export default class Prs extends View {
   codeRows(t) {
     const runs = Object.values(store().runs).filter((run) => run.kind === "review" && !run.interactive).sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt));
     if (!runs.length) return [empty(t, "No agent reviews yet. Right-click a PR and pick Agent review.")];
-    return runs.map((run) => {
-      const findings = store().findings[prKey(run.repo, run.number)] ?? [];
-      const mineFindings = findings.filter((finding) => finding.runId === run.id);
-      const open = mineFindings.filter((finding) => finding.state === "open").length;
-      const dismissed = mineFindings.filter((finding) => finding.state === "dismissed").length;
-      const pr = this.findPr(run.repo, run.number);
-      return v_flex()
-        .id(`prs-code-${run.id}`)
-        .px(8)
-        .py(7)
-        .gap(4)
-        .rounded(8)
-        .cursor_pointer()
-        .hover((el) => el.bg(t.hover))
-        .on_click(() => openOverlay({ mod: "prs", kind: "dialog", width: 760, height: 700, props: { mode: "sheet", pr, tab: "findings" } }))
-        .child(h_flex().gap(6).items_center().child(this.runBadge(t, run)).child(div().flex_1().min_w(0).truncate().child(run.title)))
-        .child(div().truncate().text_size(11).text_color(t.dim).child(`${run.repo}#${run.number} · started ${ago(run.startedAt)}${run.status === "done" ? ` · ${open} open${dismissed ? `, ${dismissed} dismissed` : ""}` : ""}${run.summary && run.status === "failed" ? ` · ${run.summary}` : ""}`));
-    });
+    const active = runs.filter((run) => !run.archivedAt);
+    const archived = runs.filter((run) => run.archivedAt);
+    const finished = active.filter((run) => run.status !== "running");
+    const rows = [];
+    if (finished.length > 1) {
+      rows.push(h_flex().px(8).pb(6).child(button(t, "prs-code-archive-all", `Archive ${finished.length} finished`, () => setRunsArchived(finished.map((run) => run.id), true), { small: true, icon: "tick" })));
+    }
+    if (!active.length) rows.push(empty(t, "Every review is archived."));
+    rows.push(...active.map((run) => this.codeRow(t, run)));
+    if (archived.length) {
+      rows.push(
+        h_flex()
+          .id("prs-code-archived")
+          .px(8)
+          .py(10)
+          .text_size(12)
+          .text_color(t.dim)
+          .cursor_pointer()
+          .hover((s) => s.text_color(t.foreground))
+          .on_click((_e, cx) => {
+            this.showArchived = !this.showArchived;
+            cx.notify();
+          })
+          .child(`${this.showArchived ? "Hide" : "Show"} ${archived.length} archived review${archived.length === 1 ? "" : "s"}`),
+      );
+      if (this.showArchived) rows.push(...archived.map((run) => this.codeRow(t, run)));
+    }
+    return rows;
+  }
+
+  codeRow(t, run) {
+    const findings = store().findings[prKey(run.repo, run.number)] ?? [];
+    const mineFindings = findings.filter((finding) => finding.runId === run.id);
+    const open = mineFindings.filter((finding) => finding.state === "open").length;
+    const dismissed = mineFindings.filter((finding) => finding.state === "dismissed").length;
+    const pr = this.findPr(run.repo, run.number);
+    return v_flex()
+      .id(`prs-code-${run.id}`)
+      .px(8)
+      .py(7)
+      .gap(4)
+      .rounded(8)
+      .cursor_pointer()
+      .hover((el) => el.bg(t.hover))
+      .when(Boolean(run.archivedAt), (el) => el.opacity(0.6))
+      .on_click(() => openOverlay({ mod: "prs", kind: "dialog", width: 760, height: 700, props: { mode: "sheet", pr, tab: "findings" } }))
+      .child(h_flex().gap(6).items_center().child(this.runBadge(t, run)).child(div().flex_1().min_w(0).truncate().child(run.title))
+        .when(run.status !== "running", (el) => el.child(button(t, `prs-code-archive-${run.id}`, run.archivedAt ? "Restore" : "Archive", () => setRunsArchived([run.id], !run.archivedAt), { small: true, ghost: true, icon: run.archivedAt ? null : "tick" }))))
+      .child(div().truncate().text_size(11).text_color(t.dim).child(`${run.repo}#${run.number} · started ${ago(run.startedAt)}${run.status === "done" ? ` · ${open} open${dismissed ? `, ${dismissed} dismissed` : ""}` : ""}${run.summary && run.status === "failed" ? ` · ${run.summary}` : ""}${run.archivedAt ? ` · archived ${ago(run.archivedAt)}` : ""}`));
   }
 
   initSettingsForm() {
@@ -2128,9 +2160,12 @@ export default class Prs extends View {
   }
 
   findingsTab(t, pr, findings) {
+    const reviewedHead = (list) => (new Set(list.map((finding) => finding.headSha)).size === 1 ? list[0].headSha : null);
     const key = prKey(pr.repo, pr.number);
     const open = findings.filter((finding) => finding.state === "open");
+    const unposted = open.filter((finding) => !finding.posted);
     const reviewRunning = Object.values(store().runs).some((run) => run.kind === "review" && run.status === "running" && run.repo === pr.repo && run.number === pr.number);
+    const currentRun = store().runs[store().findingsFrom?.[key]?.runId];
     const rows = [
       h_flex()
         .gap(6)
@@ -2142,7 +2177,12 @@ export default class Prs extends View {
           if (started !== true) return handOff(pr, prompt, "findings", started);
           return { ok: true, message: `Opened a Claude session on ${agentsWhere()}.` };
         }), { primary: true })))
-        .when(open.length > 0, (el) => el.child(button(t, "prs-f-post", "Post to PR", () => act(pr, "post", `Post findings to #${pr.number}`, () => commentOnPr(pr, findingsMarkdown(open)))))),
+        .when(open.length > 0, (el) => el.child(button(t, "prs-f-post", unposted.length ? `Post ${unposted.length} to PR` : "Posted to PR", () => act(pr, "post", `Post findings to #${pr.number}`, async () => {
+          const result = await postFindingsReview(pr, unposted, reviewedHead(unposted));
+          if (result.ok) await markFindingsPosted(key, unposted.map((finding) => finding.id));
+          return result;
+        }), { disabled: !unposted.length || Boolean(shared("prs.busy")?.[busyKey(pr, "post")]) })))
+        .when(Boolean(currentRun) && currentRun.status !== "running", (el) => el.child(button(t, "prs-f-archive", currentRun.archivedAt ? "Restore review" : "Archive review", () => setRunsArchived([currentRun.id], !currentRun.archivedAt), { icon: currentRun.archivedAt ? null : "tick", tooltip: "Archived reviews leave Code review's list; find them under Show archived." }))),
     ];
     if (!findings.length) rows.push(empty(t, reviewRunning ? `The review is running on ${agentsWhere()}. Findings show up here when the judge finishes.` : "No findings. Start a review to run the correctness, security, reliability and tests lenses, then a judge."));
     for (const finding of findings) {
