@@ -12,7 +12,7 @@ import { loadTrunk, dequeue, resetTrunk } from "./trunk.js";
 import { fetchServices, isIncident, queueService, statusOverview } from "./status.js";
 import { sidebarHeader, sidebarMine, sidebarReviews, sidebarRail, statusLine, prIcon, progressLine, stackHeader, gatesFor, splitByNeed, isQuiet, rowButtons, nextFor, needsYou, workRank } from "./sidebar.js";
 import { visualAsks, stackGroups, withoutDraftStacks, step, queueFor, withTrunkQueue } from "./steps.js";
-import { openClaude, CLAUDE_ICON } from "./claude.js";
+import { openClaude, sendToAgent, CLAUDE_ICON } from "./claude.js";
 import { ago, button, iconButton, glyphButton, textIconButton, chip, badge, section, empty, field, menuItem, SPINNER, tone, TEXT, tint, avatar, countPill, codePill, gateStrip, titleText, readable } from "./ui.js";
 import { readiness, groupChecks, rowMatches, tallyChecks, tallyText, tallyLabel, worstBucket, mergeStateNote, changeShape, parseMarkdown } from "./sheet.js";
 
@@ -122,7 +122,19 @@ function cleanBody(body) {
   return text.trim();
 }
 const keepFocus = (_e, cx) => cx.stop_propagation();
-const handOff = (pr, prompt, what) => copyText(reusedSessionPrompt(pr, prompt), `This PR is already open in a space, so it's shown instead. The ${what} prompt is on your clipboard to paste into Claude there.`);
+async function handOff(pr, prompt, what, started) {
+  const text = reusedSessionPrompt(pr, prompt);
+  const agent = started?.shown?.agent;
+  if (agent) {
+    sendToAgent(agent, text).then(async (sent) => {
+      if (sent) return;
+      const copied = await copyText(text);
+      notify({ title: `#${pr.number} ${pr.title}`, body: copied.ok ? `Couldn't send the ${what} prompt to Claude there, so it's on your clipboard to paste.` : `Couldn't send the ${what} prompt to Claude there.`, level: "warning", timeout: 10000 });
+    });
+    return { ok: true, message: `Claude is already open on this PR, so the ${what} prompt is going there.` };
+  }
+  return copyText(text, `This PR is already open in a space, so it's shown instead. The ${what} prompt is on your clipboard to paste into Claude there.`);
+}
 const samePr = (a, b) => a.repo === b.repo && a.number === b.number;
 
 function claudeOn(pr) {
@@ -168,7 +180,8 @@ export const NAMED = {
   rerunFailed: (pr) => act(pr, "rerun", `Rerun failed checks on #${pr.number}`, () => rerunFailed(pr)),
   fix: (pr) => act(pr, "fix", `Fix #${pr.number}`, async () => {
     const prompt = fixPrompt(pr);
-    if ((await startFixSession(pr, prompt)) === false) return handOff(pr, prompt, "fix");
+    const started = await startFixSession(pr, prompt);
+    if (started !== true) return handOff(pr, prompt, "fix", started);
     return { ok: true, message: `Opened a Claude session on ${agentsWhere()}.` };
   }),
   agentReview: (pr) => act(pr, "review", `Agent review of #${pr.number}`, async () => {
@@ -177,7 +190,8 @@ export const NAMED = {
   }),
   reviewInClaude: (pr) => act(pr, "claude-review", `Review #${pr.number}`, async () => {
     const prompt = reviewPromptForOthers(pr);
-    if ((await startFixSession(pr, prompt, "review")) === false) return handOff(pr, prompt, "review");
+    const started = await startFixSession(pr, prompt, "review");
+    if (started !== true) return handOff(pr, prompt, "review", started);
     return { ok: true, message: `Opened a Claude review session on ${agentsWhere()}.` };
   }),
   approve: (pr) => act(pr, "approve", `Approve #${pr.number}`, () => approvePr(pr)),
@@ -2100,7 +2114,8 @@ export default class Prs extends View {
         .child(button(t, "prs-f-review", reviewRunning ? "Review running…" : findings.length ? "Review again" : "Start review", () => NAMED.agentReview(pr), { primary: !findings.length, disabled: reviewRunning }))
         .when(open.length > 0 && pr.mine, (el) => el.child(button(t, "prs-f-fix", `Fix ${open.length} in Claude`, () => act(pr, "fix", `Fix findings on #${pr.number}`, async () => {
           const prompt = findingsFixPrompt(pr, open);
-          if ((await startFixSession(pr, prompt)) === false) return handOff(pr, prompt, "findings");
+          const started = await startFixSession(pr, prompt);
+          if (started !== true) return handOff(pr, prompt, "findings", started);
           return { ok: true, message: `Opened a Claude session on ${agentsWhere()}.` };
         }), { primary: true })))
         .when(open.length > 0, (el) => el.child(button(t, "prs-f-post", "Post to PR", () => act(pr, "post", `Post findings to #${pr.number}`, () => commentOnPr(pr, findingsMarkdown(open)))))),

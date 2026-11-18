@@ -75,9 +75,11 @@ ${prompt}`;
 export async function startFixSession(pr, prompt, label = "fix", { bareSpaces = true } = {}) {
   const tabName = `${label} ${prRef(pr)}`;
   return launchOnce(tabName, async () => {
-    if (await showPrWork(pr, { bareSpaces })) return false;
+    const shown = await showPrWork(pr, { bareSpaces });
+    if (shown) return { shown };
     await loadConfig();
-    if (await showPrWork(pr, { bareSpaces })) return false;
+    const shownLater = await showPrWork(pr, { bareSpaces });
+    if (shownLater) return { shown: shownLater };
     const machine = await launchClaudeOnPr(pr, [prompt], tabName);
     await updateStore((state) => {
       const id = newId();
