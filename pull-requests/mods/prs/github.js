@@ -85,18 +85,18 @@ async function hourlyReset() {
 async function recordRateLimit() {
   if (rateLimitPause()) return;
   const strikes = (shared(RATE_LIMIT_KEY)?.strikes ?? 0) + 1;
-  const backoff = Date.now() + Math.min(FIRST_PAUSE_MS * 2 ** (strikes - 1), LONGEST_PAUSE_MS);
+  const pause = { until: Date.now() + Math.min(FIRST_PAUSE_MS * 2 ** (strikes - 1), LONGEST_PAUSE_MS), strikes };
+  setShared(RATE_LIMIT_KEY, pause);
   const reset = await hourlyReset();
-  setShared(RATE_LIMIT_KEY, { until: Math.max(backoff, reset ?? 0), strikes });
+  if (reset && reset > pause.until && shared(RATE_LIMIT_KEY)?.until === pause.until) setShared(RATE_LIMIT_KEY, { ...pause, until: reset });
 }
 
-function clearRateLimit() {
-  if (shared(RATE_LIMIT_KEY)?.strikes) setShared(RATE_LIMIT_KEY, null);
+function clearRateLimit(sentAt) {
+  const pause = shared(RATE_LIMIT_KEY);
+  if (pause?.strikes && sentAt >= pause.until) setShared(RATE_LIMIT_KEY, null);
 }
 
 export async function graphql(query, variables = {}) {
-  const pause = rateLimitPause();
-  if (pause) throw new RateLimited(pause.message);
   const args = ["api", "graphql", "-f", `query=${query}`];
   for (const [key, value] of Object.entries(variables)) {
     if (value === null || value === undefined) continue;
@@ -104,13 +104,16 @@ export async function graphql(query, variables = {}) {
   }
   let error = null;
   for (let attempt = 0; attempt < 3; attempt++) {
+    const pause = rateLimitPause();
+    if (pause) throw new RateLimited(pause.message);
+    const sentAt = Date.now();
     const result = await exec("gh", args);
     let parsed = null;
     try {
       parsed = JSON.parse(result.stdout);
     } catch {}
     if (parsed?.data && !parsed.errors?.length) {
-      clearRateLimit();
+      clearRateLimit(sentAt);
       return parsed.data;
     }
     error = new Error(parsed?.errors?.[0]?.message ?? (result.stderr.split("\n").filter((line) => line && !line.startsWith("*")).pop() || `gh exited ${result.code}`));

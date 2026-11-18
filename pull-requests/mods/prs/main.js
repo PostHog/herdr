@@ -399,7 +399,7 @@ export default class Prs extends View {
   pollDue(cx) {
     const slowdown = window()?.active ? 1 : UNFOCUSED_SLOWDOWN;
     const now = Date.now();
-    const due = (startedAt, every) => now - (startedAt ?? now) >= every * slowdown;
+    const due = (startedAt, every) => startedAt === undefined || now - startedAt >= every * slowdown;
     if (due(this.mineStartedAt, MINE_EVERY_MS)) this.loadMine(cx);
     if (due(this.reviewsStartedAt, REVIEWS_EVERY_MS)) this.loadReviews(cx);
     if (due(this.trunkStartedAt, TRUNK_EVERY_MS)) this.loadTrunkData(cx);
