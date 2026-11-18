@@ -5,7 +5,7 @@ import { View, div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { agents, panes, terminals, run, theme, shared, setShared } from "herdr";
 import { VIEW, GITHUB, TRIAGED, ROW, HEADER, COLS, MAX_ROWS, CARD_W, CARD_H, GAP, ago } from "./shared.js";
-import { stepSim } from "./visualizer.js";
+import { stepSim, drawSim } from "./visualizer.js";
 import { readContext, readBackground, pruneContext, linkParents, agentsViews, usageHeight } from "./agents.js";
 import { readUsage } from "./usage.js";
 import { tableParts } from "./table.js";
@@ -46,12 +46,14 @@ export default class SquirrelPanel extends View {
     cx.spawn(async (cx) => {
       for (;;) {
         await cx.sleep(60);
-        if (this.view() !== "mine" || !(shared(GITHUB)?.merged ?? []).length || !this.vizSize) continue;
         const nowMs = Date.now(), dt = Math.min(0.1, (nowMs - (this.vizAt ?? nowMs)) / 1000);
         this.vizAt = nowMs;
         this.sims ??= {};
-        for (const key of ["left", "right"]) this.sims[key] = stepSim(this.sims[key], ...this.vizSize[key], dt);
-        cx.notify();
+        // The strip in the tab bar runs in every view; the merged-rows canvases only on My PRs.
+        if (this.headerViz) this.sims.header = stepSim(this.sims.header, ...this.headerViz, dt);
+        if (this.view() === "mine" && (shared(GITHUB)?.merged ?? []).length && this.vizSize)
+          for (const key of ["left", "right"]) this.sims[key] = stepSim(this.sims[key], ...this.vizSize[key], dt);
+        if (this.headerViz || this.view() === "mine") cx.notify();
       }
     });
     this.starting = {};
@@ -78,6 +80,7 @@ export default class SquirrelPanel extends View {
   render() {
     const t = theme();
     const view = this.view();
+    const aiTags = Object.values(shared("squirrel.ai-triage") ?? {});
     const gh = shared(GITHUB) ?? {};
     const marks = shared(TRIAGED) ?? {};
     const reviewCount = (gh.prs ?? []).filter((p) => !p.draft && (!marks[p.url] || this.resurfaced(p, marks[p.url]))).length;
@@ -112,9 +115,19 @@ export default class SquirrelPanel extends View {
         .child(tab("agents", `Running agents (${agents().length})`))
         .child(tab("reviews", `Reviews (${reviewCount})`))
         .child(tab("mine", `My PRs (${(gh.mine ?? []).length})`))
-        .child(div().flex_1())
+        .child(div().flex_1().min_w(0).h(HEADER - 8).mx(8).relative().rounded(4).overflow_hidden().bg("#00000055")
+          .on_size_change((size, cx) => {
+            const next = [Math.round(size.width), Math.round(size.height)];
+            if (next[0] < 40) { this.headerViz = null; return; }
+            if (this.headerViz?.[0] === next[0] && this.headerViz?.[1] === next[1]) return;
+            this.headerViz = next;
+            cx?.notify();
+          })
+          .children(this.headerViz ? drawSim(this.sims?.header, t.dim) : []))
         .when(view !== "agents", (el) => el
           .when(Boolean(gh.error), (el) => el.child(div().text_size(10.5).text_color(t.ansi1).child(gh.error)))
+          .when(view === "reviews" && aiTags.length > 0, (el) => el.child(div().id("ai-score").text_size(10.5).text_color(t.dim).mr(8)
+            .tooltip("AI tags you haven't flipped, out of all tagged PRs").child(`AI right ${aiTags.filter((x) => !x.corrected).length}/${aiTags.length}`)))
           .child(div().text_size(10.5).text_color(t.dim).child(gh.loading ? "refreshing…" : gh.at ? `updated ${ago(gh.at)} ago` : "loading…"))
           .child(div().id("gh-refresh").h(22).px(6).flex().items_center().rounded(4).text_size(11).text_color(t.muted)
             .hover((s) => s.bg(t.hover).text_color(t.foreground)).on_click(() => run("squirrel-topbar.gh_refresh")).child("Refresh"))))

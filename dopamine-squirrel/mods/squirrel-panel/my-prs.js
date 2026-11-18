@@ -131,7 +131,14 @@ export const myPrViews = {
     };
 
     // On your own PR, CC works through the reviewers' comments rather than explaining the PR.
-    const handlePrompt = (p) => `Handle the review on my PR ${p.url}: read every open thread and comment. Fix what's clear and common sense, and reply on the thread saying what you changed. For anything that needs my judgment or taste, ask me first. Be clear, concise and direct.`;
+    const handlePrompt = (p) => [
+      `Review comments on my PR ${p.url}. Read every unresolved thread, review body and comment, and the CI status.`,
+      "Some comments are from people, some from bots. Bot findings are usually right but not always: check each against the code before agreeing with it.",
+      "An item is mechanical only if it's lint or formatting, a typo or copy fix, or a test broken in an obvious way. A reviewer's direct request is never mechanical, however easy it looks.",
+      "Fix mechanical items now and push them to the PR's branch (never force-push). Don't change anything else, and don't reply, react or resolve anything.",
+      "Then give me one list, one row per item: who asked and what, your take (agree, disagree, or needs me), the change you'd make, and a draft reply in my voice.",
+      "Wait for my go, then do only what I approve, and post only the replies I approved, worded as I approved them. Be clear, concise and direct, no filler or pedantry.",
+    ].join(" ");
     const ccButton = (p) => this.iconButton(`mine-review-${p.url}`, "mods/squirrel-panel/open-pane.svg", (_e, cx) => this.review(p, cx, handlePrompt(p)), t,
       { spin: this.starting[p.url], color: this.reviewPane(p) ? t.accent : t.muted });
     const queueButton = (p) => {

@@ -21,7 +21,7 @@ Laid out for a vertical monitor; works on a wide one too. [README.md](README.md)
 
 - Tabs on the left, hidden while you only have one. `+`, Changes, GitHub, standup, search, settings on the right.
 - **GitHub badge**: the number of PRs waiting on your review that you haven't triaged. Click it for the Reviews view.
-- **Fact-check button** (Slack icon): opens a pane below with Claude (Opus, high effort) primed to fact-check the Slack link or screenshot you paste next. It answers "Paste it." and waits.
+- **Fact-check button** (Slack icon): opens a pane below with Claude (Opus, high effort) and the fact-check request already typed in, unsent, so you paste a Slack link or screenshot and press Enter. It borrows the clipboard to type the request and puts all of it back, images included (`mods/squirrel-topbar/clipboard.js`).
 - **Standup button** (megaphone): opens a pane below running Claude with your standup skill. A second click jumps to that pane.
 - **Glow**: soft neon bands drifting behind the bar, 7 s per colour, with a rim of the normal bar colour. `glow.js`.
 - `cmd-w` asks before closing a pane, so a stray key never kills an agent.
@@ -96,6 +96,7 @@ Laid out for a vertical monitor; works on a wide one too. [README.md](README.md)
 - `reviewSkill`, `standupSkill`: project skills the CC and standup buttons ask Claude to load from the PostHog MCP.
 - `standupCommand`: how the standup pane starts Claude. Defaults to `["claude"]`; the example uses a second Claude subscription.
 - `posthogCheckout`: where `trunk` runs. Uses that checkout's flox `trunk` when there is one, else `trunk` on your PATH.
+- `nicknames`: short names for GitHub logins on the teammate-approved chips, e.g. `{"octocat": "cat"}`.
 - `claudeProfiles`: the Claude subscriptions the plan limits strip reads, by config folder. Defaults to `~/.claude`, named "claude". The first `/usage` read in a profile trusts the empty folder `~/.config/herdr-app/data/squirrel/usage` for it.
 
 ## Claude status
@@ -112,6 +113,6 @@ Context % and session cost come from Claude Code's statusline input, and so do l
 
 ## For agents changing this
 
-- Shared state keys: `squirrel.github` (PR lists, written by the top bar), `squirrel.triaged`, `squirrel.visited`, `squirrel.view`, `squirrel.pane-names`, `squirrel.review-panes`, `squirrel.review-sessions`, `squirrel.standup-pane`, `squirrel.settings`.
+- Shared state keys: `squirrel.github` (PR lists, written by the top bar), `squirrel.triaged`, `squirrel.visited`, `squirrel.view`, `squirrel.pane-names`, `squirrel.review-panes`, `squirrel.review-sessions`, `squirrel.standup-pane`, `squirrel.settings`, `squirrel.ai-triage`, `squirrel.ai-triage-feedback`, `squirrel.ai-triage-learned`.
 - The top bar owns fetching. The panel only reads `squirrel.github`, so a different fetcher can feed it.
 - Panel views are mixins on one `View`: `agents.js`, `reviews.js`, `my-prs.js`, with `table.js` for the shared cells and `shared.js` for constants.
