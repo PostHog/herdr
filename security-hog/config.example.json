@@ -1,0 +1,8 @@
+{
+  "url": "REPLACE with SecurityHog's MCP address, from its README",
+  "team": "team-devex",
+  "repos": {
+    "PostHog/posthog": "~/workspace/posthog"
+  },
+  "agent": "claude"
+}
