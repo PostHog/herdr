@@ -64,6 +64,7 @@ export default class SquirrelPanel extends View {
     this.mergedNow = {};
     this.expanded = {};
     this.leaving = {};
+    this.undo = [];
     this.showTriaged = false;
   }
 
@@ -81,7 +82,6 @@ export default class SquirrelPanel extends View {
   render() {
     const t = theme();
     const view = this.view();
-    const aiTags = Object.values(shared("squirrel.ai-triage") ?? {});
     const gh = shared(GITHUB) ?? {};
     const marks = shared(TRIAGED) ?? {};
     const reviewCount = (gh.prs ?? []).filter((p) => !p.draft && (!marks[p.url] || this.resurfaced(p, marks[p.url]))).length;
@@ -128,8 +128,10 @@ export default class SquirrelPanel extends View {
         .when(view !== "agents", (el) => el
           .when(Boolean(gh.error), (el) => el.child(div().id("gh-error").max_w(320).truncate().text_size(10.5).text_color(t.ansi1).cursor_pointer().underline()
             .tooltip("Show the full error").on_click(() => openOverlay({ mod: "squirrel-error" })).child(gh.error)))
-          .when(view === "reviews" && aiTags.length > 0, (el) => el.child(div().id("ai-score").text_size(10.5).text_color(t.dim).mr(8)
-            .tooltip("AI tags you haven't flipped, out of all tagged PRs").child(`AI right ${aiTags.filter((x) => !x.corrected).length}/${aiTags.length}`)))
+          .when(view === "reviews" && this.undo.length > 0, (el) => el.child(div().id("undo").h(22).px(6).mr(4).flex().items_center().rounded(4)
+            .text_size(13).text_color(t.muted).hover((s) => s.bg(t.hover).text_color(t.foreground))
+            .tooltip(`Undo ${{ done: "Done", watch: "Watch" }[this.undo.at(-1).mode] ?? "untick"} on #${this.undo.at(-1).number}`)
+            .on_click(() => this.undoTriage()).child("↶")))
           .child(div().text_size(10.5).text_color(t.dim).child(gh.loading ? "refreshing…" : gh.at ? `updated ${ago(gh.at)} ago` : "loading…"))
           .child(div().id("gh-refresh").h(22).px(6).flex().items_center().rounded(4).text_size(11).text_color(t.muted)
             .hover((s) => s.bg(t.hover).text_color(t.foreground)).on_click(() => run("squirrel-topbar.gh_refresh")).child("Refresh"))))

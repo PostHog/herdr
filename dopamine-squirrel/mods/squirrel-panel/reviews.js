@@ -80,12 +80,23 @@ export const reviewViews = {
       return;
     }
     const marks = { ...(shared(TRIAGED) ?? {}) };
+    this.undo.push({ url: pr.url, number: pr.number, mode, prev: marks[pr.url] });
     if (mode === "done") marks[pr.url] = Date.now();
     else if (mode === "watch") marks[pr.url] = { at: Date.now(), watch: true };
     else delete marks[pr.url];
     setShared(TRIAGED, marks);
     if (mode && open.length === 1 && open[0].url === pr.url)
       run("mod.open", { name: "squirrel-confetti" });
+  },
+
+  // Puts the newest Done, Watch or Seen click back the way it was.
+  undoTriage() {
+    const last = this.undo.pop();
+    if (!last) return;
+    const marks = { ...(shared(TRIAGED) ?? {}) };
+    if (last.prev === undefined) delete marks[last.url];
+    else marks[last.url] = last.prev;
+    setShared(TRIAGED, marks);
   },
 
   // Clicking an AI tag flips it to your call; clicking again hands the call back to the AI. A flip or a
