@@ -16,7 +16,8 @@ function find(node, id) {
   return null;
 }
 
-const isDevbox = (machine) => Boolean(machine?.target?.endsWith(".coder"));
+// Coder's default ssh hosts end in .coder; `hogli devbox:setup` writes coder.<workspace> instead.
+const isDevbox = (machine) => /\.coder$|^coder\.[^.]/.test(machine?.target ?? "");
 const devboxUi = (name) => terminals().find((t) => t.labels?.["coder-devbox.ui"] === name && t.state === "live" && !String(t.address).includes("/"));
 
 // The sidebar's rail goes by its width, not a flag: dragging its edge narrows it too.
@@ -248,7 +249,7 @@ export default class Spaces extends View {
   }
 
   devbox(machine, action = null) {
-    openOverlay({ mod: "coder-devbox", kind: "popup", width: 240, height: 440, props: { machine: machine.name, target: machine.target, action } });
+    openOverlay({ mod: "coder-devbox", kind: "popup", width: 240, height: 620, props: { machine: machine.name, target: machine.target, action } });
   }
 
   devboxChip(machine, t) {

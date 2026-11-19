@@ -3,6 +3,8 @@ import { appHome, exec, hc, home, readTextFile, spaces, terminals } from "herdr"
 const UI_LABEL = "coder-devbox.ui";
 const PORT_LABEL = "coder-devbox.port";
 const CODER_SUFFIX = ".coder";
+// `hogli devbox:setup` runs `coder config-ssh` with this prefix, so its hosts are coder.<workspace>[.<agent>].
+const CODER_PREFIX = "coder.";
 const CHECKOUT_PARENTS = ["workspace", "", "code", "src", "dev", "projects", "repos", "git"];
 const READINESS_TRIES = 180;
 
@@ -27,9 +29,13 @@ PYTHONUNBUFFERED=1 bin/hogli devbox:forward "$target" 2>&1 | while IFS= read -r 
   esac
 done`;
 
-export const isDevbox = (machine) => Boolean(machine?.target?.endsWith(CODER_SUFFIX));
+export const isDevbox = (machine) => {
+  const target = machine?.target ?? "";
+  return target.endsWith(CODER_SUFFIX) || (target.startsWith(CODER_PREFIX) && target.length > CODER_PREFIX.length);
+};
 
 export function coderWorkspace(target) {
+  if (target.startsWith(CODER_PREFIX)) return { workspace: target.slice(CODER_PREFIX.length).split(".")[0], owner: null };
   const parts = target.slice(0, -CODER_SUFFIX.length).split(".");
   if (parts.length === 1) return { workspace: parts[0], owner: null };
   return { workspace: parts[parts.length - 2], owner: parts[parts.length - 1] };
@@ -81,6 +87,18 @@ export async function findCheckout() {
     if (await hasHogli(dir)) return dir;
   }
   return null;
+}
+
+// hogli.yaml lists every command under its group, indented. A checkout from before a command
+// landed doesn't have it, so the menu leaves that row out instead of failing on a click.
+export async function hogliCommands(checkout) {
+  try {
+    const text = await readTextFile(`${checkout}/hogli.yaml`);
+    const names = [...(text ?? "").matchAll(/^\s+([a-z][\w-]*(?::[\w-]+)+):\s*$/gm)].map((m) => m[1]);
+    return names.length ? new Set(names) : null;
+  } catch {
+    return null;
+  }
 }
 
 export function uiForward(machineName) {

@@ -1,15 +1,20 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { checking, closeOverlay, props, run, spaces, theme, window as appWindow } from "herdr";
+import { checking, closeOverlay, machines, props, run, spaces, theme, window as appWindow } from "herdr";
 import {
   browserOpener, coderUsername, coderWorkspace, collectEndedForward, commandInTab, findCheckout,
-  hogliTarget, loginShell, openInBrowser, runDetached, startUiForward, stopUiForward, uiForward,
+  hogliCommands, hogliTarget, loginShell, openInBrowser, runDetached, startUiForward, stopUiForward, uiForward,
 } from "./hogli.js";
 
 const COMMANDS = [
   { label: "Status", args: ["devbox:status"] },
+  { label: "Check box setup", args: ["devbox:check"] },
   { label: "Logs", args: ["devbox:logs", "-f"] },
   { label: "Sync my checkout", args: ["devbox:sync"] },
+  { label: "Log in to Claude", args: ["devbox:claude:login"] },
+  { label: "Log in to GitHub", args: ["devbox:gh:login"] },
+  { label: "Log in to Trunk", args: ["devbox:trunk:login"] },
+  { label: "Apply dotfiles", args: ["devbox:dotfiles"] },
   { label: "Open in VS Code", args: ["devbox:open", "--vscode"], detached: true },
   { label: "Open in Cursor", args: ["devbox:open", "--cursor"], detached: true },
   { label: "Restart", args: ["devbox:restart"] },
@@ -20,6 +25,15 @@ const COMMANDS = [
 ];
 
 const START_WATCH_MS = 500;
+const REMOTE_CONTROL_TAB = "Claude Remote Control";
+// Remote Control lives as long as the terminal that runs it, so it gets its own tab on the box.
+// Remote Control can stop, for example before a login on the box. The space keeps it one Enter away
+// instead of leaving a plain shell, because a click on the row only selects the existing space.
+const REMOTE_CONTROL_ARGV = [
+  "bash",
+  "-lc",
+  'cd ~/posthog 2>/dev/null; while true; do claude remote-control; echo "Remote Control stopped. Press Enter to start it again, or Ctrl-D for a shell."; read -r || break; done; exec bash -l',
+];
 
 export default class DevboxMenu extends View {
   init(_props, cx) {
@@ -28,6 +42,7 @@ export default class DevboxMenu extends View {
     this.box = target ? coderWorkspace(target) : { workspace: "", owner: null };
     this.target = null;
     this.checkout = undefined;
+    this.commands = null;
     this.shell = null;
     this.starting = false;
     this.busyCommand = null;
@@ -37,6 +52,7 @@ export default class DevboxMenu extends View {
       const [checkout, shell, me] = await Promise.all([findCheckout(), loginShell(), coderUsername()]);
       this.checkout = checkout;
       this.shell = shell;
+      this.commands = checkout ? await hogliCommands(checkout) : null;
       try {
         this.target = hogliTarget(this.box, me);
       } catch (error) {
@@ -123,6 +139,17 @@ export default class DevboxMenu extends View {
     this.close();
   }
 
+  remoteControlSpace() {
+    return spaces().find((s) => s.machine === this.machineName && s.name === REMOTE_CONTROL_TAB);
+  }
+
+  startRemoteControl() {
+    const running = this.remoteControlSpace();
+    if (running) run("space.select", { id: running.id });
+    else run("space.new", { name: REMOTE_CONTROL_TAB, machine: this.machineName, argv: REMOTE_CONTROL_ARGV });
+    this.close();
+  }
+
   render(_cx) {
     const t = theme();
     const running = uiForward(this.machineName);
@@ -154,8 +181,17 @@ export default class DevboxMenu extends View {
       menu.child(div().px(10).py(4).text_size(11.5).text_color(t.dim).child("Looking for your PostHog checkout…"));
     }
 
+    menu.child(item("remote-control", "Claude Remote Control", {
+      detail: this.remoteControlSpace() ? "open" : null,
+      detailColor: t.accent,
+      // machines() reports only whether a machine's layout loaded, which needs its core to answer.
+      enabled: machines().some((m) => m.name === this.machineName && m.layout === "ready"),
+      onClick: () => this.startRemoteControl(),
+    }));
+
     menu.child(div().h(1).mx(6).my(4).bg(t.border));
     for (const command of COMMANDS) {
+      if (this.commands && !this.commands.has(command.args[0])) continue;
       menu.child(item(`cmd-${command.args.join("-")}`, command.label, {
         color: command.danger ? t.blocked : t.foreground,
         detail: this.busyCommand === command.label ? "opening…" : null,
