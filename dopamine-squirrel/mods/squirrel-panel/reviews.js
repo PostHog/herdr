@@ -192,9 +192,13 @@ export const reviewViews = {
     const isDone = (p) => Boolean(marks[p.url]) && !back.get(p.url + p.number);
     // You care (asked by name, tagged You care, or not tagged yet): approved with CI passed, then CI passed, then the rest.
     // Not important last. Longest waiting first in each group.
-    const group = (p) => p.mine || aiTags[p.url]?.verdict !== "skip" ? (p.ci !== "SUCCESS" ? 2 : p.review === "APPROVED" ? 0 : 1) : 3;
-    // The order is set when GitHub data arrives, so a click (a tag flip) never moves rows under the pointer.
-    if (this.reviewOrder?.at !== gh.at) this.reviewOrder = { at: gh.at,
+    // A tag counts only for the commit it was made on (or once you flipped it), the same as it shows.
+    const tagOf = (p) => { const tag = aiTags[p.url]; return tag && (tag.sha === p.headSha || tag.corrected) ? tag : null; };
+    const group = (p) => p.mine || tagOf(p)?.verdict !== "skip" ? (p.ci !== "SUCCESS" ? 2 : p.review === "APPROVED" ? 0 : 1) : 3;
+    // The order is set when GitHub data arrives or the AI tags a PR, so your own click (a tag flip) never
+    // moves rows under the pointer.
+    const aiKey = gh.at + prs.map((p) => { const tag = tagOf(p); return tag ? (tag.corrected ? tag.aiVerdict : tag.verdict) : "-"; }).join();
+    if (this.reviewOrder?.at !== aiKey) this.reviewOrder = { at: aiKey,
       pos: new Map(prs.slice().sort((a, b) => group(a) - group(b) || Date.parse(a.requestedAt) - Date.parse(b.requestedAt)).map((p, i) => [p.url, i])) };
     const sorted = prs.slice().sort((a, b) => (this.reviewOrder.pos.get(a.url) ?? 1e9) - (this.reviewOrder.pos.get(b.url) ?? 1e9));
     const open = sorted.filter((p) => !isDone(p)), done = sorted.filter(isDone);
