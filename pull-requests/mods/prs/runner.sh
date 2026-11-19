@@ -27,6 +27,7 @@ tree="$HOME/.herdr/worktrees/prs/review-${repo//\//-}-$number-$(basename "$dir")
 git -C "$checkout" fetch -q origin "+pull/$number/head:$head_ref" >"$dir/fetch.log" 2>&1 || { tree=""; finish failed "Couldn't fetch the PR head."; }
 git -C "$checkout" worktree add -q --detach "$tree" "$head_ref" >>"$dir/fetch.log" 2>&1 || { tree=""; finish failed "Couldn't create the review worktree."; }
 cd "$tree"
+git rev-parse HEAD > "$dir/head" 2>>"$dir/fetch.log"
 gh pr diff "$number" -R "$repo" > "$dir/diff.patch" 2>>"$dir/fetch.log" || finish failed "Couldn't read the PR diff."
 gh pr view "$number" -R "$repo" --json title,body,baseRefName,headRefName,author > "$dir/pr.json" 2>>"$dir/fetch.log"
 
