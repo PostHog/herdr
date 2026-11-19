@@ -3,7 +3,8 @@ import { v_flex, h_flex } from "gpui-base";
 import { run } from "herdr";
 import { comparePriority } from "./github.js";
 import { step, queueFor, stackGroups, layerWaitingOn, visualAsks, fixable } from "./steps.js";
-import { CLAUDE_ICON } from "./claude.js";
+import { CLAUDE_ICON, agentOnPr, showTab } from "./claude.js";
+import { store } from "./store.js";
 import { ago, tone, actionButton, badge, gateStrip, titleText, TEXT } from "./ui.js";
 import { readiness } from "./sheet.js";
 import { mergesThroughQueue } from "./actions.js";
@@ -28,7 +29,7 @@ export function stat(t, iconName, text, toneName = "dim") {
 }
 
 function botApprovalStat(t, count) {
-  return h_flex().gap(1).flex_none().items_center().child(icon(t, "bot", "ok", 11)).child(icon(t, "approved", "ok", 9)).child(div().ml(2).text_size(TEXT.meta).text_color(tone(t, "ok")).child(String(count)));
+  return h_flex().gap(3).flex_none().items_center().tooltip(`Approved by ${count} bot${count === 1 ? "" : "s"}`).child(icon(t, "bot-approved", "ok", 11)).child(div().text_size(TEXT.meta).text_color(tone(t, "ok")).child(String(count)));
 }
 
 export function progressBar(t, run) {
@@ -120,6 +121,54 @@ export function priorityBadge(t, pr) {
   return chip ? badge(t, chip.label, chip.points > 0 ? "ok" : "dim") : null;
 }
 
+const AGENT_STATUS = {
+  working: { label: "working", tone: "run" },
+  blocked: { label: "needs you", tone: "warn" },
+  done: { label: "done", tone: "ok" },
+  idle: { label: "idle", tone: "dim" },
+};
+
+function agentGlyph(t, agent, size) {
+  const path = agent.program?.icon;
+  if (!path) return image(CLAUDE_ICON).size(size);
+  return agent.program.tint ? svg(path).size(size).text_color(agent.program.color ?? t.foreground) : image(path).size(size);
+}
+
+const reviewRunning = (pr) => Object.values(store().runs).some((run) => run.kind === "review" && run.status === "running" && run.repo === pr.repo && run.number === pr.number);
+
+function workChips(t, pr) {
+  const chips = [];
+  const agent = agentOnPr(pr);
+  if (agent) {
+    const look = AGENT_STATUS[agent.status] ?? AGENT_STATUS.idle;
+    chips.push(div()
+      .id(`prs-agent-${pr.repo}-${pr.number}`)
+      .relative()
+      .size(16)
+      .flex_none()
+      .cursor_pointer()
+      .tooltip(`${agent.program?.name ?? "Agent"} ${look.label} in ${agent.tab_name}. Click to open it.`)
+      .on_click((_e, cx) => {
+        cx.stop_propagation();
+        showTab({ space: agent.space, tab: agent.tab });
+      })
+      .child(h_flex().absolute().top(0).left(0).size(16).items_center().justify_center().child(agentGlyph(t, agent, 10)))
+      .when(agent.status === "working", (el) => el.child(div().absolute().top(0).left(0).child(icon(t, "spinner", look.tone, 16, true))))
+      .when(agent.status === "blocked" || agent.status === "done", (el) => el.child(div().absolute().right(-1).bottom(-1).size(6).rounded(3).border_1().border_color(t.chrome).bg(tone(t, look.tone)))));
+  }
+  if (reviewRunning(pr)) {
+    chips.push(h_flex()
+      .id(`prs-reviewing-${pr.repo}-${pr.number}`)
+      .gap(3)
+      .flex_none()
+      .items_center()
+      .tooltip("A headless agent review is running on this PR.")
+      .child(icon(t, "spinner", "info", 10, true))
+      .child(div().text_size(TEXT.meta).text_color(tone(t, "info")).child("Reviewing")));
+  }
+  return chips;
+}
+
 export function rowButtons(view, t, pr, { scope, next, entry, group, plain = false }) {
   const buttons = [];
   if (scope !== "mine" || !next) return buttons;
@@ -128,7 +177,7 @@ export function rowButtons(view, t, pr, { scope, next, entry, group, plain = fal
   if (next.ready && (!group || group.members.length === 1) && !entry) buttons.push(actionButton(t, `prs-b-merge-${pr.number}`, "merged", mergesThroughQueue(pr) ? "Send to queue…" : "Merge…", () => view.act("merge", pr), "ok", { plain }));
   if (next.requeue) buttons.push(actionButton(t, `prs-b-again-${pr.number}`, "merged", mergesThroughQueue(pr) ? "Send to queue again…" : "Merge again…", () => view.act("merge", pr), "ok", { plain }));
   if (next.behind && pr.mine) buttons.push(actionButton(t, `prs-b-update-${pr.number}`, "refresh", "Update branch", () => view.act("updateBranch", pr), "info", { plain }));
-  if (fixable(pr)) buttons.push(actionButton(t, `prs-b-fix-${pr.number}`, "wrench", "Fix with Claude", () => view.act("fix", pr), "merged", { plain }));
+  if (fixable(pr) && !agentOnPr(pr)) buttons.push(actionButton(t, `prs-b-fix-${pr.number}`, "wrench", "Fix with Claude", () => view.act("fix", pr), "merged", { plain }));
   return buttons;
 }
 
@@ -150,6 +199,7 @@ export function statusLine(view, t, pr, { scope = "mine", group = null, buttons 
     .when(pr.threads.human > 0, (el) => el.child(stat(t, "comment", String(pr.threads.human), "warn")))
     .when(pr.threads.bot > 0, (el) => el.child(stat(t, "bot", String(pr.threads.bot), "dim")))
     .when(Boolean(pr.watching && !pr.mine), (el) => el.child(stat(t, "eye", "watching", "info")))
+    .children(workChips(t, pr))
     .when(buttons, (el) => el.child(div().flex_1()).children(rowButtons(view, t, pr, { scope, next, entry, group, plain: true })));
 }
 

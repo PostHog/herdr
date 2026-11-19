@@ -13,6 +13,7 @@ const PR_FIELDS = `fragment PrFields on PullRequest {
   stack { size } stackEntry { position }
   labels(first: 30) { nodes { name } }
   latestOpinionatedReviews(first: 20) { nodes { state author { login __typename } } }
+  reviews(last: 10) { nodes { submittedAt author { login } } }
   reviewThreads(first: 30) { nodes { isResolved isOutdated comments(first: 1) { nodes { author { login __typename } } } } }
   ${CHECK_COUNTS}
 }`;
@@ -29,6 +30,7 @@ const REVIEW_FIELDS = `fragment ReviewFields on PullRequest {
   viewerLatestReview { state }
   reviewRequests(first: 20) { nodes { requestedReviewer { __typename ... on User { login } ... on Team { combinedSlug } } } }
   timelineItems(itemTypes: [REVIEW_REQUESTED_EVENT], first: 1) { nodes { ... on ReviewRequestedEvent { createdAt } } }
+  reviews(last: 10) { nodes { submittedAt author { login } } }
   reviewThreads(first: 30) { nodes { isResolved comments(first: 1) { nodes { author { login __typename } } } } }
   ${CHECK_COUNTS}
 }`;
@@ -236,6 +238,11 @@ export function readyToMerge(pr) {
   return ["CLEAN", "UNSTABLE", "HAS_HOOKS", "BLOCKED", "UNKNOWN"].includes(pr.mergeState) && !(pr.checks.failed > 0 && pr.mergeState !== "UNSTABLE");
 }
 
+function lastReviewByOthers(node, viewer) {
+  const times = (node.reviews?.nodes ?? []).filter((review) => review.submittedAt && review.author?.login !== viewer).map((review) => review.submittedAt);
+  return times.length ? times.sort().pop() : null;
+}
+
 function normalizePr(node, viewer) {
   const labels = (node.labels?.nodes ?? []).map((label) => label.name);
   const author = node.author?.login ?? "ghost";
@@ -269,6 +276,7 @@ function normalizePr(node, viewer) {
     approvals: (node.latestOpinionatedReviews?.nodes ?? []).filter((review) => review.state === "APPROVED").length,
     botApprovals: (node.latestOpinionatedReviews?.nodes ?? []).filter((review) => review.state === "APPROVED" && isBot(review.author)).length,
     threads: threadCounts(node, viewer, author),
+    lastReviewAt: lastReviewByOthers(node, viewer),
     mine: author === viewer,
   };
 }

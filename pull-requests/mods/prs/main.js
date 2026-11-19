@@ -1,5 +1,5 @@
 import { View, div, svg, image } from "gpui-kit";
-import { v_flex, h_flex, InputState, Input } from "gpui-base";
+import { v_flex, h_flex, InputState, Input, Popover } from "gpui-base";
 import { theme, props, openOverlay, closeOverlay, shared, setShared, run, machines, notify, layout, nextCommand, focused, window } from "herdr";
 import { loadStore, store, updateStore, prKey, newId } from "./store.js";
 import { fetchMyPrs, fetchReviews, fetchDetail, statusPill, needsReview, readyToMerge, comparePriority, isOrgWide, ownerOf, applyTrunk, rateLimitPause, RateLimited } from "./github.js";
@@ -2330,24 +2330,34 @@ export default class Prs extends View {
     this.wfBase = InputState.new({ placeholder: "Base branch, e.g. master", value: this.wf.conditions.base ?? "" });
     this.wfTitle = InputState.new({ placeholder: "Title contains", value: this.wf.conditions.titleContains ?? "" });
     this.wfActionInputs = this.wf.actions.map((action) => this.actionInput(action));
-    for (const key of ["prs.pick.wfTrigger", "prs.pick.wfAction"]) this[`seen-${key}`] = shared(key)?.at;
+    this.wfMenu = null;
     for (const input of [this.wfName, this.wfLabelsAny, this.wfLabelsNone, this.wfBase, this.wfTitle]) input.on("change", (_e, cx) => cx.notify());
     this.wfName.focus();
-    cx.timer.every(250, (cx) => {
-      let changed = false;
-      this.consumePick("prs.pick.wfTrigger", (value) => {
-        if (value && !this.wf.triggers.includes(value)) this.wf.triggers.push(value);
-        changed = true;
-      });
-      this.consumePick("prs.pick.wfAction", (value) => {
-        if (!value) return;
-        const action = { kind: value, value: "" };
-        this.wf.actions.push(action);
-        this.wfActionInputs.push(this.actionInput(action));
-        changed = true;
-      });
-      if (changed) cx.notify();
-    });
+  }
+
+  addMenu(t, menu, label, options, onPick) {
+    const setOpen = (open, cx) => {
+      this.wfMenu = open ? menu : null;
+      cx.notify();
+    };
+    return Popover.new(`prs-wf-${menu}-menu`)
+      .anchor("top_right")
+      .open(this.wfMenu === menu)
+      .on_open_change(setOpen)
+      .trigger(button(t, `prs-wf-add${menu}`, label, (_e, cx) => setOpen(true, cx), { small: true }))
+      .content(v_flex()
+        .w(260)
+        .p(5)
+        .rounded(8)
+        .border_1()
+        .border_color(t.border)
+        .bg(t.popover)
+        .shadow_lg()
+        .text_size(12.5)
+        .children(options.map((option, index) => menuItem(t, `prs-wf-${menu}-${index}`, option.label, (_e, cx) => {
+          onPick(option.value);
+          setOpen(false, cx);
+        }))));
   }
 
   actionInput(action) {
@@ -2402,7 +2412,7 @@ export default class Prs extends View {
           .overflow_y_scrollbar()
           .child(div().text_size(16).font_semibold().child(p.id ? "Edit workflow" : "New workflow"))
           .child(field(t, "Name", this.input(t, this.wfName)))
-          .child(card("When this happens", "Any one of these events on your PRs or review requests.", button(t, "prs-wf-addtrigger", "+ Add trigger", () => this.pick("prs.pick.wfTrigger", TRIGGERS.filter((trigger) => !wf.triggers.includes(trigger.id)).map((trigger) => ({ label: trigger.label, value: trigger.id }))), { small: true }),
+          .child(card("When this happens", "Any one of these events on your PRs or review requests.", this.addMenu(t, "trigger", "+ Add trigger", TRIGGERS.filter((trigger) => !wf.triggers.includes(trigger.id)).map((trigger) => ({ label: trigger.label, value: trigger.id })), (value) => wf.triggers.push(value)),
             wf.triggers.length ? h_flex().gap(6).flex_wrap().children(wf.triggers.map((id) => removable(`prs-wf-t-${id}`, TRIGGERS.find((trigger) => trigger.id === id)?.label ?? id, (_e, cx) => {
               wf.triggers = wf.triggers.filter((item) => item !== id);
               cx.notify();
@@ -2427,7 +2437,11 @@ export default class Prs extends View {
               .child(this.input(t, this.wfLabelsNone))
               .child(this.input(t, this.wfBase))
               .child(this.input(t, this.wfTitle))))
-          .child(card("Do this", "In order, top to bottom. A failing step stops the rest.", button(t, "prs-wf-addaction", "+ Add action", () => this.pick("prs.pick.wfAction", ACTION_KINDS.map((kind) => ({ label: kind.label, value: kind.id }))), { small: true }),
+          .child(card("Do this", "In order, top to bottom. A failing step stops the rest.", this.addMenu(t, "action", "+ Add action", ACTION_KINDS.map((kind) => ({ label: kind.label, value: kind.id })), (value) => {
+            const action = { kind: value, value: "" };
+            wf.actions.push(action);
+            this.wfActionInputs.push(this.actionInput(action));
+          }),
             wf.actions.length
               ? v_flex().gap(6).children(wf.actions.map((action, index) => v_flex()
                   .gap(4)

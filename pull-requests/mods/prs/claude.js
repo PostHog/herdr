@@ -49,6 +49,11 @@ const prTabNames = (pr) => [`PR ${prRef(pr)}`, `fix ${prRef(pr)}`, `review ${prR
 
 const isClaude = (agent) => agent.app === "claude-code";
 
+export function agentOnPr(pr) {
+  const names = prTabNames(pr);
+  return agents().find((agent) => names.includes(agent.tab_name)) ?? null;
+}
+
 async function showNamedTab(pr) {
   const open = findTab(...prTabNames(pr));
   if (!open) return null;

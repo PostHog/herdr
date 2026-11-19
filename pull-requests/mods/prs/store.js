@@ -32,9 +32,18 @@ function parse(text) {
   }
 }
 
+const RENAMED_ACTIONS = { agent_review_fix: "agent_review" };
+
+function migrate(state) {
+  for (const workflow of state.workflows ?? []) {
+    for (const action of workflow.actions ?? []) action.kind = RENAMED_ACTIONS[action.kind] ?? action.kind;
+  }
+  return state;
+}
+
 export async function loadStore() {
   raw = await readTextFile(file());
-  cache = { ...JSON.parse(JSON.stringify(EMPTY)), ...parse(raw) };
+  cache = migrate({ ...JSON.parse(JSON.stringify(EMPTY)), ...parse(raw) });
   return cache;
 }
 

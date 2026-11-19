@@ -3,6 +3,7 @@ import { store, updateStore, prKey, newId } from "./store.js";
 import { config, loadConfig } from "./config.js";
 import { showPrWork, prRef, launchOnce } from "./claude.js";
 import { runnerMachine, runsDir, checkoutFor, launchClaudeOnPr, startHeadless, readRuns, readRunFile } from "./runner.js";
+import { postFindingsReview } from "./actions.js";
 
 const LENSES = {
   correctness: "Logic errors: wrong conditions, off-by-one errors, unhandled cases, broken invariants, incorrect API use, and behavior that contradicts the PR description.",
@@ -143,8 +144,8 @@ function stalled(run, status) {
 
 export async function syncRuns() {
   const finished = await syncRunning();
-  const handedOff = await handOffFixes();
-  return finished || handedOff;
+  const posted = await postPendingFindings();
+  return finished || posted;
 }
 
 async function syncRunning() {
@@ -195,10 +196,10 @@ async function syncRunning() {
       state.findings[key] = [...findings, ...kept.filter((finding) => finding.runId !== run.id)];
       state.findingsFrom[key] = { runId: run.id, startedAt: run.startedAt };
       target.findingCount = findings.filter((finding) => finding.state === "open").length;
-      if (run.then === "fix" && run.pr && target.findingCount > 0) target.fixPending = true;
+      if (run.then === "post" && run.pr && target.findingCount > 0) target.postPending = true;
     }
     for (const run of Object.values(state.runs)) {
-      if (run.fixPending && state.findingsFrom[prKey(run.repo, run.number)]?.runId !== run.id) delete run.fixPending;
+      if (run.postPending && state.findingsFrom[prKey(run.repo, run.number)]?.runId !== run.id) delete run.postPending;
     }
   });
   for (const run of finished) {
@@ -209,35 +210,25 @@ async function syncRunning() {
 }
 
 const findingIdentity = (finding) => `${finding.path}:${finding.title}`;
-const FIX_HANDOFF_ATTEMPTS = 5;
-const FIX_HANDOFF_SPACING_MS = 2 * 60000;
 
-async function handOffFixes() {
-  const due = Object.values(store().runs).filter((run) => run.fixPending && !(Date.now() - Date.parse(run.fixTriedAt ?? 0) < FIX_HANDOFF_SPACING_MS));
+async function postPendingFindings() {
+  const due = Object.values(store().runs).filter((run) => run.postPending);
   for (const run of due) {
     const key = prKey(run.repo, run.number);
-    const findings = (store().findings[key] ?? []).filter((finding) => finding.runId === run.id && finding.state === "open");
-    const current = store().findingsFrom?.[key]?.runId === run.id;
-    if (!current || !findings.length) {
-      await updateStore((state) => delete state.runs[run.id]?.fixPending);
-      continue;
-    }
-    const attempts = (run.fixAttempts ?? 0) + 1;
+    let claimed = false;
     await updateStore((state) => {
-      if (!state.runs[run.id]) return;
-      state.runs[run.id].fixTriedAt = new Date().toISOString();
-      state.runs[run.id].fixAttempts = attempts;
+      claimed = Boolean(state.runs[run.id]?.postPending);
+      if (claimed) delete state.runs[run.id].postPending;
     });
+    const findings = (store().findings[key] ?? []).filter((finding) => finding.runId === run.id && finding.state === "open" && !finding.posted);
+    if (!claimed || store().findingsFrom?.[key]?.runId !== run.id || !findings.length) continue;
     const title = `#${run.pr.number} ${run.pr.title}`;
     try {
-      if ((await startFixSession(run.pr, findingsFixPrompt(run.pr, findings), "fix", { bareSpaces: false })) !== true) {
-        notify({ title, body: `The agent review found ${findings.length} finding(s), but Claude is already open on this PR, so no fix session was started. Use "Fix in Claude" on the Findings tab to paste the findings into it.`, level: "info", timeout: 10000 });
-      }
-      await updateStore((state) => delete state.runs[run.id]?.fixPending);
+      const result = await postFindingsReview(run.pr, findings, findings[0].headSha);
+      if (result.ok) await markFindingsPosted(key, findings.map((finding) => finding.id));
+      else notify({ title, body: `Couldn't post the agent review's findings; use Post to PR on the Findings tab: ${result.message}`, level: "error", timeout: 12000 });
     } catch (error) {
-      const givingUp = attempts >= FIX_HANDOFF_ATTEMPTS;
-      if (givingUp) await updateStore((state) => delete state.runs[run.id]?.fixPending);
-      notify({ title, body: `Couldn't open a fix session${givingUp ? "; giving up, use Fix in Claude on the Findings tab" : ", retrying in 2 minutes"}: ${String(error?.message ?? error)}`, level: "error", timeout: 10000 });
+      notify({ title, body: `Couldn't post the agent review's findings; use Post to PR on the Findings tab: ${String(error?.message ?? error)}`, level: "error", timeout: 12000 });
     }
   }
   return due.length > 0;
