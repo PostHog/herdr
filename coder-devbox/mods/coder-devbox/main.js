@@ -8,10 +8,13 @@ import {
 
 const COMMANDS = [
   { label: "Status", args: ["devbox:status"] },
+  { label: "Check box setup", args: ["devbox:check"] },
   { label: "Logs", args: ["devbox:logs", "-f"] },
   { label: "Sync my checkout", args: ["devbox:sync"] },
   { label: "Log in to Claude", args: ["devbox:claude:login"] },
   { label: "Log in to GitHub", args: ["devbox:gh:login"] },
+  { label: "Log in to Trunk", args: ["devbox:trunk:login"] },
+  { label: "Apply dotfiles", args: ["devbox:dotfiles"] },
   { label: "Open in VS Code", args: ["devbox:open", "--vscode"], detached: true },
   { label: "Open in Cursor", args: ["devbox:open", "--cursor"], detached: true },
   { label: "Restart", args: ["devbox:restart"] },

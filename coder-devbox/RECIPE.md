@@ -15,7 +15,7 @@ A Herdr machine whose ssh target ends in `.coder` (Coder's default) or starts wi
   - "Open PostHog UI", with `localhost:18342` in `accent` while it's forwarded or "starting…", and "Stop forwarding" under it while a forward runs.
     When the forward fails, hogli's last line shows under it in `blocked`.
   - "Claude Remote Control", with "open" in `accent` while its space on the box exists. Dim while the box isn't connected.
-  - A divider, then: Status, Logs, Sync my checkout, Log in to Claude, Log in to GitHub, Open in VS Code, Open in Cursor, Restart, Update template, Free disk space, Doctor, and Stop devbox in `blocked`.
+  - A divider, then: Status, Check box setup, Logs, Sync my checkout, Log in to Claude, Log in to GitHub, Log in to Trunk, Apply dotfiles, Open in VS Code, Open in Cursor, Restart, Update template, Free disk space, Doctor, and Stop devbox in `blocked`.
     A row whose command isn't in the checkout's `hogli.yaml` is left out, so an older checkout doesn't show commands it can't run.
   - "Looking for your PostHog checkout…" while it looks, or, with none found, where it looked, in `blocked`. The rows stay dim until then.
 - A click on "Open PostHog UI" from the globe opens the same menu, which closes itself once the browser opens.
@@ -37,8 +37,9 @@ A Herdr machine whose ssh target ends in `.coder` (Coder's default) or starts wi
 - **The other commands** open a terminal tab running `bin/hogli <command> <target>` in the local space whose folder is the checkout, or a new "PostHog" space there on this computer (`machine: ""`).
   The tab becomes a shell in the checkout when hogli finishes, so the output stays. Doctor runs without a target.
   Stop devbox, Restart and Update run in that tab, so hogli's own prompts and output are where you can see them.
-- **Log in to Claude / GitHub** run `hogli devbox:claude:login` and `hogli devbox:gh:login` in that tab, so the login link or device code is where you can see it.
-- **Claude Remote Control** opens a space named "Claude Remote Control" on the box (`space.new` with its `machine`) that runs `claude remote-control` in `~/posthog`, then a shell when it ends.
+- **Log in to Claude / GitHub / Trunk** run `hogli devbox:claude:login`, `hogli devbox:gh:login` and `hogli devbox:trunk:login` in that tab, so the login link or device code is where you can see it.
+- **Check box setup** runs `hogli devbox:check`, which lists the logins and dotfiles the box still needs. **Apply dotfiles** runs `hogli devbox:dotfiles` for a box that couldn't clone a private dotfiles repo at start.
+- **Claude Remote Control** opens a space named "Claude Remote Control" on the box (`space.new` with its `machine`) that runs `claude remote-control` in `~/posthog`. When it stops, Enter starts it again and Ctrl-D leaves a shell.
   The session lives as long as that terminal. A second click goes to the existing space instead of starting another.
 - `flat-spaces` shows the globe and the menu only when `mods/coder-devbox/main.js` exists, so the spaces list is unchanged without this piece.
 - It runs programs: `hc`, `nc`, `test`, `coder whoami`, your login shell with `bin/hogli`, and `open` (`xdg-open` on Linux). It reads `data/prs-config.json` and the checkout's `hogli.yaml`.

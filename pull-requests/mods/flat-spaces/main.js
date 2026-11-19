@@ -249,7 +249,7 @@ export default class Spaces extends View {
   }
 
   devbox(machine, action = null) {
-    openOverlay({ mod: "coder-devbox", kind: "popup", width: 240, height: 540, props: { machine: machine.name, target: machine.target, action } });
+    openOverlay({ mod: "coder-devbox", kind: "popup", width: 240, height: 620, props: { machine: machine.name, target: machine.target, action } });
   }
 
   devboxChip(machine, t) {
