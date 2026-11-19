@@ -109,6 +109,58 @@ export async function readBackground(terminalIds) {
   }
   return out;
 }
+// Sub-agents a Claude session is running (the Agent tool, foreground or background). Claude writes
+// each one's transcript to <session>/subagents/agent-<id>.jsonl with a .meta.json beside it; a
+// background one is done once the session transcript holds its task-notification, a foreground one
+// once it holds the tool result. Files untouched for 20 minutes count as finished.
+const READ_SUBAGENTS = `LC_ALL=C; export LC_ALL
+while [ $# -gt 1 ]; do term="$1" t="$2"; shift 2
+  d="\${t%.jsonl}/subagents"; [ -d "$d" ] || continue
+  done_ids=$(grep -o 'task-id>a[0-9a-f]*</task-id>' "$t" 2>/dev/null)
+  for f in $(find "$d" -name 'agent-*.jsonl' -mmin -20 2>/dev/null); do
+    id=$(basename "$f" .jsonl); id=\${id#agent-}; m="$d/agent-$id.meta.json"; [ -f "$m" ] || continue
+    case "$done_ids" in *"task-id>$id<"*) continue;; esac
+    if ! grep -q '"requestShape":"background"' "$m"; then
+      tu=$(grep -o '"toolUseId":"[^"]*"' "$m" | cut -d'"' -f4)
+      grep -qF "\\"tool_use_id\\":\\"$tu\\"" "$t" && continue
+    fi
+    last=$(tail -c 200000 "$f" | grep -o '"type":"tool_use","id":"[^"]*","name":"[A-Za-z_]*","input":{.\\{0,250\\}.\\{0,250\\}.\\{0,250\\}' | tail -1 | tr '\\t' ' ')
+    printf '%s\\t%s\\t%s\\t%s\\t%s\\t' "$term" "$id" "$(stat -f %B "$m")" "$(stat -f %m "$f")" "$last"; tr -d '\\n' < "$m"; echo
+  done
+done`;
+
+// What a sub-agent is doing now, from its last tool call: the Bash description, the file it reads or
+// edits, or the pattern it searches.
+function activity(fragment) {
+  const name = fragment.match(/"name":"([A-Za-z_]+)"/)?.[1];
+  if (!name) return "";
+  const field = (k) => fragment.match(new RegExp(`"${k}":"((?:[^"\\\\]|\\\\.)*)`))?.[1]?.replace(/\\(.)/g, "$1");
+  const file = field("file_path") ?? field("notebook_path");
+  if (name === "Bash") return field("description") ?? (field("command") ?? "").replace(/^cd \S+ && /, "");
+  if (file) return `${{ Read: "Reading", Edit: "Editing", Write: "Writing" }[name] ?? name} ${file.split("/").pop()}`;
+  if (field("pattern")) return `${name === "Glob" ? "Finding" : "Searching"} ${field("pattern")}`;
+  if (field("url")) return `Fetching ${field("url").replace(/^https?:\/\//, "").split("/")[0]}`;
+  if (field("query")) return `${name} ${field("query")}`;
+  return name.replace(/^mcp__[^_]+__/, "");
+}
+
+export async function readSubagents(byTerminal) {
+  const args = Object.entries(byTerminal).filter(([, t]) => t).flat();
+  if (!args.length) return {};
+  const r = await exec("/bin/sh", ["-c", READ_SUBAGENTS, "sh", ...args]).catch(() => null);
+  const out = {};
+  for (const line of (r?.code === 0 ? r.stdout : "").split("\n")) {
+    const [term, id, born, touched, last, meta] = line.split("\t");
+    if (!meta) continue;
+    let m = {};
+    try { m = JSON.parse(meta); } catch {}
+    (out[term] ??= []).push({ id, desc: m.description || m.agentType || "agent", type: m.agentType ?? "", bg: m.requestShape === "background",
+      start: Number(born) * 1000, touched: Number(touched) * 1000, doing: activity(last ?? "") });
+  }
+  for (const list of Object.values(out)) list.sort((a, b) => a.start - b.start);
+  return out;
+}
+
 // Drops saved statuses of terminals that no longer exist.
 export async function pruneContext(liveIds) {
   const r = await exec("/bin/sh", ["-c", 'ls "$HOME"/.config/herdr-app/data/squirrel/context/ 2>/dev/null']).catch(() => null);
@@ -146,6 +198,31 @@ export async function linkParents(untagged, candidates) {
   }
 }
 
+// Sub-agent dots: each one keeps its own hue (from its id) and breathes on its own beat.
+const hexByte = (v) => Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16).padStart(2, "0");
+const hueOf = (id) => [...id].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 997, 7) / 997;
+const subTint = (id, alpha) => "#" + [0, 0.33, 0.67].map((d) => hexByte(0.62 + 0.38 * Math.cos(2 * Math.PI * (hueOf(id) + d)))).join("") + hexByte(alpha);
+const mins = (ms) => { const m = Math.floor(Math.max(0, Date.now() - ms) / 60000); return m < 1 ? "<1m" : m < 60 ? `${m}m` : `${Math.floor(m / 60)}h${m % 60 ? ` ${m % 60}m` : ""}`; };
+function subDots(subs) {
+  const ms = Date.now();
+  return h_flex().flex_none().gap(3).items_center().children(subs.slice(0, 8).map((s, i) => {
+    const beat = 0.5 + 0.5 * Math.sin(ms / 420 + i * 1.7 + hueOf(s.id) * 6);
+    return div().size(7).flex_none().rounded(4).bg(subTint(s.id, 0.35 + 0.65 * beat)).border(1).border_color(subTint(s.id, 0.25 * beat));
+  }));
+}
+// One line for a card: how many, then what one sub-agent is doing now, a different one every few seconds.
+function subLine(subs) {
+  const s = subs[Math.floor(Date.now() / 3500) % subs.length];
+  return `${subs.length} · ${s.doing || s.desc}`;
+}
+const subTip = (subs) => subs.map((s) => `${s.desc} · ${mins(s.start)}${s.bg ? "" : " · foreground"}\n    ${s.doing || "thinking"}`).join("\n");
+
+// The footer's agent count would repeat the sub-agents already listed from their files.
+const withoutAgents = (counts, subs) => {
+  if (!counts || !subs.length) return counts;
+  const rest = Object.fromEntries(Object.entries(counts).filter(([k]) => k !== "agent"));
+  return Object.keys(rest).length ? rest : null;
+};
 const bgText = (counts) => Object.entries(counts).map(([k, n]) => `${n} ${k}${n === 1 ? "" : "s"}`).join(" · ");
 
 const WORD = { working: "working", blocked: "needs you", done: "done", idle: "idle" };
@@ -184,7 +261,8 @@ export const agentsViews = {
     const card = (a) => {
       const p = byPane.get(a.pane);
       const helpers = helpersOf(a), parent = isChild(a) ? all.find((x) => termOf(x) === parentOf.get(termOf(a))) : null;
-      const bg = this.background?.[termOf(a)], blue = t.ansi4;
+      const subs = this.subagents?.[termOf(a)] ?? [], blue = t.ansi4;
+      const bg = withoutAgents(this.background?.[termOf(a)], subs);
       const color = { working: t.working, blocked: t.blocked, done: t.done, idle: t.dim }[a.status] ?? t.dim;
       const title = names[a.pane] || clean(a.title) || a.program?.name || a.address;
       const child = isChild(a), hidden = background.get(termOf(a)) ?? [];
@@ -216,14 +294,16 @@ export const agentsViews = {
           .when(typeof pct === "number", (el) => el.child(h_flex().flex_none().gap(4).items_center()
             .child(div().w(28).flex_none().h(4).rounded(2).bg(t.border).child(div().h_full().rounded(2).bg(pctColor).w(Math.max(1, Math.min(28, pct * 0.28)))))
             .child(div().text_color(pctColor).child(`${Math.round(pct)}%`)))))
-        .child(h_flex().h(15).gap(6).items_center().min_w(0).text_size(11).text_color(blue)
-          .when(Boolean(bg) || helpers.length > 0, (el) => el
+        .child(h_flex().id(`subs-${a.address}`).h(15).gap(6).items_center().min_w(0).text_size(11).text_color(blue)
+          .when(subs.length > 0, (el) => el.tooltip(subTip(subs)).child(subDots(subs))
+            .child(div().flex_1().min_w(0).truncate().child([subLine(subs), bg ? bgText(bg) : null].filter(Boolean).join(" · "))))
+          .when(!subs.length && (Boolean(bg) || helpers.length > 0), (el) => el
             .when(Boolean(bg) || helpers.some((h) => h.status === "working"), (el) => el.child(svg("mods/workspace-chrome/spinner.svg").size(10).flex_none().spin(2400)))
             .child(div().flex_1().min_w(0).truncate().child([
               bg ? `background: ${bgText(bg)}` : null,
               helpers.length ? `${helpers.length} helper${helpers.length === 1 ? "" : "s"}${helpers.some((h) => h.tab !== a.tab) ? ` in ${helpers[0].tab_name}` : ""}` : null,
             ].filter(Boolean).join(" · "))))
-          .when(!bg && !helpers.length && Boolean(parent), (el) => el.text_color(t.dim)
+          .when(!subs.length && !bg && !helpers.length && Boolean(parent), (el) => el.text_color(t.dim)
             .child(div().flex_1().min_w(0).truncate().child(`helper of ${names[parent.pane] || clean(parent.title)}`))));
     };
     this.helperCount = all.filter(isChild).length;
@@ -246,17 +326,19 @@ export const agentsViews = {
       return h + (labelled ? TAB_LABEL : 0) + GAP * 2 + rows * rowH + (rows - 1) * GAP;
     }, 0) || CARD_H + GAP * 2;
     const pill = (a) => {
-      const bg = this.background?.[termOf(a)], color = { working: t.working, blocked: t.blocked, done: t.done, idle: t.dim }[a.status] ?? t.dim;
+      const subs = this.subagents?.[termOf(a)] ?? [], bg = withoutAgents(this.background?.[termOf(a)], subs);
+      const color = { working: t.working, blocked: t.blocked, done: t.done, idle: t.dim }[a.status] ?? t.dim;
       const { pct } = this.context.terminals?.[termOf(a)] ?? {};
       return h_flex().id(`pill-${a.address}`).w(PILL_W).h(PILL_H).flex_none().px(8).gap(6).items_center().rounded(PILL_H / 2)
         .bg(a.focused ? t.raised : t.surface).border(1).border_color(a.focused ? t.accent : a.status === "blocked" ? t.blocked : t.border)
         .hover((s) => s.bg(t.hover)).cursor_pointer().text_size(11)
         .on_click((_e, cx) => { this.openTabs[a.tab] = true; cx.notify(); })
-        .tooltip(bg ? `background: ${bgText(bg)}` : WORD[a.status] ?? a.status)
+        .tooltip(subs.length ? subTip(subs) : bg ? `background: ${bgText(bg)}` : WORD[a.status] ?? a.status)
         .child(a.status === "working" ? svg("mods/workspace-chrome/spinner.svg").size(10).flex_none().text_color(color).spin(900)
           : div().size(7).flex_none().rounded(4).bg(color))
         .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(names[a.pane] || clean(a.title) || a.address))
-        .when(Boolean(bg), (el) => el.child(div().size(6).flex_none().rounded(3).bg(t.ansi4)))
+        .when(subs.length > 0, (el) => el.child(subDots(subs)))
+        .when(!subs.length && Boolean(bg), (el) => el.child(div().size(6).flex_none().rounded(3).bg(t.ansi4)))
         .when(typeof pct === "number", (el) => el.child(div().flex_none().text_color(t.dim).child(`${Math.round(pct)}%`)));
     };
     const cards = v_flex()

@@ -62,7 +62,9 @@ Laid out for a vertical monitor; works on a wide one too. [README.md](README.md)
 - `mods/squirrel-pane-header/`: pane headers with the pane's name, folder, and split, zoom and close buttons.
 - `mods/squirrel-rename/`: `cmd-r` names the focused pane. Herdr only names tabs, so names live in shared state.
 - `mods/squirrel-error/`: clicking a failed GitHub refresh in the panel header shows the full error. Every failure is also appended to `~/.config/herdr-app/squirrel-errors.log`.
-- `mods/squirrel-new-menu/`: the `+` menu.
+- `mods/squirrel-reopen/`: the clock in the top bar lists Claude sessions closed in the last 3 days, newest first, with how long ago each closed. Click one to resume it in a pane below the focused one, under the same account and folder. `squirrel-topbar.reopen` opens it from a key.
+- `mods/squirrel-account/`: with two or more `claudeProfiles`, every Claude pane the top bar starts (`cmd-t`, `cmd-shift-d`, standup, fact-check) first asks which account: press 1, 2… or Enter for the last one used. The standup keeps `standupCommand`'s flags but runs on the account picked. A pick sets off `mods/squirrel-dragon/`, a dragon that breathes fire in that account's colour.
+- `mods/squirrel-new-menu/`: a new-pane menu. Nothing in the top bar opens it any more.
 - `layouts/Dopamine-Squirrel.json`: the top bar, the panel under it (`agents-panel`), then panes with Herdr's Files and Changes column on the right. No spaces list: this setup lives in one space.
 
 ## Keys
@@ -71,7 +73,7 @@ Laid out for a vertical monitor; works on a wide one too. [README.md](README.md)
 | --- | --- |
 | `cmd-1` / `cmd-2` / `cmd-3` | Running agents / Reviews / My PRs, showing the panel if it's hidden |
 | `cmd-b` | Show or hide the panel |
-| `cmd-t`, `cmd-shift-d` | New pane below, straight into Claude (no shell start-up); quitting Claude leaves a shell |
+| `cmd-t`, `cmd-shift-d` | New pane below, straight into Claude on the account you pick (no shell start-up); quitting Claude leaves a shell |
 | `cmd-shift-t` | New tab |
 | `cmd-r` | Rename the focused pane |
 | `cmd-w` | Close the focused pane, after asking |

@@ -80,11 +80,20 @@ export const reviewViews = {
       return;
     }
     const marks = { ...(shared(TRIAGED) ?? {}) };
+    const prev = marks[pr.url];
+    this.undo.push({ number: pr.number, label: { done: "Done", watch: "Watch" }[mode] ?? "untick", restore: () => {
+      const now = { ...(shared(TRIAGED) ?? {}) };
+      if (prev === undefined) delete now[pr.url]; else now[pr.url] = prev;
+      setShared(TRIAGED, now);
+    } });
     if (mode === "done") marks[pr.url] = Date.now();
     else if (mode === "watch") marks[pr.url] = { at: Date.now(), watch: true };
     else delete marks[pr.url];
     setShared(TRIAGED, marks);
-    if (mode && open.length === 1 && open[0].url === pr.url)
+    // Confetti when this clears the list. Checked on save, not on click, so fast clicks on the last few rows
+    // (each still fading when the next is clicked) still count: those were all marked in the last minute.
+    const fresh = (v) => (typeof v === "number" ? v : v?.at ?? 0) > Date.now() - 60000;
+    if (mode && open.some((o) => o.url === pr.url) && open.every((o) => o.url === pr.url || (!this.leaving[o.url] && fresh(marks[o.url]))))
       run("mod.open", { name: "squirrel-confetti" });
   },
 
@@ -93,6 +102,7 @@ export const reviewViews = {
   correctTag(p) {
     const tag = (shared(AI_TRIAGE) ?? {})[p.url];
     if (!tag) return;
+    this.undo.push({ number: p.number, label: "tag change", restore: () => this.saveTag(p, tag) });
     this.saveTag(p, tag.corrected
       ? { ...tag, verdict: tag.aiVerdict, reason: tag.aiReason, corrected: false }
       : { ...tag, verdict: tag.verdict === "needs" ? "skip" : "needs", aiVerdict: tag.verdict, aiReason: tag.reason, reason: `Your call (AI said: ${tag.reason})`, corrected: true });
@@ -180,8 +190,13 @@ export const reviewViews = {
     const prs = gh.prs ?? [];
     const back = new Map(prs.map((p) => [p.url + p.number, this.resurfaced(p, marks[p.url])]));
     const isDone = (p) => Boolean(marks[p.url]) && !back.get(p.url + p.number);
-    // Asked by name, then back after triage, then newest first.
-    const sorted = prs.slice().sort((a, b) => (b.mine - a.mine) || (Boolean(back.get(b.url + b.number)) - Boolean(back.get(a.url + a.number))) || Date.parse(b.created) - Date.parse(a.created));
+    // You care (asked by name, tagged You care, or not tagged yet): approved with CI passed, then CI passed, then the rest.
+    // Not important last. Longest waiting first in each group.
+    const group = (p) => p.mine || aiTags[p.url]?.verdict !== "skip" ? (p.ci !== "SUCCESS" ? 2 : p.review === "APPROVED" ? 0 : 1) : 3;
+    // The order is set when GitHub data arrives, so a click (a tag flip) never moves rows under the pointer.
+    if (this.reviewOrder?.at !== gh.at) this.reviewOrder = { at: gh.at,
+      pos: new Map(prs.slice().sort((a, b) => group(a) - group(b) || Date.parse(a.requestedAt) - Date.parse(b.requestedAt)).map((p, i) => [p.url, i])) };
+    const sorted = prs.slice().sort((a, b) => (this.reviewOrder.pos.get(a.url) ?? 1e9) - (this.reviewOrder.pos.get(b.url) ?? 1e9));
     const open = sorted.filter((p) => !isDone(p)), done = sorted.filter(isDone);
     const prW = Math.ceil(Math.max(2 * 6.2, ...prs.map((p) => `#${p.number}`.length * 7.2))) + 6;
     const sizeW = Math.ceil(Math.max(4 * 6.2, ...prs.map((p) => `+${p.additions} −${p.deletions}`.length * 6.4))) + 6;

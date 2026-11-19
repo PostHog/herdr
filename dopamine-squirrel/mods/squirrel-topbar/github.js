@@ -180,6 +180,22 @@ let running = null;
 
 // One refresh at a time. A failure or a hang clears "refreshing…", shows in the header (click it for the
 // full error) and goes to ~/.config/herdr-app/squirrel-errors.log, and the next refresh starts clean.
+// A cheap check between full refreshes: true when one of my open PRs has a new head commit, a new CI
+// state, or opened or closed, so the panel isn't minutes behind a push.
+export async function myPrsChanged() {
+  const d = await ghGraphql(`query { viewer { login } list: search(query: "is:pr is:open archived:false author:@me", type: ISSUE, first: 100) {
+    nodes { ... on PullRequest { url commits(last: 1) { nodes { commit { oid statusCheckRollup { state } } } } } } } }`);
+  const live = new Map(d.list.nodes.filter((n) => n?.url).map((n) => [n.url, n.commits.nodes[0]?.commit]));
+  const known = new Map(((shared("squirrel.github") ?? {}).mine ?? []).map((p) => [p.url, p]));
+  // Cloud-task PRs a bot opened aren't in this search, so only mine count as closed.
+  if ([...known.values()].some((p) => !live.has(p.url) && !(p.cloud && p.author !== d.viewer.login))) return true;
+  for (const [url, c] of live) {
+    const p = known.get(url);
+    if (!p || p.headSha !== (c?.oid ?? null) || p.ci !== (c?.statusCheckRollup?.state ?? null)) return true;
+  }
+  return false;
+}
+
 export function fetchGh(cx) {
   running ??= Promise.race([
     fetchGhOnce(),

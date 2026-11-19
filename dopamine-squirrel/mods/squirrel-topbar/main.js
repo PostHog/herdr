@@ -1,7 +1,7 @@
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex, ScrollHandle } from "gpui-base";
 import { spaces, panes, run, openOverlay, theme, window, shared, setShared, layout, updates, nextCommand, home, hc, exec, appHome } from "herdr";
-import { fetchGh, GH_EVERY_MS } from "./github.js";
+import { fetchGh, GH_EVERY_MS, myPrsChanged } from "./github.js";
 import { tagReviews } from "./triage-ai.js";
 import { glow } from "./glow.js";
 import { loadSettings, squirrelSettings } from "./settings.js";
@@ -21,11 +21,34 @@ function find(node, id) {
   return null;
 }
 
+// A popup from the top bar opens just under it, centred on the pointer and kept inside the window,
+// instead of at the pointer (over the bar).
+// The env prefix that runs claude on a subscription: none for ~/.claude, Claude's default.
+function accountEnv(configDir) {
+  const dir = (configDir ?? "~/.claude").replace(/^~/, home()).replace(/\/$/, "");
+  return dir === `${home()}/.claude` ? [] : ["env", `CLAUDE_CONFIG_DIR=${dir}`];
+}
+
+function belowBar(width) {
+  const w = globalThis.window, m = w?.mouse_position?.(), vw = w?.viewport_size?.()?.width;
+  if (m?.x == null || !vw) return "pointer";
+  return { x: Math.round(Math.max(8, Math.min(m.x - width / 2, vw - width - 8))), y: 46 };
+}
+
 export default class SquirrelTopbar extends View {
   init(_props, cx) {
     cx.spawn(async (cx) => { for (;;) { await loadSettings().catch(() => null); await fetchGh(cx); await cx.sleep(GH_EVERY_MS); } });
     // Tags new team review requests a few at a time, so a backlog clears in minutes (triage-ai.js).
     cx.spawn(async (cx) => { for (;;) { await cx.sleep(60000); await tagReviews().catch(() => null); } });
+    cx.spawn(async (cx) => { for (;;) { await cx.sleep(60000); if (await myPrsChanged().catch(() => false)) await fetchGh(cx); } });
+    // A pick in squirrel-account starts the Claude pane that asked for it (withAccount).
+    cx.spawn(async (cx) => {
+      for (;;) {
+        await cx.sleep(60);
+        const pick = shared("squirrel.account-pick");
+        if (this.awaiting && pick?.req === this.awaiting.req) { const go = this.awaiting.launch; this.awaiting = null; go(accountEnv(pick.configDir), cx); }
+      }
+    });
     // squirrel.json edits show up within 30 seconds.
     cx.spawn(async (cx) => { for (;;) { await cx.sleep(30000); await loadSettings(); } });
     cx.spawn(async (cx) => { for (;;) { await cx.sleep(50); cx.notify(); } });
@@ -34,7 +57,12 @@ export default class SquirrelTopbar extends View {
       for (;;) {
         const c = await nextCommand();
         if (c === "gh_refresh" || c?.name === "gh_refresh") fetchGh(cx);
-        if (c === "fact_check" || c?.name === "fact_check") this.factCheck(cx);
+        // From a key or `do`: a centred dialog, since a popup opens at the click.
+        if (c === "reopen" || c?.name === "reopen") openOverlay({ mod: "squirrel-reopen", kind: "dialog", width: 460, height: 380 });
+        if (c === "fact_check" || c?.name === "fact_check") this.withAccount(null, (env, cx) => this.factCheck(cx, env));
+        // cmd-t and cmd-shift-d: Claude in a pane below, on the subscription picked, then a shell when it exits.
+        if (c === "new_claude" || c?.name === "new_claude")
+          this.withAccount(null, (env) => run("pane.split", { direction: "down", argv: ["/bin/sh", "-c", '"$@"; exec "$SHELL" -l', "sh", ...env, "claude"] }));
         for (const v of ["agents", "reviews", "mine"]) {
           if (c === `show_${v}` || c?.name === `show_${v}`) { setShared("squirrel.view", v); run("layout.show", { id: "agents-panel" }); }
         }
@@ -99,7 +127,17 @@ export default class SquirrelTopbar extends View {
   // not sent, ending in "Here it is: " so you paste the Slack link or screenshot and press Enter.
   // Herdr can only type into a terminal by pasting, so this borrows the clipboard and puts all of it back after,
   // images included (clipboard.js).
-  factCheck(cx) {
+  // Every Claude pane started here asks which subscription first (squirrel-account), unless only one is
+  // set up in claudeProfiles. `at` places it under a button; a key or `do` gets a centred dialog.
+  withAccount(at, launch) {
+    const profiles = (squirrelSettings().claudeProfiles ?? []).filter((p) => p.configDir);
+    const req = `${Date.now()}-${Math.random()}`;
+    this.awaiting = { req, launch };
+    if (profiles.length < 2) return setShared("squirrel.account-pick", { req, configDir: profiles[0]?.configDir, at: Date.now() });
+    openOverlay({ mod: "squirrel-account", kind: at ? "popup" : "dialog", width: 400, height: 188, ...(at ? { at } : {}), props: { req, profiles } });
+  }
+
+  factCheck(cx, env = []) {
     const template = "Fact-check this before I send it. Verify each claim against the code, docs, PRs or data you can reach "
       + "(read Slack links with the Slack tools). Tell me plainly if I'm wrong, overstating, missing context, or about to look "
       + "like a retard. Verdict first, then corrected wording ready to paste into Slack: Slack formatting (*bold*, _italic_, "
@@ -108,7 +146,8 @@ export default class SquirrelTopbar extends View {
     const clip = (mode) => exec("/bin/sh", ["-c", 'osascript -l JavaScript "$1" "$2" "${TMPDIR:-/tmp}/squirrel-clipboard" 2>/dev/null',
       "sh", `${appHome()}/mods/squirrel-topbar/clipboard.js`, mode]).catch(() => null);
     const before = new Set(panes().map((p) => p.pane));
-    run("pane.split", { direction: "down", argv: ["/bin/sh", "-c", 'cd "$1" 2>/dev/null || cd; exec claude --model opus --effort high -n "Fact check"', "sh", checkout] });
+    run("pane.split", { direction: "down", argv: ["/bin/sh", "-c", 'cd "$1" 2>/dev/null || cd; shift; exec "$@"', "sh", checkout,
+      ...env, "claude", "--model", "opus", "--effort", "high", "-n", "Fact check"] });
     cx.spawn(async (cx) => {
       let pane = null;
       for (let i = 0; i < 50 && !pane; i++) { pane = panes().find((p) => !before.has(p.pane)); if (!pane) await cx.sleep(100); }
@@ -132,11 +171,17 @@ export default class SquirrelTopbar extends View {
     const existing = panes().find((p) => p.pane === shared("squirrel.standup-pane"));
     if (existing) { run("tab.select", { id: existing.tab }); run("pane.focus", { pane: existing.pane }); return; }
     if (this.standupStarting) return;
+    this.withAccount(belowBar(400), (env, cx) => this.startStandup(cx, env));
+  }
+
+  // standupCommand's own CLAUDE_CONFIG_DIR gives way to the subscription picked; its flags stay.
+  startStandup(cx, env) {
     this.standupStarting = true;
     cx.notify();
     const before = new Set(panes().map((p) => p.pane));
     const { standupCommand, standupSkill } = squirrelSettings();
-    const argv = [...standupCommand.map((a) => a.replace(/~/g, home())),
+    const command = standupCommand.map((a) => a.replace(/~/g, home())).filter((a) => !a.startsWith("CLAUDE_CONFIG_DIR="));
+    const argv = [...env, ...(command[0] === "env" && !command[1]?.includes("=") ? command.slice(1) : command),
       `Load my ${standupSkill} skill from the PostHog MCP (learn project:${standupSkill}) and draft today's standup.`];
     run("pane.split", { direction: "down", argv });
     cx.spawn(async (cx) => {
@@ -218,16 +263,16 @@ export default class SquirrelTopbar extends View {
       .child(h_flex().id("tab-scroll").flex_1().min_w(0).h_full().items_center().gap(3).overflow_x_scrollbar().track_scroll(this.scroll)
         .on_size_change((_size, cx) => { if (active >= 0) { this.scroll.scroll_to_item(active); cx.notify(); } })
         .children(shown.length > 1 ? shown.map(item) : []))
-      .child(button("tab-new", "+", () => openOverlay({ mod: "squirrel-new-menu", kind: "popup", width: 250, height: 300 })))
       .when(enabled.includes("files"), el => el.child(panelButton("files", "Files", "mods/files/file.svg")))
       .when(enabled.includes("changes"), el => el.child(panelButton("changes", "Changes", "mods/changes/changes.svg")))
       .child(this.ghBadge(t, stop))
       .child(div().id("fact-check").size(26).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.ansi5)
-        .hover(s => s.bg(t.hover)).tooltip("Fact-check something before you say it").on_mouse_down("left", stop).on_click((_e, cx) => this.factCheck(cx))
+        .hover(s => s.bg(t.hover)).tooltip("Fact-check something before you say it").on_mouse_down("left", stop).on_click(() => this.withAccount(belowBar(400), (env, cx) => this.factCheck(cx, env)))
         .child(image("mods/squirrel-topbar/slack-logo.svg").size(15)))
       .child(div().id("standup").size(26).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.ansi3)
         .hover(s => s.bg(t.hover)).tooltip("Start today's standup").on_mouse_down("left", stop).on_click((_e, cx) => this.standup(cx))
         .child(this.standupStarting ? svg("mods/workspace-chrome/spinner.svg").size(14).spin(900) : svg("mods/squirrel-topbar/megaphone.svg").size(15)))
+      .child(button("reopen", svg("mods/workspace-chrome/clock.svg").size(15), () => openOverlay({ mod: "squirrel-reopen", kind: "popup", width: 460, height: 380, at: belowBar(460) })).tooltip("Reopen a closed Claude pane"))
       .child(button("search", svg("mods/workspace-chrome/search.svg").size(15), () => run("mod.open", { name: "picker" })))
       .child(button("machine", svg("mods/workspace-chrome/server.svg").size(15), () => run("mod.open", { name: "machine-add" })))
       .child(button("settings", svg("mods/workspace-chrome/settings.svg").size(15), () => run("app.settings"))
