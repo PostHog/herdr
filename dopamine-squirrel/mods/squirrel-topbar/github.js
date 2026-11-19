@@ -42,14 +42,15 @@ const SKIPPED_FIELDS = `number title url createdAt mergedAt additions deletions 
       comments(last: 15) { nodes { author { login } createdAt bodyText url } }
       timelineItems(itemTypes: [REVIEW_REQUESTED_EVENT], last: 20) { nodes { ... on ReviewRequestedEvent { createdAt actor { login } requestedReviewer { ... on User { login } ... on Team { name } } } } }`;
 const GH_QUERIES = {
-  reviews: () => `query { viewer { login } list: search(query: "is:pr is:open archived:false review-requested:@me", type: ISSUE, first: 100) {
-    issueCount nodes { ... on PullRequest { ${PR_FIELDS} } } } }`,
+  // Paged (ghPages): 100 of these with every field in one query times out with 502s.
+  reviews: (after) => `query { viewer { login } list: search(query: "is:pr is:open archived:false review-requested:@me", type: ISSUE, first: 20${after ? `, after: "${after}"` : ""}) {
+    issueCount pageInfo { hasNextPage endCursor } nodes { ... on PullRequest { ${PR_FIELDS} } } } }`,
   // GitHub drops my request (and my team's) as soon as I review at all. A PR that asked me or my team stays
   // on my list until I approve it; fetchGh picks those out of the PRs I've reviewed.
-  reviewed: () => `query { viewer { login } list: search(query: "is:pr is:open archived:false reviewed-by:@me -author:@me", type: ISSUE, first: 40) {
-    issueCount nodes { ... on PullRequest { ${PR_FIELDS} } } } }`,
-  mine: () => `query { viewer { login } list: search(query: "is:pr is:open archived:false author:@me", type: ISSUE, first: 100) {
-    issueCount nodes { ... on PullRequest { ${MINE_FIELDS()} } } } }`,
+  reviewed: (after) => `query { viewer { login } list: search(query: "is:pr is:open archived:false reviewed-by:@me -author:@me", type: ISSUE, first: 20${after ? `, after: "${after}"` : ""}) {
+    issueCount pageInfo { hasNextPage endCursor } nodes { ... on PullRequest { ${PR_FIELDS} } } } }`,
+  mine: (after) => `query { viewer { login } list: search(query: "is:pr is:open archived:false author:@me", type: ISSUE, first: 20${after ? `, after: "${after}"` : ""}) {
+    issueCount pageInfo { hasNextPage endCursor } nodes { ... on PullRequest { ${MINE_FIELDS()} } } } }`,
   merged: () => `query { viewer { login } list: search(query: "is:pr is:merged author:@me merged:>=${new Date(Date.now() - mergedDays() * 864e5).toISOString().slice(0, 10)}", type: ISSUE, first: 30) {
     issueCount nodes { ... on PullRequest { number title url createdAt mergedAt additions deletions repository { nameWithOwner } commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } } } } }`,
   // Merged while still waiting on me or one of my teams: GitHub drops a request once I (or, for a team, a
@@ -72,6 +73,17 @@ async function ghGraphql(query) {
     if (!/50[234]|timeout|timed out|EOF|connection|unexpected end of JSON/i.test(last)) break;
   }
   throw new Error(last);
+}
+
+// Every page of a paged query, up to `max` pages, joined into one list. A failed page fails the whole list.
+async function ghPages(build, max) {
+  const first = await ghGraphql(build());
+  for (let page = first.list, n = 1; page.pageInfo?.hasNextPage && n < max; n++) {
+    const more = await ghGraphql(build(page.pageInfo.endCursor));
+    first.list.nodes.push(...more.list.nodes);
+    page = more.list;
+  }
+  return first;
 }
 
 // Drops <!-- … --> blocks. An unclosed one drops the rest, so no partial marker is left behind.
@@ -214,7 +226,8 @@ async function fetchGhOnce() {
   setShared("squirrel.github", { ...prev, loading: true });
   const [notesResult, ...results] = await Promise.allSettled([
     exec("gh", ["api", "notifications?participating=true&all=true&per_page=100"], { timeout: 60000 }),
-    ...Object.values(GH_QUERIES).map((q) => ghGraphql(q())),
+    ghPages(GH_QUERIES.reviews, 5), ghPages(GH_QUERIES.reviewed, 2), ghPages(GH_QUERIES.mine, 5),
+    ghGraphql(GH_QUERIES.merged()), ghGraphql(GH_QUERIES.skipped()),
   ]);
   const [reviews, reviewed, mine, merged, skipped] = results;
   // GitHub inbox threads I'm part of, keyed "owner/repo#number" (reason: mention, comment, review_requested…).
