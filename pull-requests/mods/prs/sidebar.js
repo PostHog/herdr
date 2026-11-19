@@ -271,8 +271,37 @@ function prRow(view, t, pr, { depth = 0, group = null, scope = "mine", quiet = f
     .when(Boolean(progress), (el) => el.child(div().pl(19).child(progress)));
 }
 
-export function stackHeader(view, t, group, { plain = true } = {}) {
+export const stackFoldId = (group) => `stack:${group.id}`;
+
+const QUEUE_DOT = { Failed: "bad", "Pending Failure": "bad", Testing: "queued", Pending: "queued", "Not Ready": "queued", "Tests Passed": "queued", Queued: "queued", Merged: "ok" };
+const DOT_COLOR = { queued: "ansi4" };
+
+function layerDot(view, pr, group) {
+  const { next, entry } = nextFor(view, pr, group);
+  const queued = entry ? QUEUE_DOT[entry.state] : pr.queue?.active ? "queued" : null;
+  const state = queued === "queued" && next.tone === "bad" ? "bad"
+    : queued ? queued
+    : pr.mergeable === "CONFLICTING" || pr.mergeState === "DIRTY" || pr.checks.failed > 0 || pr.stackDepth ? "bad"
+    : pr.checks.inProgress > 0 ? "warn"
+    : pr.checks.total > 0 ? "ok"
+    : "idle";
+  return { state, tip: `#${pr.number}: ${next.label}` };
+}
+
+function layerDots(view, t, group) {
+  return h_flex()
+    .flex_none()
+    .gap(3)
+    .items_center()
+    .children(group.members.map(({ pr }) => {
+      const dot = layerDot(view, pr, group);
+      return div().id(`prs-stack-dot-${pr.repo}-${pr.number}`).size(7).rounded_full().bg(dot.state === "idle" ? t.border : tone(t, DOT_COLOR[dot.state] ?? dot.state)).tooltip(dot.tip);
+    }));
+}
+
+export function stackHeader(view, t, group, { plain = true, foldable = false } = {}) {
   const trunk = view.trunk;
+  const folded = foldable && view.folded.has(stackFoldId(group));
   const top = group.members.at(-1).pr;
   const steps = group.members.map((member) => step(member.pr, queueFor(member.pr, group, trunk), trunk));
   const ready = steps.filter((item) => item.ready).length;
@@ -285,9 +314,20 @@ export function stackHeader(view, t, group, { plain = true } = {}) {
     .pb(2)
     .gap(6)
     .items_center()
+    .when(foldable, (el) =>
+      el
+        .pl(4)
+        .rounded(7)
+        .cursor_pointer()
+        .hover((s) => s.bg(t.hover))
+        .tooltip(folded ? "Show the stack's PRs" : "Collapse the stack")
+        .on_click((_e, cx) => view.toggleFold(stackFoldId(group), cx))
+        .child(icon(t, folded ? "chevron-right" : "chevron-down", "dim", 11)),
+    )
     .child(icon(t, "stack", "merged", 12))
     .child(div().min_w(0).truncate().text_size(TEXT.meta).text_color(t.muted).child(`Stack of ${group.members.length} · ${top.headRef}`))
     .child(div().flex_none().text_size(TEXT.meta).text_color(queued ? t.accent : all ? tone(t, "ok") : t.dim).child(queued ? queued.state : `${ready}/${group.members.length} ready`))
+    .when(folded, (el) => el.child(layerDots(view, t, group)))
     .child(div().flex_1())
     .when(all && !queued && top.mine, (el) => el.child(actionButton(t, `prs-stack-merge-${group.id}`, "merged", "Merge stack…", () => view.act("merge", top), "ok", { plain })));
 }
@@ -309,7 +349,8 @@ export function sidebarMine(view, t) {
     for (const group of part.groups) {
       const showRepo = group.repo !== primaryRepo;
       if (group.members.length > 1) {
-        rows.push(stackHeader(view, t, group));
+        rows.push(stackHeader(view, t, group, { foldable: true }));
+        if (view.folded.has(stackFoldId(group))) continue;
         for (const member of [...group.members].reverse()) rows.push(prRow(view, t, member.pr, { depth: 1, group, quiet: isQuiet(view, part, member.pr, group), showRepo }));
       } else rows.push(prRow(view, t, group.members[0].pr, { group, quiet: isQuiet(view, part, group.members[0].pr, group), showRepo }));
     }
