@@ -6,7 +6,7 @@ import { h_flex, v_flex } from "gpui-base";
 import { agents, panes, terminals, run, theme, shared, setShared, openOverlay } from "herdr";
 import { VIEW, GITHUB, TRIAGED, ROW, HEADER, COLS, MAX_ROWS, CARD_W, CARD_H, GAP, ago } from "./shared.js";
 import { stepSim, drawSim } from "./visualizer.js";
-import { readContext, readBackground, pruneContext, linkParents, agentsViews, usageHeight } from "./agents.js";
+import { readContext, readBackground, readSubagents, pruneContext, linkParents, agentsViews, usageHeight } from "./agents.js";
 import { readUsage } from "./usage.js";
 import { tableParts } from "./table.js";
 import { reviewViews } from "./reviews.js";
@@ -33,6 +33,19 @@ export default class SquirrelPanel extends View {
         await cx.sleep(10000);
       }
     });
+    // Sub-agents each Claude session is running, every 4 seconds (agents.js).
+    cx.spawn(async (cx) => {
+      for (;;) {
+        const byTerm = {};
+        for (const a of agents()) {
+          const id = panes().find((p) => p.pane === a.pane)?.terminal;
+          if (id) byTerm[id] = this.context.terminals?.[id]?.transcript ?? null;
+        }
+        const next = await readSubagents(byTerm).catch(() => null);
+        if (next && JSON.stringify(next) !== JSON.stringify(this.subagents ?? {})) { this.subagents = next; cx.notify(); }
+        await cx.sleep(4000);
+      }
+    });
     // /usage for each Claude subscription, every 3 minutes (usage.js).
     this.usage = {};
     cx.spawn(async (cx) => {
@@ -53,7 +66,8 @@ export default class SquirrelPanel extends View {
         if (this.headerViz) this.sims.header = stepSim(this.sims.header, ...this.headerViz, dt);
         if (this.view() === "mine" && (shared(GITHUB)?.merged ?? []).length && this.vizSize)
           for (const key of ["left", "right"]) this.sims[key] = stepSim(this.sims[key], ...this.vizSize[key], dt);
-        if (this.headerViz || this.view() === "mine") cx.notify();
+        const subsLive = this.view() === "agents" && Object.keys(this.subagents ?? {}).length > 0;
+        if (this.headerViz || this.view() === "mine" || subsLive) cx.notify();
       }
     });
     this.starting = {};
