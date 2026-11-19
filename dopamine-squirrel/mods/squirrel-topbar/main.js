@@ -38,8 +38,8 @@ function belowBar(width) {
 export default class SquirrelTopbar extends View {
   init(_props, cx) {
     cx.spawn(async (cx) => { for (;;) { await loadSettings().catch(() => null); await fetchGh(cx); await cx.sleep(GH_EVERY_MS); } });
-    // Tags new team review requests a few at a time, so a backlog clears in minutes (triage-ai.js).
-    cx.spawn(async (cx) => { for (;;) { await cx.sleep(60000); await tagReviews().catch(() => null); } });
+    // Tags new team review requests and new commits a few at a time, in parallel (triage-ai.js).
+    cx.spawn(async (cx) => { for (;;) { await cx.sleep(15000); await tagReviews().catch(() => null); } });
     cx.spawn(async (cx) => { for (;;) { await cx.sleep(60000); if (await myPrsChanged().catch(() => false)) await fetchGh(cx); } });
     // A pick in squirrel-account starts the Claude pane that asked for it (withAccount).
     cx.spawn(async (cx) => {

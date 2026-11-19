@@ -11,6 +11,9 @@ const LEARNED = "squirrel.ai-triage-learned";
 const PER_ROUND = 4;
 const KEEP_MS = 30 * 24 * 3600 * 1000;
 const DAY_MS = 24 * 3600 * 1000;
+// A PR whose tagging failed waits this long before another try, so a broken one isn't retried every round.
+const FAIL_WAIT_MS = 5 * 60 * 1000;
+const failed = {};
 
 // ANTHROPIC_API_KEY is dropped so the run uses the Claude login. No tools, so it can only answer.
 const CLAUDE = 'env -u ANTHROPIC_API_KEY -u CLAUDE_CONFIG_DIR claude -p --tools "" --strict-mcp-config --no-session-persistence --output-format json';
@@ -102,14 +105,14 @@ export async function tagReviews() {
   const version = hash(header);
   // New PRs first, then new commits, then rule changes.
   const stale = (p) => { const tag = (shared(AI_TRIAGE) ?? {})[p.url]; return !tag ? 0 : tag.sha !== p.headSha ? 1 : tag.rules !== version ? 2 : 3; };
-  const todo = [...open.filter((p) => stale(p) < 3).sort((a, b) => stale(a) - stale(b)), ...merged.map((p) => ({ ...p, headSha: "merged" }))]
+  const todo = [...open.filter((p) => stale(p) < 3 && !(failed[p.url + p.headSha] > Date.now() - FAIL_WAIT_MS)).sort((a, b) => stale(a) - stale(b)), ...merged.map((p) => ({ ...p, headSha: "merged" }))]
     .slice(0, PER_ROUND);
-  for (const p of todo) {
+  await Promise.all(todo.map(async (p) => {
     const answer = await ask(p.url, header);
-    if (!answer) continue;
+    if (!answer) { failed[p.url + p.headSha] = Date.now(); return; }
     const prev = (shared(AI_TRIAGE) ?? {})[p.url];
     setShared(AI_TRIAGE, { ...(shared(AI_TRIAGE) ?? {}), [p.url]: { ...answer, sha: p.headSha, rules: version, at: Date.now(), note: prev?.note } });
-  }
+  }));
   const all = shared(AI_TRIAGE) ?? {}, cutoff = Date.now() - KEEP_MS;
   const kept = Object.fromEntries(Object.entries(all).filter(([, v]) => v.at > cutoff));
   if (Object.keys(kept).length !== Object.keys(all).length) setShared(AI_TRIAGE, kept);

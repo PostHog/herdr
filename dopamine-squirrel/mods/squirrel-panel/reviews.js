@@ -137,9 +137,9 @@ export const reviewViews = {
   },
 
   aiTag(p, tag, key, c, t) {
-    const care = tag.verdict === "needs";
-    return div().id(`ai-${key}`).flex_none().cursor_pointer()
-      .tooltip(`${tag.reason}${tag.note ? `\nYour note: ${tag.note}` : ""}\nClick to ${tag.corrected ? "hand it back to the AI" : "flip it"}`)
+    const care = tag.verdict === "needs", recheck = !tag.corrected && p.headSha && tag.sha !== p.headSha && tag.sha !== "merged";
+    return div().id(`ai-${key}`).flex_none().cursor_pointer().when(recheck, (el) => el.opacity(0.55))
+      .tooltip(`${recheck ? "From an earlier commit, re-checking the new ones\n" : ""}${tag.reason}${tag.note ? `\nYour note: ${tag.note}` : ""}\nClick to ${tag.corrected ? "hand it back to the AI" : "flip it"}`)
       .on_click((_e, cx) => { cx.stop_propagation(); this.correctTag(p); this.noteState(p); this.expanded[key] = true; cx.notify(); })
       .child(c.tag(`${care ? "You care" : "Not important"}${tag.corrected ? " ✓" : ""}`, care ? c.yellow : t.dim, Boolean(tag.corrected)));
   },
@@ -192,8 +192,8 @@ export const reviewViews = {
     const isDone = (p) => Boolean(marks[p.url]) && !back.get(p.url + p.number);
     // You care (asked by name, tagged You care, or not tagged yet): approved with CI passed, then CI passed, then the rest.
     // Not important last. Longest waiting first in each group.
-    // A tag counts only for the commit it was made on (or once you flipped it), the same as it shows.
-    const tagOf = (p) => { const tag = aiTags[p.url]; return tag && (tag.sha === p.headSha || tag.corrected) ? tag : null; };
+    // After new commits the previous tag shows and counts until the AI re-checks, the same as it shows.
+    const tagOf = (p) => aiTags[p.url] ?? null;
     const group = (p) => p.mine || tagOf(p)?.verdict !== "skip" ? (p.ci !== "SUCCESS" ? 2 : p.review === "APPROVED" ? 0 : 1) : 3;
     // The order is set when GitHub data arrives or the AI tags a PR, so your own click (a tag flip) never
     // moves rows under the pointer.
@@ -238,7 +238,7 @@ export const reviewViews = {
             .when(p.mine, (el) => el.child(c.tag("@you", t.accent, true)))
             .when(Boolean(again), (el) => el.child(c.tag(`↻ ${again}`, c.yellow, false)))
             .when(p.mentioned, (el) => el.child(c.tag("mentioned", t.accent, false)))
-            .when(!p.mine && Boolean(aiTags[p.url]) && (aiTags[p.url].sha === p.headSha || aiTags[p.url].corrected), (el) => el.child(this.aiTag(p, aiTags[p.url], key, c, t)))
+            .when(!p.mine && Boolean(aiTags[p.url]), (el) => el.child(this.aiTag(p, aiTags[p.url], key, c, t)))
             .child(div().id(`title-r0-${p.url}`).tooltip(p.title).flex_1().min_w(0).truncate().text_size(12.5).text_color(t.foreground).when(p.myReview === null, (el) => el.font_semibold()).child(p.title)))
           .child(c.cell(110, p.author, t.muted))
           .child(div().w(52).flex_none().text_size(11).when(stale, (el) => el.font_semibold()).text_color(stale ? c.red : t.dim).child(ago(Date.parse(p.requestedAt))))
