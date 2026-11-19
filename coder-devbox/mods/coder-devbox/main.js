@@ -24,7 +24,13 @@ const COMMANDS = [
 const START_WATCH_MS = 500;
 const REMOTE_CONTROL_TAB = "Claude Remote Control";
 // Remote Control lives as long as the terminal that runs it, so it gets its own tab on the box.
-const REMOTE_CONTROL_ARGV = ["bash", "-lc", "cd ~/posthog 2>/dev/null; claude remote-control; exec bash -l"];
+// Remote Control can stop, for example before a login on the box. The space keeps it one Enter away
+// instead of leaving a plain shell, because a click on the row only selects the existing space.
+const REMOTE_CONTROL_ARGV = [
+  "bash",
+  "-lc",
+  'cd ~/posthog 2>/dev/null; while true; do claude remote-control; echo "Remote Control stopped. Press Enter to start it again, or Ctrl-D for a shell."; read -r || break; done; exec bash -l',
+];
 
 export default class DevboxMenu extends View {
   init(_props, cx) {
@@ -175,7 +181,8 @@ export default class DevboxMenu extends View {
     menu.child(item("remote-control", "Claude Remote Control", {
       detail: this.remoteControlSpace() ? "open" : null,
       detailColor: t.accent,
-      enabled: machines().some((m) => m.name === this.machineName && m.state === "connected"),
+      // machines() reports only whether a machine's layout loaded, which needs its core to answer.
+      enabled: machines().some((m) => m.name === this.machineName && m.layout === "ready"),
       onClick: () => this.startRemoteControl(),
     }));
 
