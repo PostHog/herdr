@@ -42,7 +42,7 @@ Your open PRs in any repo, the Trunk merge queue, and what merged this week, wit
 | --- | --- |
 | `cmd-1` `cmd-2` `cmd-3` | Running agents, Reviews, My PRs |
 | `cmd-b` | Show or hide the panel |
-| `cmd-t` `cmd-shift-d` | New pane, straight into Claude; quit it to get a shell |
+| `cmd-t` `cmd-shift-d` | New pane, straight into Claude on the account you pick (1, 2, Enter for the last); quit it to get a shell |
 | `cmd-shift-t` | New tab |
 | `cmd-r` | Rename a pane |
 | `cmd-w` | Close a pane (asks first) |
@@ -78,6 +78,7 @@ Setting this up or taking a part of it? [RECIPE.md](RECIPE.md) has setup, every 
 | Confetti | `mods/squirrel-confetti/` |
 | GitHub refresh error popup | `mods/squirrel-error/` |
 | Reopen a closed Claude pane | `mods/squirrel-reopen/` |
+| Pick the Claude account for a new pane | `mods/squirrel-account/`, `mods/squirrel-dragon/` |
 | Pane headers, rename | `mods/squirrel-pane-header/`, `mods/squirrel-rename/` |
 | Layout, keys | `layouts/Dopamine-Squirrel.json`, `keys.json` |
 

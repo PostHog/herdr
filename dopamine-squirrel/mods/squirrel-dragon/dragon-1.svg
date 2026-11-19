@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 260" width="420" height="260">
+  <defs>
+    <linearGradient id="body" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#581c87"/><stop offset="0.55" stop-color="#1e0636"/><stop offset="1" stop-color="#050505"/></linearGradient>
+    <linearGradient id="wing" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#c084fc" stop-opacity="0.85"/><stop offset="1" stop-color="#581c87" stop-opacity="0.55"/></linearGradient>
+    <radialGradient id="eye"><stop offset="0" stop-color="#ffffff"/><stop offset="0.4" stop-color="#fde047"/><stop offset="1" stop-color="#f97316" stop-opacity="0"/></radialGradient>
+    <linearGradient id="belly" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#c084fc" stop-opacity="0.15"/><stop offset="1" stop-color="#f5d0fe" stop-opacity="0.55"/></linearGradient>
+  </defs>
+  <path d="M250 150 C252 104 226 52 168 18 C182 46 186 70 182 92 C196 84 210 88 216 102 C226 96 238 100 242 114 Z" fill="#1e0636" fill-opacity="0.9" stroke="#c084fc" stroke-width="1.5" stroke-opacity="0.6"/>
+  <path d="M238 160 C236 110 200 40 112 6 C132 40 140 70 138 96 C152 86 168 88 176 104 C186 96 200 100 206 116 C214 112 224 120 226 134 Z" fill="url(#wing)" stroke="#f5d0fe" stroke-width="2.5" stroke-linejoin="round"/>
+  <path d="M238 160 L112 6 M234 150 L138 96 M232 144 L176 104 M230 140 L206 116" stroke="#f5d0fe" stroke-opacity="0.65" stroke-width="2" fill="none"/>
+  <path d="M150 198 L138 238 L156 243 L140 248 L124 241 L130 204 Z" fill="#1e0636" stroke="#c084fc" stroke-width="2"/>
+  <path d="M8 204 C58 216 90 190 130 185 C160 181 176 200 206 194 C236 188 240 150 262 128 L290 100 C298 92 312 86 326 86 L360 92 L404 104 L382 115 L340 113 L396 136 L374 147 L330 134 C318 140 302 150 292 166 C277 190 262 222 225 228 C190 234 170 212 140 210 C105 208 70 232 8 204 Z" fill="url(#body)" stroke="#c084fc" stroke-width="2.5" stroke-linejoin="round"/>
+  <path d="M60 212 C100 204 130 214 160 216 C190 218 215 224 240 210 C262 196 278 170 300 148" fill="none" stroke="url(#belly)" stroke-width="7" stroke-linecap="round" stroke-dasharray="9 5"/>
+  <path d="M252 190 L264 232 L280 236 L264 241 L248 237 L236 200 Z" fill="#1e0636" stroke="#c084fc" stroke-width="2"/>
+  <path d="M316 88 L288 46 L330 84 Z M334 87 L326 54 L348 89 Z" fill="#f5d0fe" stroke="#c084fc" stroke-width="1.5"/>
+  <path d="M92 194 L102 174 L112 190 Z M136 186 L148 166 L156 184 Z M182 192 L194 170 L202 190 Z M240 160 L258 142 L256 162 Z M268 124 L286 108 L284 126 Z" fill="#c084fc"/>
+  <path d="M8 204 L-2 196 L4 212 Z" fill="#c084fc"/>
+  <path d="M342 113 L396 136" stroke="#fde047" stroke-width="1.5" stroke-opacity="0.8"/>
+  <path d="M352 114 L356 121 L360 114 Z M366 114 L370 122 L374 115 Z M350 120 L354 113 L358 122 Z M364 127 L368 119 L372 129 Z" fill="#fff7ed"/>
+  <circle cx="341" cy="98" r="11" fill="url(#eye)"/>
+  <ellipse cx="341" cy="98" rx="1.6" ry="4.5" fill="#1c0a00"/>
+  <circle cx="396" cy="108" r="2" fill="#1c0a00"/>
+</svg>
