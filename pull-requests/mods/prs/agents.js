@@ -215,9 +215,13 @@ async function postPendingFindings() {
   const due = Object.values(store().runs).filter((run) => run.postPending);
   for (const run of due) {
     const key = prKey(run.repo, run.number);
+    let claimed = false;
+    await updateStore((state) => {
+      claimed = Boolean(state.runs[run.id]?.postPending);
+      if (claimed) delete state.runs[run.id].postPending;
+    });
     const findings = (store().findings[key] ?? []).filter((finding) => finding.runId === run.id && finding.state === "open" && !finding.posted);
-    await updateStore((state) => delete state.runs[run.id]?.postPending);
-    if (store().findingsFrom?.[key]?.runId !== run.id || !findings.length) continue;
+    if (!claimed || store().findingsFrom?.[key]?.runId !== run.id || !findings.length) continue;
     const title = `#${run.pr.number} ${run.pr.title}`;
     try {
       const result = await postFindingsReview(run.pr, findings, findings[0].headSha);
