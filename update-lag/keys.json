@@ -1,0 +1,5 @@
+{
+  "global": {
+    "cmd-shift-u": "mod.open:update-lag"
+  }
+}
