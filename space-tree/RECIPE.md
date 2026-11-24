@@ -5,6 +5,7 @@ The `Pull-Requests` layout with one tree in place of the spaces and agents lists
 ## What you see
 
 - With another machine added (`hc machine ls`), spaces sit under a header per machine: "This computer" first, then each machine by name, with a dot that's green while connected, its state when it isn't (loading, asleep), a `+` for a new space there, and a chevron that folds it.
+  With the `coder-devbox` piece enabled, a devbox's header also gets that piece's globe and right-click menu.
   A machine with no spaces offers "New space there".
 - Each space is a row with its avatar, name and branch (main and master go unsaid), and a chevron that folds it.
   The avatar is the repo's own icon when it has one: the icon its web setup declares (a `<link rel="icon">` in its HTML, or Gatsby's manifest `icon`), else the best favicon, touch icon or `<repo>-icon` file it tracks in git.
@@ -22,12 +23,13 @@ The `Pull-Requests` layout with one tree in place of the spaces and agents lists
   A tab's zoomed pane says `Z`.
 - A sub-agent row focuses its pane, or peeks at it when it has none; its X closes the pane or ends the sub-agent.
 - A space row selects the space on click and opens its menu on right-click. On hover, its `+` opens Herdr's new-tab menu there.
-- The bar above the panes keeps only Herdr's new-tab menu, the Files and Changes buttons and, where the platform draws none, the window buttons. The scroll wheel on it still steps through tabs.
+- The bar above the panes starts with the `back-forward` piece's arrows, then keeps only Herdr's new-tab menu, the Files and Changes buttons and, where the platform draws none, the window buttons. The scroll wheel on it still steps through tabs.
 - `agent.next` and `agent.prev` follow the tree's order.
 
 ## Built from
 
 - `layouts/Space-Tree.json`: `pull-requests/layouts/Pull-Requests.json` with its `spaces` and `agents` blocks replaced by one `space-tree` block, and its `tabs` block by `space-tree-bar`. It needs the `pull-requests` piece for the PR panel and page.
+  It also places a `back-forward` block left of the bar and a compact `ph-inbox` bar (40 px) above the PR panel; the tree shows each block while its piece's mod is installed and hides it otherwise, checking every 2 seconds, so turning a piece on or off in the piece picker shows or hides its block.
 - `mods/space-tree/main.js`: reads `spaces()`, `panes()` and `terminals()`; every 10 seconds `git rev-parse` per folder in view (each folder at most every 30 seconds), and for Claude Code `hc get`, `~/.claude/sessions/<pid>.json` and the tail of the transcript, on the terminal's own machine. A remote pane's folder comes from `terminals()` when `panes()` has none.
 - `mods/space-tree/icons.js`: scores the candidates `git ls-files` returns and copies the winner into `data/space-tree/icons/` under Herdr's home, named by its hash (an `.ico` becomes a PNG through macOS's `sips`). A found icon is looked at again every six hours.
 - `mods/space-tree-bar/main.js`: Herdr's `tabs` mod (0.1.14) without the tab list, keeping its per-space panel memory.

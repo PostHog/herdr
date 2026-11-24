@@ -5,7 +5,7 @@
 
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { spaces, panes, terminals, machines, focused, run, openOverlay, exec, hc, home, readTextFile, theme, shared, setShared, setAgentOrder, layout } from "herdr";
+import { spaces, panes, terminals, machines, focused, run, openOverlay, exec, hc, home, readTextFile, theme, shared, setShared, setAgentOrder, layout, appHome, window } from "herdr";
 import { findIcon } from "./icons.js";
 
 function find(node, id) {
@@ -24,6 +24,19 @@ const RAIL_CELL = 32;
 // The same avatar colors as Herdr's spaces list, from the same shared map.
 const MARK = { ansi6: "#22a99a", ansi3: "#e3814f", ansi4: "#5b8def", ansi5: "#8b7cf6", ansi2: "#3fae6a", ansi1: "#d9649a" };
 const PALETTE = ["ansi6", "ansi3", "ansi4", "ansi5", "ansi2", "ansi1"];
+
+// Coder's default ssh hosts end in .coder; `hogli devbox:setup` writes coder.<workspace> instead.
+const isDevbox = (machine) => /\.coder$|^coder\.[^.]/.test(machine?.target ?? "");
+const devboxUi = (name) => terminals().find((t) => t.labels?.["coder-devbox.ui"] === name && t.state === "live" && !String(t.address).includes("/"));
+
+// Layout blocks that belong to other pieces: shown while that piece's mod is installed,
+// hidden otherwise, so turning a piece off leaves no empty or stale block.
+const PIECE_BLOCKS = [
+  { id: "back-forward", mod: "back-forward" },
+  { id: "inbox", mod: "ph-inbox" },
+];
+const PIECES_MS = 2000;
+const installed = (mod) => readTextFile(`${appHome()}/mods/${mod}/main.js`).then((text) => text != null, () => false);
 
 const RANK = { blocked: 4, done: 3, working: 2, idle: 1 };
 const GIT_MS = 30000;
@@ -63,10 +76,29 @@ export default class SpaceTree extends View {
     this.homes = {}; // machine -> its home folder
     this.machines = []; // `hc machine ls`, without temporary ones
     this.busy = false;
+    this.devboxMenu = false;
+    this.pieceShown = {}; // block id -> shown, as last applied
     cx.timer.every(CLAUDE_MS, (cx) => this.refresh(cx));
     cx.timer.every(15000, (cx) => this.refreshMachines(cx));
     this.refresh(cx);
     this.refreshMachines(cx);
+    cx.timer.every(PIECES_MS, (cx) => this.syncPieces(cx));
+    this.syncPieces(cx);
+  }
+
+  syncPieces(cx) {
+    cx.spawn(async (cx) => {
+      const devboxMenu = await installed("coder-devbox");
+      if (devboxMenu !== this.devboxMenu) { this.devboxMenu = devboxMenu; cx.notify(); }
+      // Applied on a change and once at start, not compared with layout(): its `hidden` is the
+      // file's, while the shown state Herdr keeps from earlier show and hide commands can differ.
+      for (const block of PIECE_BLOCKS) {
+        const on = await installed(block.mod);
+        if (this.pieceShown[block.id] === on || !find(layout(), block.id)) continue;
+        this.pieceShown[block.id] = on;
+        run(on ? "layout.show" : "layout.hide", { id: block.id });
+      }
+    });
   }
 
   refreshMachines(cx) {
@@ -488,17 +520,41 @@ export default class SpaceTree extends View {
       .text_color(t.dim)
       .hover((s) => s.bg(t.hover))
       .on_click((_e, cx) => this.fold(key, cx))
+      .when(this.devboxMenu && isDevbox(machine), (el) => el.on_mouse_down("right", () => this.devbox(machine)))
       .child(svg(`mods/workspace-chrome/chevron-${open ? "down" : "right"}.svg`).size(11).flex_none())
       .child(svg(`mods/workspace-chrome/${m ? "server" : "monitor"}.svg`).size(13).flex_none())
       .child(div().flex_1().min_w(0).truncate().child(m ?? "This computer"))
       .when(Boolean(state), (el) => el.child(div().flex_none().child(state)))
       .when(!open && Boolean(top), (el) => el.child(this.status(t, top) ?? div()))
+      .when(Boolean(m) && connected && this.devboxMenu && isDevbox(machine), (el) => el.child(this.devboxChip(machine, t)))
       .when(connected, (el) => el.child(div().id(`machine-add-${m ?? "local"}`).flex_none().px(4).rounded(4)
         .hover((s) => s.bg(t.hover).text_color(t.foreground))
         .tooltip(`New space on ${m ?? "this computer"}`)
         .on_click((_e, cx) => { cx.stop_propagation(); run("space.new", { machine: m ?? "" }); })
         .child("+")))
       .child(div().size(6).rounded(3).flex_none().bg(connected ? t.ansi2 : t.dim));
+  }
+
+  devbox(machine, action = null) {
+    openOverlay({ mod: "coder-devbox", kind: "popup", width: 240, height: 620, props: { machine: machine.name, target: machine.target, action } });
+  }
+
+  // The coder-devbox piece's globe: forwards the box's PostHog UI, then opens it.
+  devboxChip(machine, t) {
+    const forward = devboxUi(machine.name);
+    const port = Number(forward?.labels?.["coder-devbox.port"]) || null;
+    const icon = forward && !port
+      ? svg("mods/workspace-chrome/spinner.svg").size(12).spin(900)
+      : svg("mods/coder-devbox/globe.svg").size(13);
+    return div().id(`machine-ui-${machine.name}`).flex_none().p(2).rounded(4)
+      .text_color(port ? t.accent : t.dim).hover((s) => s.bg(t.hover).text_color(port ? t.accent : t.foreground))
+      .tooltip(port ? `PostHog UI at http://localhost:${port}` : forward ? "Forwarding the PostHog UI…" : "Forward the PostHog UI and open it")
+      .on_click((_e, cx) => {
+        cx.stop_propagation();
+        if (port) exec(window().platform === "macos" ? "open" : "xdg-open", [`http://localhost:${port}`]);
+        else this.devbox(machine, "ui");
+      })
+      .child(icon);
   }
 
   emptyMachineRow(t, m) {
