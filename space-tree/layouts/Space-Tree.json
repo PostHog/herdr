@@ -195,7 +195,7 @@
               "id": "status",
               "type": "block",
               "content": {
-                "mod": "workspace-status"
+                "mod": "space-tree-status"
               },
               "size": {
                 "px": 28.0
