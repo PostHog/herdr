@@ -32,6 +32,6 @@ The mod paints the theme's `chrome` color, like Herdr's tab bar.
 ## How it behaves
 
 - Going back and then to a new tab drops the forward steps, like a browser.
-- It keeps the last 100 steps and skips tabs that were closed.
+- It keeps the last 100 steps, and skips tabs that were closed and the tab you are already on.
 - The history lives in the mod, so it starts empty when Herdr starts, when you switch layouts, and when the mod reloads.
 - It has buttons only, no keys.

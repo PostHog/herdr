@@ -7,6 +7,10 @@ import { h_flex } from "gpui-base";
 import { focused, spaces, theme, run } from "herdr";
 
 const MAX_STEPS = 100;
+// A step runs space.select, tab.select and pane.focus in turn, and a render can land between them.
+const ARRIVAL_WINDOW_MS = 1000;
+
+const sameTab = (a, b) => a.space === b.space && a.tab === b.tab;
 
 function tabExists(step) {
   const space = spaces().find((s) => s.id === step.space);
@@ -24,19 +28,21 @@ export default class BackForward extends View {
   follow() {
     const f = focused();
     if (!f) return;
-    const current = this.steps[this.index];
-    if (current && current.space === f.space && current.tab === f.tab) {
-      current.pane = f.pane;
-      return;
-    }
     if (this.goingTo !== null) {
-      const target = this.steps[this.goingTo];
-      this.goingTo = null;
-      if (target && target.space === f.space && target.tab === f.tab) {
+      const target = this.steps[this.goingTo.index];
+      if (target && sameTab(target, f)) {
+        this.goingTo = null;
         this.index = this.steps.indexOf(target);
         target.pane = f.pane;
         return;
       }
+      if (target && Date.now() - this.goingTo.at < ARRIVAL_WINDOW_MS) return;
+      this.goingTo = null;
+    }
+    const current = this.steps[this.index];
+    if (current && sameTab(current, f)) {
+      current.pane = f.pane;
+      return;
     }
     this.steps = this.steps.slice(0, this.index + 1);
     this.steps.push({ space: f.space, tab: f.tab, pane: f.pane });
@@ -44,10 +50,13 @@ export default class BackForward extends View {
     this.index = this.steps.length - 1;
   }
 
-  // The nearest step in that direction whose tab still exists.
+  // The nearest step in that direction whose tab still exists and isn't the one already shown.
+  // Closing the tab between two visits to another leaves those visits side by side in the history.
   nextIndex(direction) {
+    const current = this.steps[this.index];
     for (let i = this.index + direction; i >= 0 && i < this.steps.length; i += direction) {
-      if (tabExists(this.steps[i])) return i;
+      const step = this.steps[i];
+      if (tabExists(step) && !(current && sameTab(step, current))) return i;
     }
     return null;
   }
@@ -56,7 +65,7 @@ export default class BackForward extends View {
     const i = this.nextIndex(direction);
     if (i === null) return;
     const step = this.steps[i];
-    this.goingTo = i;
+    this.goingTo = { index: i, at: Date.now() };
     run("space.select", { id: step.space });
     run("tab.select", { id: step.tab });
     if (step.pane) run("pane.focus", { pane: step.pane });
