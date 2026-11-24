@@ -5,6 +5,7 @@ const PORT_LABEL = "coder-devbox.port";
 const CODER_SUFFIX = ".coder";
 // `hogli devbox:setup` runs `coder config-ssh` with this prefix, so its hosts are coder.<workspace>[.<agent>].
 const CODER_PREFIX = "coder.";
+const REGION_SUFFIX = /-eu$/;
 const CHECKOUT_PARENTS = ["workspace", "", "code", "src", "dev", "projects", "repos", "git"];
 const READINESS_TRIES = 180;
 
@@ -56,6 +57,9 @@ export function hogliTarget({ workspace, owner }, me) {
   const who = owner ?? me;
   if (!who) throw new Error("Couldn't ask Coder who you are, so this box can't be targeted.");
   const prefix = `devbox-${who}`;
+  // Boxes outside the default region end in a region suffix (devbox-<user>-eu). hogli resolves
+  // a label or @user across regions by itself and rejects a label that is a region suffix.
+  workspace = workspace.replace(REGION_SUFFIX, "");
   const label = workspace === prefix ? null : workspace.startsWith(`${prefix}-`) ? workspace.slice(prefix.length + 1) : undefined;
   if (label === undefined) throw new Error(`hogli only targets boxes named ${prefix}[-label], not ${workspace}.`);
   if (who === me) return label ?? `@${me}`;
