@@ -15,6 +15,7 @@ Each top-level folder with a `RECIPE.md` is one piece. You pick the pieces you w
 | [`gustavo`](gustavo/README.md) | Gustavo Strassburger's task-first setup: each space is a task with its Claude sessions, PRs and worktrees, an Inbox of what waits on you, a Grafana view, a pixel-art Dungeon of your tasks with PostHog's hoggies, a history bar, and PostHog's dev stack on the right. Built around Feature Flags team work; take the parts you like. |
 | [`hogpilot`](hogpilot/RECIPE.md) | A side panel for CSMs: hogpilot's book of accounts with open signals and ARR at stake, and the account card for whichever account the focused terminal is working on, with buttons to ask Claude about it or open its dossier. Needs hogpilot installed. |
 | [`piece-picker`](piece-picker/RECIPE.md) | A dialog with one switch per piece in this repo. Each switch runs `install.sh enable` or `disable` for you, and Update runs `install.sh`. Herdr's command palette can't list mods, so a key opens it (`cmd-shift-p` in its `keys.json`). |
+| [`update-lag`](update-lag/RECIPE.md) | Keeps Herdr and herdr-core a few days behind the newest release, while they still update by themselves. A dialog (`cmd-shift-u` in its `keys.json`) sets it up, changes the number of days, holds updates or takes the latest now. macOS on Apple Silicon only. |
 | [`back-forward`](back-forward/RECIPE.md) | Slack-style back and forward buttons that step through the spaces and tabs you looked at. Add its block to your layout; the recipe has the JSON. |
 
 ## Install
