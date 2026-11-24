@@ -25,6 +25,7 @@ The `Pull-Requests` layout with one tree in place of the spaces and agents lists
 - A space row selects the space on click and opens its menu on right-click. On hover, its `+` opens Herdr's new-tab menu there.
 - The bar above the panes starts with the `back-forward` piece's arrows, then keeps only Herdr's new-tab menu, the Files and Changes buttons and, where the platform draws none, the window buttons. The scroll wheel on it still steps through tabs.
 - `agent.next` and `agent.prev` follow the tree's order.
+- The status bar at the bottom is Herdr's, plus a hint for each global key bound to a mod this repo installed (`mod.open:<mod>` or `<mod>.<command>`, read from `keys()` and `.posthog-herdr-files`), named by the mod's `mod.json` title, beside the palette's "commands" hint. A click runs it. Enabling or disabling a piece updates the hints within 5 seconds.
 
 ## Built from
 
@@ -32,4 +33,5 @@ The `Pull-Requests` layout with one tree in place of the spaces and agents lists
   It also places a `back-forward` block left of the bar and a compact `ph-inbox` bar (40 px) above the PR panel; the tree shows each block while its piece's mod is installed and hides it otherwise, checking every 2 seconds, so turning a piece on or off in the piece picker shows or hides its block.
 - `mods/space-tree/main.js`: reads `spaces()`, `panes()` and `terminals()`; every 10 seconds `git rev-parse` per folder in view (each folder at most every 30 seconds), and for Claude Code `hc get`, `~/.claude/sessions/<pid>.json` and the tail of the transcript, on the terminal's own machine. A remote pane's folder comes from `terminals()` when `panes()` has none.
 - `mods/space-tree/icons.js`: scores the candidates `git ls-files` returns and copies the winner into `data/space-tree/icons/` under Herdr's home, named by its hash (an `.ico` becomes a PNG through macOS's `sips`). A found icon is looked at again every six hours.
+- `mods/space-tree-status/main.js`: Herdr's `workspace-status` mod (0.1.18) with the piece shortcut hints.
 - `mods/space-tree-bar/main.js`: Herdr's `tabs` mod (0.1.14) without the tab list, keeping its per-space panel memory.
