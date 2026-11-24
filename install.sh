@@ -81,7 +81,7 @@ shipped() {
 
 # Files Herdr writes into mod folders itself.
 herdr_written() {
-  case "$(basename "$1")" in
+  case "${1##*/}" in
     jsconfig.json | *.d.ts | .* | *.error) return 0 ;;
   esac
   return 1
@@ -98,7 +98,7 @@ backup() {
 # Copies one file when it changed. Herdr sees the new file and reloads what uses it.
 place() {
   local src="$1" rel="$2" dst="$HOME_DIR/$2"
-  mkdir -p "$(dirname "$dst")"
+  [ -d "${dst%/*}" ] || mkdir -p "${dst%/*}"
   if [ -L "$dst" ] || ! cmp -s "$src" "$dst"; then
     rm -rf "$dst"
     cp "$src" "$dst"
@@ -153,11 +153,10 @@ install_piece() {
 
   # Files this piece placed before that it no longer has.
   if [ -f "$MANIFEST" ]; then
-    while IFS="$TAB" read -r p rel; do
-      [ "$p" = "$piece" ] || continue
-      grep -qxF "$piece$TAB$rel" "$placed" && continue
-      [ -d "$HOME_DIR/$rel" ] || rm -f "$HOME_DIR/$rel"
-    done <"$MANIFEST"
+    awk -F'\t' -v p="$piece" 'NR == FNR { kept[$0]; next } $1 == p && !($0 in kept) { print $2 }' "$placed" "$MANIFEST" |
+      while IFS= read -r rel; do
+        [ -d "$HOME_DIR/$rel" ] || rm -f "$HOME_DIR/$rel"
+      done
     grep -v "^$piece$TAB" "$MANIFEST" >>"$placed" || true
   fi
   mv "$placed" "$MANIFEST"
