@@ -1,7 +1,7 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { exec, readTextFile, appHome, theme, props, closeOverlay, shared } from "herdr";
-import { scan, summaryOf, enabledFrom, reportOf } from "./pieces.js";
+import { exec, readTextFile, appHome, theme, props, closeOverlay, shared, layout, keys, window } from "herdr";
+import { scan, summaryOf, enabledFrom, reportOf, layoutMods, placeOf } from "./pieces.js";
 
 const SELF = "piece-picker";
 
@@ -12,6 +12,7 @@ export default class PiecePicker extends View {
     this.enabled = new Set();
     this.busy = null;
     this.message = null;
+    this.shown = new Set();
     cx.spawn(async (cx) => {
       await this.read();
       cx.notify();
@@ -28,17 +29,30 @@ export default class PiecePicker extends View {
         this.message = { level: "error", text: `${where}Run ./install.sh once in your herdr checkout, then open this again.` };
         return;
       }
-      const found = await exec("find", [repo, "-mindepth", "2", "-maxdepth", "3", "-type", "f", "(", "-name", "RECIPE.md", "-o", "-path", "*/layouts/*.json", ")"]);
+      const found = await exec("find", [repo, "-mindepth", "2", "-maxdepth", "4", "-type", "f", "(", "-name", "RECIPE.md", "-o", "-path", "*/layouts/*.json", "-o", "-path", "*/mods/*/mod.json", ")"]);
       const list = scan(found.stdout, repo);
       const recipes = await Promise.all(list.map((p) => readTextFile(`${repo}/${p.name}/RECIPE.md`)));
       list.forEach((p, i) => (p.summary = summaryOf(recipes[i] ?? "")));
       this.enabled = enabledFrom(await readTextFile(`${appHome()}/.posthog-herdr-enabled`));
+      this.shown = await this.shownMods();
       this.repo = repo;
       this.pieces = list;
     } catch (e) {
       this.pieces = this.pieces ?? [];
       this.message = { level: "error", text: String(e?.message ?? e) };
     }
+  }
+
+  // The mods the layout on screen places, and the mods those draw into it
+  // (space-tree draws coder-devbox's globe, for one), found by their `mods/<name>/` paths.
+  async shownMods() {
+    const placed = layoutMods(layout());
+    const shown = new Set(placed);
+    for (const mod of placed) {
+      const code = (await readTextFile(`${appHome()}/mods/${mod}/main.js`).catch(() => null)) ?? "";
+      for (const m of code.matchAll(/mods\/([a-z0-9-]+)\//g)) shown.add(m[1]);
+    }
+    return shown;
   }
 
   install(label, args, cx) {
@@ -91,6 +105,7 @@ export default class PiecePicker extends View {
 
   row(t, piece) {
     const about = piece.name === SELF ? "This menu. It stays on." : piece.summary;
+    const place = placeOf(piece, { layout: shared("layout"), shown: this.shown, bindings: keys(), mac: window()?.platform === "macos" });
     return h_flex()
       .w_full()
       .gap(16)
@@ -104,7 +119,8 @@ export default class PiecePicker extends View {
           .min_w(0)
           .gap(2)
           .child(div().text_size(14).text_color(t.foreground).child(piece.name))
-          .child(div().text_size(12.5).text_color(t.dim).truncate().child(about)),
+          .child(div().text_size(12.5).text_color(t.dim).truncate().child(about))
+          .child(div().text_size(12).text_color(place.here ? t.accent : t.muted).truncate().child(place.text)),
       )
       .child(div().flex_none().child(this.control(t, piece)));
   }
