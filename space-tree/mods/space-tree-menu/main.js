@@ -20,14 +20,14 @@ async function checkout(folder, on) {
 function items(id, git) {
   return [
     ["Rename", "space.rename", { id }, "square-pen"],
-    ["Change icon", "icon", { space: id }, "sparkles"],
+    ["Change icon", "icon", { space: id }, "layers"],
     ...(git ? [["New worktree", "worktree", { space: id, action: "new" }, "git-branch"], ["Open worktree", "worktree", { space: id, action: "open" }, "git-branch"]] : []),
     ...(git === "linked" ? [["Remove worktree", "worktree", { space: id, action: "remove" }, "git-branch"]] : []),
     ["Close", "space.close", { id }, "x"],
   ];
 }
 
-const iconPath = (name) => (name === "sparkles" ? "mods/space-tree-icon/icons/sparkles.svg" : `mods/workspace-chrome/${name}.svg`);
+const iconPath = (name) => `mods/workspace-chrome/${name}.svg`;
 
 function shortcut(name, args) {
   const value = args && Object.values(args)[0];

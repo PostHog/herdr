@@ -43,6 +43,8 @@ const GIT_MS = 30000;
 const CLAUDE_MS = 10000;
 const INDENT = 14;
 const AVATAR_DIR = "data/space-tree/avatars";
+// Where the space-tree-icon picker unpacks Lucide (its lucide.js; Herdr doesn't import across mods).
+const LUCIDE_DIR = "data/space-tree-icon/lucide-0.460.0";
 const AVATAR_MS = 24 * 3600000;
 const githubOwner = (url) => url.match(/github\.com[:/]([^/\s]+)\/[^/\s]+?(?:\.git)?\/?$/)?.[1] ?? null;
 
@@ -159,6 +161,7 @@ export default class SpaceTree extends View {
         await this.findClaudeFolders();
         await this.readGit();
         await this.findAvatars();
+        if (!this.lucide) this.lucide = await readTextFile(`${appHome()}/${LUCIDE_DIR}/tags.json`).then(Boolean, () => false);
       } catch (e) {
         console.log(`space-tree: ${e}`);
       } finally {
@@ -376,7 +379,7 @@ export default class SpaceTree extends View {
       .child(!glyph && avatar
         ? image(avatar).size(18).flex_none().rounded(5)
         : h_flex().size(18).flex_none().rounded(5).bg(fill).items_center().justify_center().text_color("#ffffff")
-          .child(glyph ? svg(`mods/space-tree-icon/icons/${glyph}.svg`).size(12) : div().text_size(10.5).font_bold().child([...s.name][0]?.toUpperCase() ?? "?")))
+          .child(glyph ? svg(`${LUCIDE_DIR}/icons/${glyph}.svg`).size(12) : div().text_size(10.5).font_bold().child([...s.name][0]?.toUpperCase() ?? "?")))
       .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(s.name))
       .when(!open && Boolean(top), (el) => el.child(this.status(t, top)))
       .when(this.hovered === id, (el) => el.child(newTab));
@@ -494,7 +497,7 @@ export default class SpaceTree extends View {
     const t = theme();
     const sp = spaces();
     const colors = this.colors(sp);
-    const glyphs = shared("space-tree.icons") ?? {};
+    const glyphs = this.lucide ? shared("space-tree.icons") ?? {} : {};
     const avatars = shared("space-tree.avatars") ?? {};
     const openPrs = (shared("prs.cache.mine")?.prs ?? []).filter((pr) => pr.state === "OPEN" && pr.mine);
     if (narrow()) return this.rail(t, sp);
