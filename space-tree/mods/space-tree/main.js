@@ -29,6 +29,15 @@ const PALETTE = ["ansi6", "ansi3", "ansi4", "ansi5", "ansi2", "ansi1"];
 const isDevbox = (machine) => /\.coder$|^coder\.[^.]/.test(machine?.target ?? "");
 const devboxUi = (name) => terminals().find((t) => t.labels?.["coder-devbox.ui"] === name && t.state === "live" && !String(t.address).includes("/"));
 
+// Layout blocks that belong to other pieces: shown while that piece's mod is installed,
+// hidden otherwise, so turning a piece off leaves no empty or stale block.
+const PIECE_BLOCKS = [
+  { id: "back-forward", mod: "back-forward" },
+  { id: "inbox", mod: "ph-inbox" },
+];
+const PIECES_MS = 2000;
+const installed = (mod) => readTextFile(`${appHome()}/mods/${mod}/main.js`).then(() => true, () => false);
+
 const RANK = { blocked: 4, done: 3, working: 2, idle: 1 };
 const GIT_MS = 30000;
 const CLAUDE_MS = 10000;
@@ -68,14 +77,23 @@ export default class SpaceTree extends View {
     this.machines = []; // `hc machine ls`, without temporary ones
     this.busy = false;
     this.devboxMenu = false;
-    cx.spawn(async (cx) => {
-      this.devboxMenu = Boolean(await readTextFile(`${appHome()}/mods/coder-devbox/main.js`).catch(() => null));
-      cx.notify();
-    });
     cx.timer.every(CLAUDE_MS, (cx) => this.refresh(cx));
     cx.timer.every(15000, (cx) => this.refreshMachines(cx));
     this.refresh(cx);
     this.refreshMachines(cx);
+    cx.timer.every(PIECES_MS, (cx) => this.syncPieces(cx));
+    this.syncPieces(cx);
+  }
+
+  syncPieces(cx) {
+    cx.spawn(async (cx) => {
+      const devboxMenu = await installed("coder-devbox");
+      if (devboxMenu !== this.devboxMenu) { this.devboxMenu = devboxMenu; cx.notify(); }
+      for (const block of PIECE_BLOCKS) {
+        const node = find(layout(), block.id);
+        if (node && Boolean(node.hidden) === (await installed(block.mod))) run(node.hidden ? "layout.show" : "layout.hide", { id: block.id });
+      }
+    });
   }
 
   refreshMachines(cx) {

@@ -43,7 +43,8 @@
               },
               "size": {
                 "px": 40.0
-              }
+              },
+              "hidden": true
             },
             {
               "id": "pull-requests",
@@ -104,7 +105,8 @@
                   "size": {
                     "px": 76.0
                   },
-                  "window_drag": true
+                  "window_drag": true,
+                  "hidden": true
                 },
                 {
                   "id": "tabs",
