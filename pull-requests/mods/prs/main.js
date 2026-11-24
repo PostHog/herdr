@@ -35,6 +35,7 @@ const NAV_WIDTH = 230;
 const STATUS_TILE_MIN = 220;
 const STATUS_TILE_GAP = 10;
 const statusWidth = (gate) => gate * 5 + 12;
+const FOLDED_UNTIL_OPENED = new Set(["review:drafts"]);
 const GATE_HEADERS = ["CHECKS", "REVIEW", "THREADS", "CONFLICTS", "QUEUE"];
 const ICON = (name) => `mods/prs/icons/${name}.svg`;
 const GATE_ICONS = { ok: "tick", bad: "x", warn: "loader", run: "loader", info: "loader", merged: "merged", idle: "circle" };
@@ -593,9 +594,14 @@ export default class Prs extends View {
     return empty(t, error ? error : text);
   }
 
+  isFolded(id) {
+    return FOLDED_UNTIL_OPENED.has(id) ? !this.folded.has(`${id}:open`) : this.folded.has(id);
+  }
+
   toggleFold(id, cx) {
-    if (this.folded.has(id)) this.folded.delete(id);
-    else this.folded.add(id);
+    const key = FOLDED_UNTIL_OPENED.has(id) ? `${id}:open` : id;
+    if (this.folded.has(key)) this.folded.delete(key);
+    else this.folded.add(key);
     localStorage.setItem("folded", JSON.stringify([...this.folded]));
     cx.notify();
   }
