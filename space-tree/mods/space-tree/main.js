@@ -34,6 +34,7 @@ const devboxUi = (name) => terminals().find((t) => t.labels?.["coder-devbox.ui"]
 const PIECE_BLOCKS = [
   { id: "back-forward", mod: "back-forward" },
   { id: "inbox", mod: "ph-inbox" },
+  { id: "claude-usage", mod: "claude-usage" },
 ];
 const PIECES_MS = 2000;
 const installed = (mod) => readTextFile(`${appHome()}/mods/${mod}/main.js`).then((text) => text != null, () => false);
