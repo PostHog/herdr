@@ -45,7 +45,7 @@ export function progressBar(t, run) {
 }
 
 export function foldHeader(view, t, id, label, count, right) {
-  const folded = view.folded.has(id);
+  const folded = view.isFolded(id);
   return h_flex()
     .id(`prs-fold-${id}`)
     .px(6)
@@ -361,13 +361,19 @@ export function sidebarMine(view, t) {
 export function sidebarReviews(view, t) {
   if (!view.reviews) return [view.placeholder(t, view.reviewsError, "Loading review requests…")];
   const { visible, hidden } = view.reviewsVisible();
-  const direct = visible.filter((pr) => pr.via.direct).sort(comparePriority);
-  const teams = visible.filter((pr) => !pr.via.direct).sort(comparePriority);
+  const ready = visible.filter((pr) => !pr.isDraft);
+  const direct = ready.filter((pr) => pr.via.direct).sort(comparePriority);
+  const teams = ready.filter((pr) => !pr.via.direct).sort(comparePriority);
+  const drafts = visible.filter((pr) => pr.isDraft).sort(comparePriority);
   const rows = [];
   rows.push(foldHeader(view, t, "review:direct", "Requested from you", direct.length));
   if (!view.folded.has("review:direct")) rows.push(...(direct.length ? direct.map((pr) => prRow(view, t, pr, { scope: "reviews" })) : [view.placeholder(t, null, "Nothing asks you directly.")]));
   rows.push(foldHeader(view, t, "review:teams", "Your teams", teams.length));
   if (!view.folded.has("review:teams")) rows.push(...teams.map((pr) => prRow(view, t, pr, { scope: "reviews" })));
+  if (drafts.length) {
+    rows.push(foldHeader(view, t, "review:drafts", "Drafts", drafts.length));
+    if (!view.isFolded("review:drafts")) rows.push(...drafts.map((pr) => prRow(view, t, pr, { scope: "reviews" })));
+  }
   if (hidden.length) {
     rows.push(foldHeader(view, t, "review:hidden", "Hidden", hidden.length));
     if (!view.folded.has("review:hidden")) rows.push(...hidden.map((pr) => prRow(view, t, pr, { scope: "reviews" })));
