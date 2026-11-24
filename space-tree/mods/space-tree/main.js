@@ -36,7 +36,7 @@ const PIECE_BLOCKS = [
   { id: "inbox", mod: "ph-inbox" },
 ];
 const PIECES_MS = 2000;
-const installed = (mod) => readTextFile(`${appHome()}/mods/${mod}/main.js`).then(() => true, () => false);
+const installed = (mod) => readTextFile(`${appHome()}/mods/${mod}/main.js`).then((text) => text != null, () => false);
 
 const RANK = { blocked: 4, done: 3, working: 2, idle: 1 };
 const GIT_MS = 30000;
@@ -77,6 +77,7 @@ export default class SpaceTree extends View {
     this.machines = []; // `hc machine ls`, without temporary ones
     this.busy = false;
     this.devboxMenu = false;
+    this.pieceShown = {}; // block id -> shown, as last applied
     cx.timer.every(CLAUDE_MS, (cx) => this.refresh(cx));
     cx.timer.every(15000, (cx) => this.refreshMachines(cx));
     this.refresh(cx);
@@ -89,9 +90,13 @@ export default class SpaceTree extends View {
     cx.spawn(async (cx) => {
       const devboxMenu = await installed("coder-devbox");
       if (devboxMenu !== this.devboxMenu) { this.devboxMenu = devboxMenu; cx.notify(); }
+      // Applied on a change and once at start, not compared with layout(): its `hidden` is the
+      // file's, while the shown state Herdr keeps from earlier show and hide commands can differ.
       for (const block of PIECE_BLOCKS) {
-        const node = find(layout(), block.id);
-        if (node && Boolean(node.hidden) === (await installed(block.mod))) run(node.hidden ? "layout.show" : "layout.hide", { id: block.id });
+        const on = await installed(block.mod);
+        if (this.pieceShown[block.id] === on || !find(layout(), block.id)) continue;
+        this.pieceShown[block.id] = on;
+        run(on ? "layout.show" : "layout.hide", { id: block.id });
       }
     });
   }
