@@ -13,6 +13,7 @@ names a release once it has been public for the lag, and points Herdr at it.
   lag.py hold | resume          stop or resume letting releases through
 """
 import datetime as dt
+import fcntl
 import glob
 import hashlib
 import json
@@ -38,6 +39,7 @@ SEEN = os.path.join(BASE, "seen")
 LOG = os.path.join(BASE, "sync.log")
 HOLD = os.path.join(BASE, "hold")
 LAG_FILE = os.path.join(BASE, "lag_days")
+LOCK = os.path.join(BASE, "lock")
 PLIST = os.path.join(HOME, "Library/LaunchAgents", LABEL + ".plist")
 MIRROR_URL = "file://" + MIRROR
 INSTALLED = dt.datetime(1970, 1, 1, tzinfo=dt.timezone.utc)
@@ -90,6 +92,14 @@ def read_json(path):
         return None
 
 
+def locked():
+    """Hold the state lock until exit, so a scheduled sync and a dialog action never interleave."""
+    os.makedirs(BASE, exist_ok=True)
+    handle = open(LOCK, "w")
+    fcntl.flock(handle, fcntl.LOCK_EX)
+    return handle
+
+
 def lag_days():
     try:
         with open(LAG_FILE) as f:
@@ -129,6 +139,37 @@ def mirrored(kind):
     return manifest["version"] if manifest else None
 
 
+def mark(kind, version, field, value):
+    path = os.path.join(SEEN, kind, version + ".json")
+    entry = read_json(path)
+    if not entry or entry.get(field) == value:
+        return
+    if value is None:
+        entry.pop(field, None)
+    else:
+        entry[field] = value
+    write_json(path, entry)
+
+
+def skipped(r):
+    """Why a recorded release is never let through: upstream took it back, or it failed a check."""
+    if r.get("withdrawn"):
+        return "withdrawn upstream"
+    if r.get("rejected"):
+        return "failed a check: " + r["rejected"]
+    return None
+
+
+def note_withdrawn(kind, upstream_version):
+    """A recorded release newer than upstream's latest was pulled. Never offer it, unless it comes back."""
+    for r in seen(kind):
+        version = r["manifest"]["version"]
+        pulled = vkey(version) > vkey(upstream_version) and r.get("source") != "already installed"
+        if pulled and not r.get("withdrawn"):
+            log("%s %s withdrawn upstream (latest is now %s): it will not be let through" % (kind, version, upstream_version))
+        mark(kind, version, "withdrawn", now().isoformat() if pulled else None)
+
+
 def verify(kind, manifest):
     """Download the macOS build, check it against the recorded sha256 and Herdr's signature."""
     target = manifest["targets"][TARGET]
@@ -147,19 +188,54 @@ def verify(kind, manifest):
         bundles = glob.glob(os.path.join(out, "*.app")) + glob.glob(os.path.join(out, "*", "*.app"))
         if len(bundles) != 1:
             return "expected one .app in the archive, found %d" % len(bundles)
+        signed = [bundles[0]]
+        if kind == "core":
+            # install.sh and older hc install the bare herdr-core beside the bundle, so it needs the same check.
+            root = os.path.join(out, "herdr-core")
+            if not os.path.isfile(root):
+                return "no herdr-core executable beside the bundle"
+            signed.append(root)
         requirement = '=identifier "%s" and anchor apple generic and certificate leaf[subject.OU] = "%s"' % (IDENTIFIER[kind], TEAM)
-        check = subprocess.run(
-            ["/usr/bin/codesign", "--verify", "--deep", "--strict", "-R", requirement, bundles[0]],
-            capture_output=True, text=True,
-        )
-        if check.returncode != 0:
-            return "not signed by Herdr (team %s): %s" % (TEAM, check.stderr.strip())
+        for path in signed:
+            check = subprocess.run(
+                ["/usr/bin/codesign", "--verify", "--deep", "--strict", "-R", requirement, path],
+                capture_output=True, text=True,
+            )
+            if check.returncode != 0:
+                return "%s not signed by Herdr (team %s): %s" % (os.path.basename(path), TEAM, check.stderr.strip())
     return None
+
+
+def publish_core_files(manifest):
+    """What Herdr reads beside core/latest.json: core/install.sh, and core/<version>/manifest.json for HC_VERSION."""
+    script = curl("%s/core/install.sh" % UPSTREAM)
+    path = os.path.join(MIRROR, "core", "install.sh")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path + ".tmp", "w") as f:
+        f.write(script)
+    os.replace(path + ".tmp", path)
+    version = manifest["version"]
+    write_json(os.path.join(MIRROR, "core", version, "manifest.json"), manifest)
+    # HC_VERSION means "at least this one". A version the mirror never offered itself gets the newest one it allows.
+    wanted = {r["manifest"]["version"] for r in seen("core")} | {r["manifest"].get("core_min") for r in seen("app")}
+    for v in wanted:
+        if not v or vkey(v) >= vkey(version):
+            continue
+        alias = os.path.join(MIRROR, "core", v, "manifest.json")
+        existing = read_json(alias)
+        if not existing or existing.get("version") != v:
+            write_json(alias, manifest)
+
+
+def feeds_ready():
+    app, core = (read_json(os.path.join(MIRROR, kind, "latest.json")) for kind in ("app", "core"))
+    return bool(app and core and os.path.isfile(os.path.join(MIRROR, "core", "install.sh"))
+                and read_json(os.path.join(MIRROR, "core", core["version"], "manifest.json")))
 
 
 def promote(kind, days):
     cutoff = now() - dt.timedelta(days=days)
-    old_enough = [r for r in seen(kind) if dt.datetime.fromisoformat(r["first_seen"]) <= cutoff]
+    old_enough = [r for r in seen(kind) if not skipped(r) and dt.datetime.fromisoformat(r["first_seen"]) <= cutoff]
     if not old_enough:
         return
     manifest = old_enough[-1]["manifest"]
@@ -175,8 +251,15 @@ def promote(kind, days):
             return
     problem = verify(kind, manifest)
     if problem:
-        log("%s %s NOT let through: %s" % (kind, version, problem))
+        # Checked against what was recorded on the first day, so a retry gives the same answer: don't download it again.
+        mark(kind, version, "rejected", problem)
+        log("%s %s NOT let through, and not tried again: %s" % (kind, version, problem))
         return
+    if os.path.exists(HOLD):
+        log("%s %s waits: put on hold while it was checked" % (kind, version))
+        return
+    if kind == "core":
+        publish_core_files(manifest)
     if kind == "app":
         try:
             notes = curl("%s/app/%s/changelog.md" % (UPSTREAM, version))
@@ -215,11 +298,11 @@ def launchctl(*args):
 
 
 def sync(days):
-    launchctl("setenv", "HERDR_RELEASES_URL", MIRROR_URL)
     for kind in ("core", "app"):
         try:
             manifest = json.loads(curl("%s/%s/latest.json" % (UPSTREAM, kind)))
             record(kind, manifest, now(), "first seen")
+            note_withdrawn(kind, manifest["version"])
         except (subprocess.CalledProcessError, ValueError, KeyError) as e:
             log("%s: cannot read upstream: %s" % (kind, e))
     if not os.path.exists(HOLD):
@@ -228,6 +311,16 @@ def sync(days):
                 promote(kind, days)
             except (subprocess.CalledProcessError, OSError, KeyError, ValueError) as e:
                 log("%s: could not let a release through: %s" % (kind, e))
+    core = read_json(os.path.join(MIRROR, "core", "latest.json"))
+    if core and not feeds_ready():
+        try:
+            publish_core_files(core)
+        except (subprocess.CalledProcessError, OSError) as e:
+            log("core: could not write install.sh and the versioned manifests: %s" % e)
+    if feeds_ready():
+        launchctl("setenv", "HERDR_RELEASES_URL", MIRROR_URL)
+    else:
+        log("the mirror is not complete yet, so HERDR_RELEASES_URL is not set")
     drop_early_stage()
 
 
@@ -245,12 +338,17 @@ def status():
     for kind in ("app", "core"):
         offers = mirrored(kind)
         waiting = []
+        skips = []
         for r in seen(kind):
             version = r["manifest"]["version"]
-            if not offers or vkey(version) > vkey(offers):
-                due = dt.datetime.fromisoformat(r["first_seen"]) + dt.timedelta(days=days)
-                waiting.append({"version": version, "due": due.isoformat()})
-        kinds[kind] = {"offers": offers, "waiting": waiting}
+            if offers and vkey(version) <= vkey(offers):
+                continue
+            if skipped(r):
+                skips.append({"version": version, "why": skipped(r)})
+                continue
+            due = dt.datetime.fromisoformat(r["first_seen"]) + dt.timedelta(days=days)
+            waiting.append({"version": version, "due": due.isoformat()})
+        kinds[kind] = {"offers": offers, "waiting": waiting, "skipped": skips}
     return {
         "supported": supported(),
         "installed": os.path.exists(PLIST),
@@ -271,6 +369,8 @@ def print_status():
         print("%s: mirror offers %s" % (kind, s["kinds"][kind]["offers"]))
         for w in s["kinds"][kind]["waiting"]:
             print("  %s waits until %s" % (w["version"], w["due"][:16].replace("T", " ") + " UTC"))
+        for w in s["kinds"][kind]["skipped"]:
+            print("  %s is never let through: %s" % (w["version"], w["why"]))
 
 
 def install(app, core, days):
@@ -283,6 +383,9 @@ def install(app, core, days):
                 sys.exit("manifest names %s, not %s" % (manifest["version"], version))
             record(kind, manifest, INSTALLED, "already installed")
     sync(lag_days())
+    if not feeds_ready():
+        launchctl("unsetenv", "HERDR_RELEASES_URL")
+        sys.exit("setup stopped: the mirror could not offer the versions you run (see %s)" % LOG)
     os.makedirs(os.path.dirname(PLIST), exist_ok=True)
     with open(PLIST, "wb") as f:
         plistlib.dump({
@@ -322,6 +425,7 @@ def main(argv):
         sys.exit("update-lag works on macOS with Apple Silicon only")
     days = option(argv, "--lag-days")
     days = int(days) if days is not None else None
+    held = locked() if command in ("sync", "install", "uninstall", "set-lag", "resume") else None
     if command == "sync":
         sync(lag_days() if days is None else days)
     elif command == "install":
@@ -340,6 +444,8 @@ def main(argv):
         sync(lag_days())
     else:
         sys.exit(__doc__)
+    if held:
+        held.close()
 
 
 if __name__ == "__main__":

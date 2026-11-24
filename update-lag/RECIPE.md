@@ -26,10 +26,14 @@ Nothing in the window. A dialog, 540 px wide, opens with `cmd-shift-u` once you 
 - **Set up** records the versions you run as already allowed, starts a background job for your user, and sets `HERDR_RELEASES_URL` for apps you open from then on. Quit and reopen Herdr once: your terminals keep running.
 - Every 30 minutes, and at login, the job:
   - records upstream's newest Herdr and herdr-core release, with the time it first saw each;
-  - lets the newest release that is old enough through to the mirror. First it downloads the macOS build and checks it against the sha256 it recorded on the first day, and against Herdr's Developer ID (team `2W9652Q7QR`, with the app's or the core's identifier). A build that fails either check is never let through, and the log says why;
+  - marks a release it recorded as withdrawn when upstream's latest goes back below it. A withdrawn release is never let through, unless upstream offers it again;
+  - lets the newest release that is old enough through to the mirror. First it downloads the macOS build and checks it against the sha256 it recorded on the first day, and against Herdr's Developer ID (team `2W9652Q7QR`, with the app's or the core's identifier). For herdr-core that covers both `Herdr Core.app` and the bare `herdr-core` beside it, which `install.sh` and older cores install. A build that fails a check is never let through and is not downloaded again; the log and `lag.py status` say why, and the newest older release that passes goes through instead;
   - holds a Herdr release back until the mirror's herdr-core meets the `core_min` it asks for;
   - removes a Herdr update that is downloaded and waiting to install, when it is newer than the mirror allows. That covers a Herdr that started without the variable.
 - Herdr then updates as it always does, from the mirror: it downloads what the mirror names and installs it on the next quit. The first start after a Herdr update also updates herdr-core, to the mirror's version.
+  It does that by running the mirror's `core/install.sh` with `HC_VERSION`, which reads `core/<version>/manifest.json`. So each herdr-core let through also writes upstream's `install.sh` and its versioned manifest to the mirror. `HC_VERSION` means "at least this one", so a recorded core version, or an app's `core_min`, that the mirror never offered itself gets the manifest of the newest one it allows.
+- **Set up** stops, and unsets the variable, when the mirror can't offer the versions you run, for example when a download or a check fails. The job sets the variable only once the mirror has both feeds, `core/install.sh` and the core's versioned manifest.
+- Only one `lag.py` changes the mirror at a time: the job and the dialog's buttons wait for each other's lock (`lock` in the folder below). **Hold** takes effect even while a release is being checked.
 - **Days behind** changes the lag at once. A shorter lag can let a waiting release through on the spot. A longer one never takes back a release that is already allowed.
 - **Hold** stops every release until **Resume**. The job still records what ships.
 - **Take the latest now** needs a second click, which names the versions. It lets upstream's newest through after the same two checks, for an urgent fix. Nothing takes it back afterwards.
@@ -44,15 +48,18 @@ Nothing in the window. A dialog, 540 px wide, opens with `cmd-shift-u` once you 
 - `keys.json`: `cmd-shift-u` opens it.
 - Outside Herdr's folder:
   - `~/Library/LaunchAgents/com.user.herdr-lagged-releases.plist`, the job, which runs `lag.py sync`;
-  - `~/.local/share/herdr-lagged-releases/`: `mirror/` (the feed Herdr reads, `app/latest.json` and `core/latest.json`), `seen/` (each release's manifest and when it was first seen), `sync.log`, `lag_days` and `hold`.
+  - `~/.local/share/herdr-lagged-releases/`: `mirror/` (the feed Herdr reads: `app/latest.json`, `core/latest.json`, `core/install.sh` and `core/<version>/manifest.json`), `seen/` (each release's manifest, when it was first seen, and whether it was withdrawn or failed a check), `sync.log`, `lag_days`, `hold` and `lock`.
 - The mirror is a `file://` URL. Herdr and herdr-core fetch their feed with curl, so that works. The downloads themselves still come from Herdr's release host.
-- It reaches the network: `releases.herdr.dev`, twice per run for the two manifests, and once per release for the download it checks.
+- It reaches the network: `releases.herdr.dev`, twice per run for the two manifests, once per release for the download it checks, and once per herdr-core let through for `install.sh`.
 
 ## Watch out
 
 - A delay only helps when someone notices a bad release inside the window. It is a buffer, not a review.
 - Security fixes arrive late too. Use **Take the latest now** for one you need.
 - The job polls. A release that upstream replaces between two runs is never recorded, so it is skipped, not delayed.
+- `core/install.sh` is copied from upstream when a herdr-core is let through, without a wait of its own. It is the script Herdr runs from upstream without this piece. Pointed at a mirror, it skips its own signature check, so the check here is the one that counts.
+- A release that failed a check stays refused. To try it again, delete its file under `seen/`: the next run records it again as new.
+- A release withdrawn after it was let through stays in the mirror. Hold, then Remove, if you need to go back.
 - The lag counts from when your Mac first saw a release, not from its release date. On the day you set it up, the newest release starts its wait from that day.
 - `hc update` typed in a terminal uses that shell's environment. Without `HERDR_RELEASES_URL` there, it goes to the live feed.
 - The variable is set with `launchctl setenv`, which lasts until you log out. The job sets it again at login. If Herdr opens before the job has run, it reads the live feed for that launch: the job then removes what it downloaded, within 30 minutes, and the dialog shows the warning.
