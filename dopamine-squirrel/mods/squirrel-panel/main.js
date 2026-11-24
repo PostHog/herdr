@@ -3,10 +3,10 @@
 // fetches the PR lists into shared "squirrel.github" every 5 minutes.
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { agents, panes, terminals, run, theme, shared, setShared } from "herdr";
+import { agents, panes, terminals, run, theme, shared, setShared, openOverlay } from "herdr";
 import { VIEW, GITHUB, TRIAGED, ROW, HEADER, COLS, MAX_ROWS, CARD_W, CARD_H, GAP, ago } from "./shared.js";
-import { stepSim } from "./visualizer.js";
-import { readContext, readBackground, pruneContext, linkParents, agentsViews, usageHeight } from "./agents.js";
+import { stepSim, drawSim } from "./visualizer.js";
+import { readContext, readBackground, readSubagents, pruneContext, linkParents, agentsViews, usageHeight } from "./agents.js";
 import { readUsage } from "./usage.js";
 import { tableParts } from "./table.js";
 import { reviewViews } from "./reviews.js";
@@ -33,6 +33,19 @@ export default class SquirrelPanel extends View {
         await cx.sleep(10000);
       }
     });
+    // Sub-agents each Claude session is running, every 4 seconds (agents.js).
+    cx.spawn(async (cx) => {
+      for (;;) {
+        const byTerm = {};
+        for (const a of agents()) {
+          const id = panes().find((p) => p.pane === a.pane)?.terminal;
+          if (id) byTerm[id] = this.context.terminals?.[id]?.transcript ?? null;
+        }
+        const next = await readSubagents(byTerm).catch(() => null);
+        if (next && JSON.stringify(next) !== JSON.stringify(this.subagents ?? {})) { this.subagents = next; cx.notify(); }
+        await cx.sleep(4000);
+      }
+    });
     // /usage for each Claude subscription, every 3 minutes (usage.js).
     this.usage = {};
     cx.spawn(async (cx) => {
@@ -46,12 +59,15 @@ export default class SquirrelPanel extends View {
     cx.spawn(async (cx) => {
       for (;;) {
         await cx.sleep(60);
-        if (this.view() !== "mine" || !(shared(GITHUB)?.merged ?? []).length || !this.vizSize) continue;
         const nowMs = Date.now(), dt = Math.min(0.1, (nowMs - (this.vizAt ?? nowMs)) / 1000);
         this.vizAt = nowMs;
         this.sims ??= {};
-        for (const key of ["left", "right"]) this.sims[key] = stepSim(this.sims[key], ...this.vizSize[key], dt);
-        cx.notify();
+        // The strip in the tab bar runs in every view; the merged-rows canvases only on My PRs.
+        if (this.headerViz) this.sims.header = stepSim(this.sims.header, ...this.headerViz, dt);
+        if (this.view() === "mine" && (shared(GITHUB)?.merged ?? []).length && this.vizSize)
+          for (const key of ["left", "right"]) this.sims[key] = stepSim(this.sims[key], ...this.vizSize[key], dt);
+        const subsLive = this.view() === "agents" && Object.keys(this.subagents ?? {}).length > 0;
+        if (this.headerViz || this.view() === "mine" || subsLive) cx.notify();
       }
     });
     this.starting = {};
@@ -59,8 +75,11 @@ export default class SquirrelPanel extends View {
     this.queueError = {};
     this.queueAdded = {};
     this.confirm = {};
+    this.mergedNow = {};
     this.expanded = {};
     this.leaving = {};
+    this.undo = [];
+    this.undoMine = [];
     this.showTriaged = false;
   }
 
@@ -78,6 +97,8 @@ export default class SquirrelPanel extends View {
   render() {
     const t = theme();
     const view = this.view();
+    // Each tab keeps its own undo list; the button shows only on the tab whose list has something.
+    const undo = view === "reviews" ? this.undo : view === "mine" ? this.undoMine : null;
     const gh = shared(GITHUB) ?? {};
     const marks = shared(TRIAGED) ?? {};
     const reviewCount = (gh.prs ?? []).filter((p) => !p.draft && (!marks[p.url] || this.resurfaced(p, marks[p.url]))).length;
@@ -112,9 +133,22 @@ export default class SquirrelPanel extends View {
         .child(tab("agents", `Running agents (${agents().length})`))
         .child(tab("reviews", `Reviews (${reviewCount})`))
         .child(tab("mine", `My PRs (${(gh.mine ?? []).length})`))
-        .child(div().flex_1())
+        .child(div().flex_1().min_w(0).h(HEADER - 8).mx(8).relative().rounded(4).overflow_hidden().bg("#00000055")
+          .on_size_change((size, cx) => {
+            const next = [Math.round(size.width), Math.round(size.height)];
+            if (next[0] < 40) { this.headerViz = null; return; }
+            if (this.headerViz?.[0] === next[0] && this.headerViz?.[1] === next[1]) return;
+            this.headerViz = next;
+            cx?.notify();
+          })
+          .children(this.headerViz ? drawSim(this.sims?.header, t.dim) : []))
         .when(view !== "agents", (el) => el
-          .when(Boolean(gh.error), (el) => el.child(div().text_size(10.5).text_color(t.ansi1).child(gh.error)))
+          .when(Boolean(gh.error), (el) => el.child(div().id("gh-error").max_w(320).truncate().text_size(10.5).text_color(t.ansi1).cursor_pointer().underline()
+            .tooltip("Show the full error").on_click(() => openOverlay({ mod: "squirrel-error" })).child(gh.error)))
+          .when(Boolean(undo), (el) => el.child(div().id("undo").h(22).px(6).mr(4).flex().items_center().rounded(4).text_size(11)
+            .text_color(undo.length ? t.foreground : t.dim).when(undo.length > 0, (el) => el.hover((s) => s.bg(t.hover)))
+            .tooltip(undo.length ? `Undo ${undo.at(-1).label} on #${undo.at(-1).number}` : "Nothing to undo yet")
+            .on_click((_e, cx) => { undo.pop()?.restore(cx); cx?.notify(); }).child("↶ Undo")))
           .child(div().text_size(10.5).text_color(t.dim).child(gh.loading ? "refreshing…" : gh.at ? `updated ${ago(gh.at)} ago` : "loading…"))
           .child(div().id("gh-refresh").h(22).px(6).flex().items_center().rounded(4).text_size(11).text_color(t.muted)
             .hover((s) => s.bg(t.hover).text_color(t.foreground)).on_click(() => run("squirrel-topbar.gh_refresh")).child("Refresh"))))

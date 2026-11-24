@@ -1,4 +1,4 @@
-import { exec } from "herdr";
+import { exec, shared, setShared } from "herdr";
 import { isBot } from "./bots.js";
 
 const CHECK_COUNTS = `commits(last: 1) { nodes { commit { oid status { contexts { context state description targetUrl } } statusCheckRollup { state contexts(first: 1) {
@@ -13,8 +13,8 @@ const PR_FIELDS = `fragment PrFields on PullRequest {
   stack { size } stackEntry { position }
   labels(first: 30) { nodes { name } }
   latestOpinionatedReviews(first: 20) { nodes { state author { login __typename } } }
-  reviewThreads(first: 60) { nodes { isResolved isOutdated comments(first: 1) { nodes { author { login __typename } } } } }
-  trunkComments: comments(last: 15) { nodes { author { login } body } }
+  reviews(last: 10) { nodes { submittedAt author { login } } }
+  reviewThreads(first: 30) { nodes { isResolved isOutdated comments(first: 1) { nodes { author { login __typename } } } } }
   ${CHECK_COUNTS}
 }`;
 
@@ -30,7 +30,8 @@ const REVIEW_FIELDS = `fragment ReviewFields on PullRequest {
   viewerLatestReview { state }
   reviewRequests(first: 20) { nodes { requestedReviewer { __typename ... on User { login } ... on Team { combinedSlug } } } }
   timelineItems(itemTypes: [REVIEW_REQUESTED_EVENT], first: 1) { nodes { ... on ReviewRequestedEvent { createdAt } } }
-  reviewThreads(first: 40) { nodes { isResolved comments(first: 1) { nodes { author { login __typename } } } } }
+  reviews(last: 10) { nodes { submittedAt author { login } } }
+  reviewThreads(first: 30) { nodes { isResolved comments(first: 1) { nodes { author { login __typename } } } } }
   ${CHECK_COUNTS}
 }`;
 
@@ -55,6 +56,47 @@ const DETAIL_QUERY = `query($owner: String!, $name: String!, $number: Int!, $aft
   } } }`;
 
 const TRANSIENT = /HTTP 5\d\d|timeout|timed out|EOF|connection reset|something went wrong/i;
+const RATE_LIMITED = /rate limit|abuse detection/i;
+const FIRST_PAUSE_MS = 60000;
+const LONGEST_PAUSE_MS = 15 * 60000;
+const RATE_LIMIT_KEY = "prs.rateLimit";
+
+export class RateLimited extends Error {}
+
+const clock = (at) => {
+  const date = new Date(at);
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+};
+
+export function rateLimitPause() {
+  const pause = shared(RATE_LIMIT_KEY);
+  if (!pause || Date.now() >= pause.until) return null;
+  return { ...pause, message: `GitHub rate limit hit. Refreshing again at ${clock(pause.until)}.` };
+}
+
+async function hourlyReset() {
+  const result = await exec("gh", ["api", "rate_limit", "--jq", ".resources.graphql"]);
+  try {
+    const graphqlLimit = JSON.parse(result.stdout);
+    return graphqlLimit.remaining === 0 ? graphqlLimit.reset * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
+async function recordRateLimit() {
+  if (rateLimitPause()) return;
+  const strikes = (shared(RATE_LIMIT_KEY)?.strikes ?? 0) + 1;
+  const pause = { until: Date.now() + Math.min(FIRST_PAUSE_MS * 2 ** (strikes - 1), LONGEST_PAUSE_MS), strikes };
+  setShared(RATE_LIMIT_KEY, pause);
+  const reset = await hourlyReset();
+  if (reset && reset > pause.until && shared(RATE_LIMIT_KEY)?.until === pause.until) setShared(RATE_LIMIT_KEY, { ...pause, until: reset });
+}
+
+function clearRateLimit(sentAt) {
+  const pause = shared(RATE_LIMIT_KEY);
+  if (pause?.strikes && sentAt >= pause.until) setShared(RATE_LIMIT_KEY, null);
+}
 
 export async function graphql(query, variables = {}) {
   const args = ["api", "graphql", "-f", `query=${query}`];
@@ -64,13 +106,23 @@ export async function graphql(query, variables = {}) {
   }
   let error = null;
   for (let attempt = 0; attempt < 3; attempt++) {
+    const pause = rateLimitPause();
+    if (pause) throw new RateLimited(pause.message);
+    const sentAt = Date.now();
     const result = await exec("gh", args);
     let parsed = null;
     try {
       parsed = JSON.parse(result.stdout);
     } catch {}
-    if (parsed?.data && !parsed.errors?.length) return parsed.data;
+    if (parsed?.data && !parsed.errors?.length) {
+      clearRateLimit(sentAt);
+      return parsed.data;
+    }
     error = new Error(parsed?.errors?.[0]?.message ?? (result.stderr.split("\n").filter((line) => line && !line.startsWith("*")).pop() || `gh exited ${result.code}`));
+    if (RATE_LIMITED.test(error.message)) {
+      await recordRateLimit();
+      throw new RateLimited(rateLimitPause()?.message ?? error.message);
+    }
     if (!TRANSIENT.test(error.message)) break;
   }
   throw error;
@@ -79,7 +131,7 @@ export async function graphql(query, variables = {}) {
 export async function gh(args) {
   const result = await exec("gh", args);
   const text = (result.stdout.trim() || result.stderr.trim()).split("\n").filter(Boolean).pop() ?? "";
-  return { ok: result.code === 0, message: text || (result.code === 0 ? "Done." : `gh exited ${result.code}`) };
+  return { ok: result.code === 0, message: text || (result.code === 0 ? "Done." : `gh exited ${result.code}`), stderr: result.stderr };
 }
 
 const PASSED = ["SUCCESS", "NEUTRAL", "SKIPPED"];
@@ -118,66 +170,31 @@ function visualReview(node) {
   return out;
 }
 
-const TRUNK_LABELS = [
-  ["trunk-merged", "merged"],
-  ["trunk-failed", "failed"],
-  ["trunk-pending-failure", "pending_failure"],
-  ["trunk-cancelled", "cancelled"],
-  ["trunk-canceled", "cancelled"],
-  ["trunk-tests-passed", "tests_passed"],
-  ["trunk-testing", "testing"],
-  ["trunk-queued", "queued"],
-  ["trunk-not-ready", "not_ready"],
-];
+const TRUNK_QUEUE_STATE = { Testing: "testing", "Tests Passed": "tests_passed", Pending: "pending", "Not Ready": "not_ready", "Pending Failure": "pending_failure", Failed: "failed", Cancelled: "cancelled", Merged: "merged" };
+const TRUNK_QUEUE_ACTIVE = ["pending", "testing", "tests_passed", "pending_failure"];
 
-const TRUNK_COMMENT_STATES = [
-  [/\bmerged\b/i, "merged"],
-  [/pending[\s_-]?failure/i, "pending_failure"],
-  [/\b(failed|failure)\b/i, "failed"],
-  [/\bcancell?ed\b/i, "cancelled"],
-  [/\btests? passed\b/i, "tests_passed"],
-  [/\btesting\b/i, "testing"],
-  [/\bnot ready\b/i, "not_ready"],
-  [/\b(queued|waiting|submitted)\b/i, "queued"],
-];
-
-const TRUNK_QUEUE_LINK = /https:\/\/app\.trunk\.io\/[^\s)"']*\/merge-queue\//;
-
-function trunkFromComments(comments) {
-  let state = null;
-  for (const comment of comments ?? []) {
-    if (comment?.author?.login !== "trunk-io") continue;
-    const body = comment.body ?? "";
-    if (body.includes("<!-- Trunk Test Analytics -->")) continue;
-    const isMerge = body.includes("<!-- Trunk Merge -->") || body.includes("<!-- Start PR Submit Checkbox -->") || TRUNK_QUEUE_LINK.test(body);
-    if (!isMerge) continue;
-    const statusText = body
-      .split("\n")
-      .filter((line) => !/\bwill\b|to merge this pull request|check the box|<!--/i.test(line))
-      .join("\n");
-    const match = TRUNK_COMMENT_STATES.find(([pattern]) => pattern.test(statusText));
-    if (match) state = match[1];
-    else if (/\[x\]/i.test(body)) state = "queued";
-    else if (/\[ \]/.test(body)) state = "not_submitted";
-  }
-  return state;
-}
-
-function trunkFromLabels(labels) {
-  for (const [name, state] of TRUNK_LABELS) {
-    if (labels.some((label) => label === name || label.startsWith(`${name} `))) return state;
-  }
-  if (labels.includes("trunk-merge-queue-submit") || labels.includes("trunk-merge")) return "queued";
-  return null;
-}
-
-const ACTIVE_QUEUE = ["queued", "testing", "tests_passed", "pending_failure"];
-
-function queueOf(node, labels) {
-  if (node.mergeQueueEntry) return { provider: "github", state: node.mergeQueueEntry.state.toLowerCase(), position: node.mergeQueueEntry.position ?? null, active: true };
-  const state = trunkFromComments(node.trunkComments?.nodes) ?? trunkFromLabels(labels);
+export function trunkQueue(entry) {
+  const state = entry ? TRUNK_QUEUE_STATE[entry.state] : null;
   if (!state) return null;
-  return { provider: "trunk", state, position: null, active: ACTIVE_QUEUE.includes(state) };
+  return { provider: "trunk", state, position: null, active: TRUNK_QUEUE_ACTIVE.includes(state) };
+}
+
+function trunkEntry(pr, trunk) {
+  if (!trunk || pr.repo !== trunk.repo) return null;
+  return trunk.items?.[pr.number] ?? trunk.listing?.items?.find((item) => item.number === pr.number) ?? null;
+}
+
+export function applyTrunk(prs, trunk) {
+  for (const pr of prs) {
+    if (pr.queue?.provider === "github") continue;
+    pr.queue = trunkQueue(trunkEntry(pr, trunk));
+  }
+  return prs;
+}
+
+function queueOf(node) {
+  if (!node.mergeQueueEntry) return null;
+  return { provider: "github", state: node.mergeQueueEntry.state.toLowerCase(), position: node.mergeQueueEntry.position ?? null, active: true };
 }
 
 function threadCounts(node, viewer, author) {
@@ -221,6 +238,11 @@ export function readyToMerge(pr) {
   return ["CLEAN", "UNSTABLE", "HAS_HOOKS", "BLOCKED", "UNKNOWN"].includes(pr.mergeState) && !(pr.checks.failed > 0 && pr.mergeState !== "UNSTABLE");
 }
 
+function lastReviewByOthers(node, viewer) {
+  const times = (node.reviews?.nodes ?? []).filter((review) => review.submittedAt && review.author?.login !== viewer).map((review) => review.submittedAt);
+  return times.length ? times.sort().pop() : null;
+}
+
 function normalizePr(node, viewer) {
   const labels = (node.labels?.nodes ?? []).map((label) => label.name);
   const author = node.author?.login ?? "ghost";
@@ -248,12 +270,13 @@ function normalizePr(node, viewer) {
     changedFiles: node.changedFiles,
     labels,
     autoMerge: Boolean(node.autoMergeRequest),
-    queue: queueOf(node, labels),
+    queue: queueOf(node),
     checks: checkCounts(node),
     visual: visualReview(node),
     approvals: (node.latestOpinionatedReviews?.nodes ?? []).filter((review) => review.state === "APPROVED").length,
     botApprovals: (node.latestOpinionatedReviews?.nodes ?? []).filter((review) => review.state === "APPROVED" && isBot(review.author)).length,
     threads: threadCounts(node, viewer, author),
+    lastReviewAt: lastReviewByOthers(node, viewer),
     mine: author === viewer,
   };
 }
@@ -332,8 +355,8 @@ async function markStackDepth(prs, trunkRepo) {
   });
 }
 
-export async function fetchMyPrs(repos, watched, trunkRepo = null) {
-  const { viewer, nodes } = await searchAll(MY_PRS_QUERY, `is:pr is:open author:@me archived:false ${repoQualifier(repos)}`, 3);
+export async function fetchMyPrs(repos, watched, trunkRepo = null, trunk = null) {
+  const { viewer, nodes } = await searchAll(MY_PRS_QUERY, `is:pr is:open author:@me archived:false ${repoQualifier(repos)}`, 2);
   const prs = nodes.map((node) => normalizePr(node, viewer));
   const known = new Set(prs.map((pr) => `${pr.repo}#${pr.number}`));
   const missing = watched.filter((key) => !known.has(key));
@@ -349,6 +372,7 @@ export async function fetchMyPrs(repos, watched, trunkRepo = null) {
   const watchedSet = new Set(watched);
   for (const pr of prs) pr.watching = watchedSet.has(`${pr.repo}#${pr.number}`);
   if (trunkRepo) await markStackDepth(prs, trunkRepo);
+  applyTrunk(prs, trunk);
   return { viewer, prs: attachStacks(prs) };
 }
 
@@ -438,13 +462,13 @@ export function comparePriority(a, b) {
   return b.priority.rank - a.priority.rank || b.priority.score - a.priority.score || Date.parse(a.createdAt) - Date.parse(b.createdAt) || a.number - b.number;
 }
 
-export async function fetchReviews(repos) {
-  const { viewer, nodes } = await searchAll(REVIEWS_QUERY, `is:pr is:open review-requested:@me archived:false ${repoQualifier(repos)}`, 4);
+export async function fetchReviews(repos, trunk = null) {
+  const { viewer, nodes } = await searchAll(REVIEWS_QUERY, `is:pr is:open review-requested:@me archived:false ${repoQualifier(repos)}`, 2);
   const orgs = [...new Set(nodes.map((node) => node.repository.nameWithOwner.split("/")[0]))];
   const teams = await viewerTeams(orgs, viewer);
   const now = Date.now();
   return nodes.map((node) => {
-    const pr = normalizePr(node, viewer);
+    const [pr] = applyTrunk([normalizePr(node, viewer)], trunk);
     const requested = (node.reviewRequests?.nodes ?? []).map((request) => request.requestedReviewer).filter(Boolean);
     const direct = requested.some((reviewer) => reviewer.__typename === "User" && reviewer.login?.toLowerCase() === viewer.toLowerCase());
     const viaTeams = requested.filter((reviewer) => reviewer.__typename === "Team" && teams.has(reviewer.combinedSlug)).map((reviewer) => reviewer.combinedSlug);

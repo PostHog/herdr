@@ -1,5 +1,5 @@
 import { LISTING_CAP } from "./trunk.js";
-import { readyToMerge } from "./github.js";
+import { readyToMerge, trunkQueue } from "./github.js";
 
 const ordinal = (n) => `${n}${n % 10 === 1 && n % 100 !== 11 ? "st" : n % 10 === 2 && n % 100 !== 12 ? "nd" : n % 10 === 3 && n % 100 !== 13 ? "rd" : "th"}`;
 const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
@@ -46,14 +46,10 @@ function descendantsOf(group, pr) {
   return group.members.slice(index + 1, end < 0 ? undefined : end);
 }
 
-const TRUNK_QUEUE_STATE = { Testing: "testing", "Tests Passed": "tests_passed", Pending: "pending", "Not Ready": "not_ready", "Pending Failure": "pending_failure", Failed: "failed", Cancelled: "cancelled", Merged: "merged" };
-const TRUNK_QUEUE_DONE = ["failed", "cancelled", "merged"];
-
 export function withTrunkQueue(pr, entry) {
   if (entry?.queue) return { ...pr, queue: entry.queue };
-  const state = entry ? TRUNK_QUEUE_STATE[entry.state] : null;
-  if (!state) return pr;
-  return { ...pr, queue: { provider: "trunk", state, position: null, active: !TRUNK_QUEUE_DONE.includes(state) } };
+  const queue = trunkQueue(entry);
+  return queue ? { ...pr, queue } : pr;
 }
 
 export function step(pr, entry, trunk) {

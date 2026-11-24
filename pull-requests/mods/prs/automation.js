@@ -14,6 +14,7 @@ export const TRIGGERS = [
   { id: "checks_failed", label: "Checks failed" },
   { id: "approved", label: "Approved" },
   { id: "changes_requested", label: "Changes requested" },
+  { id: "reviewed", label: "New review" },
   { id: "became_conflicting", label: "Has conflicts" },
   { id: "became_behind", label: "Fell behind base" },
   { id: "became_ready", label: "Ready to merge" },
@@ -28,7 +29,7 @@ export const ACTION_KINDS = [
   { id: "request_reviewers", label: "Request reviewers", input: "Logins or org/team, comma-separated" },
   { id: "notify", label: "Notify me", input: "Message" },
   { id: "merge", label: "Merge or send to the merge queue" },
-  { id: "agent_review", label: "Run an agent review (read-only)" },
+  { id: "agent_review", label: "Run an agent review" },
   { id: "fix_session", label: "Open a Claude fix session" },
 ];
 
@@ -43,6 +44,7 @@ const summary = (pr) => ({
   decision: pr.reviewDecision,
   checks: pr.stackDepth ? "blocked" : pr.checks.inProgress > 0 ? "running" : pr.checks.failed > 0 && pr.mergeState !== "UNSTABLE" ? "failed" : pr.checks.total > 0 ? "passed" : "none",
   ready: readyToMerge(pr),
+  reviewedAt: pr.lastReviewAt,
 });
 
 function eventsFor(before, after) {
@@ -58,6 +60,7 @@ function eventsFor(before, after) {
   if (after.conflicting && !before.conflicting) events.push({ kind: "became_conflicting" });
   if (after.behind && !before.behind) events.push({ kind: "became_behind" });
   if (after.ready && !before.ready) events.push({ kind: "became_ready" });
+  if ("reviewedAt" in before && after.reviewedAt && (!before.reviewedAt || after.reviewedAt > before.reviewedAt)) events.push({ kind: "reviewed" });
   for (const label of after.labels) if (!before.labels.includes(label)) events.push({ kind: "labeled", label });
   return events;
 }
@@ -99,10 +102,13 @@ async function runAction(action, pr) {
     case "merge":
       return mergePr(pr);
     case "agent_review":
-      await startReview(pr);
-      return { ok: true, message: "Agent review started." };
+      await startReview(pr, { then: "post" });
+      return { ok: true, message: "Agent review started; its findings get posted to the PR." };
     case "fix_session":
-      await startFixSession(pr, fixPrompt(pr));
+      if ((await startFixSession(pr, fixPrompt(pr), "fix", { bareSpaces: false })) !== true) {
+        notify({ title: `#${pr.number} ${pr.title}`, body: "A workflow asked for a fix session, but Claude is already open on this PR, so none was started. Use Fix with Claude to copy the fix prompt into it.", level: "info", timeout: 10000 });
+        return { ok: true, message: "Claude is already open on this PR, so no fix session was started." };
+      }
       return { ok: true, message: "Fix session opened." };
     default:
       return { ok: false, message: `Unknown action ${action.kind}` };

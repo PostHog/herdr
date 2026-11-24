@@ -6,8 +6,10 @@
 // shell pid it ran under. A labelled terminal whose shell pid changed was
 // recovered, so the mod types `claude --resume <session>` into it.
 //
-// Claude writes ~/.claude/sessions/<pid>.json for each running session,
+// Claude writes <config>/sessions/<pid>.json for each running session,
 // with its current session id (it follows /clear and /resume) and folder.
+// <config> is ~/.claude, or another ~/.claude-* folder for a second account
+// started with CLAUDE_CONFIG_DIR; the resume runs under that same account.
 
 import { View, div } from "gpui-kit";
 import { exec, hc, home, readTextFile, terminals } from "herdr";
@@ -15,6 +17,7 @@ import { exec, hc, home, readTextFile, terminals } from "herdr";
 const SESSION = "resume-agents.claude.session";
 const CWD = "resume-agents.claude.cwd";
 const SHELL = "resume-agents.claude.shell";
+const DIR = "resume-agents.claude.config";
 
 const POLL_MS = 5000;
 // Claude gone this long under the same shell means someone quit it, so it
@@ -37,25 +40,35 @@ async function getTerminal(address) {
   }
 }
 
-async function claudeSession(pid) {
+// ~/.claude first, then every ~/.claude-* folder Claude has written sessions to.
+async function configDirs() {
+  const r = await exec("/bin/sh", ["-c", 'for d in "$HOME/.claude" "$HOME"/.claude-*; do [ -d "$d/sessions" ] && echo "$d"; done']).catch(() => null);
+  const dirs = (r?.stdout ?? "").split("\n").filter(Boolean);
+  return dirs.length ? dirs : [`${home()}/.claude`];
+}
+
+async function claudeSession(pid, dirs) {
   if (!pid) return null;
-  const text = await readTextFile(`${home()}/.claude/sessions/${pid}.json`);
-  if (!text) return null;
-  try {
-    const s = JSON.parse(text);
-    if (s.pid !== pid || !UUID.test(s.sessionId ?? "") || !s.cwd) return null;
-    if (s.kind && s.kind !== "interactive") return null;
-    return { session: s.sessionId, cwd: s.cwd };
-  } catch {
-    return null;
+  for (const dir of dirs) {
+    const text = await readTextFile(`${dir}/sessions/${pid}.json`);
+    if (!text) continue;
+    try {
+      const s = JSON.parse(text);
+      if (s.pid !== pid || !UUID.test(s.sessionId ?? "") || !s.cwd) return null;
+      if (s.kind && s.kind !== "interactive") return null;
+      return { session: s.sessionId, cwd: s.cwd, dir };
+    } catch {
+      return null;
+    }
   }
+  return null;
 }
 
 // Claude saves a session only once it has a message, and `--resume` fails on
 // one it never saved.
-async function hasTranscript({ session, cwd }) {
+async function hasTranscript({ session, cwd, dir }) {
   const project = cwd.replace(/[^A-Za-z0-9]/g, "-");
-  const r = await exec("test", ["-f", `${home()}/.claude/projects/${project}/${session}.jsonl`]);
+  const r = await exec("test", ["-f", `${dir}/projects/${project}/${session}.jsonl`]);
   return r.code === 0;
 }
 
@@ -67,6 +80,8 @@ export default class ResumeAgents extends View {
   init(_props, cx) {
     this.goneSince = new Map();
     this.sweeping = false;
+    this.dirs = null;
+    this.dirsAt = 0;
     cx.timer.every(POLL_MS, (cx) => this.tick(cx));
     this.tick(cx);
   }
@@ -86,6 +101,10 @@ export default class ResumeAgents extends View {
   }
 
   async sweep() {
+    if (!this.dirs || Date.now() - this.dirsAt > 60000) {
+      this.dirs = await configDirs();
+      this.dirsAt = Date.now();
+    }
     // Local terminals only: remote ones have a machine/ prefix, and their
     // Claude sessions live on that machine.
     const candidates = terminals().filter(
@@ -103,11 +122,11 @@ export default class ResumeAgents extends View {
       const labels = t.labels ?? {};
       const shell = String(t.pid);
 
-      const running = await claudeSession(t.foreground?.pid);
+      const running = await claudeSession(t.foreground?.pid, this.dirs);
       if (running) {
         this.goneSince.delete(address);
-        if (labels[SESSION] !== running.session || labels[CWD] !== running.cwd || labels[SHELL] !== shell) {
-          await label(address, { [SESSION]: running.session, [CWD]: running.cwd, [SHELL]: shell });
+        if (labels[SESSION] !== running.session || labels[CWD] !== running.cwd || labels[SHELL] !== shell || labels[DIR] !== running.dir) {
+          await label(address, { [SESSION]: running.session, [CWD]: running.cwd, [SHELL]: shell, [DIR]: running.dir });
         }
         continue;
       }
@@ -118,9 +137,12 @@ export default class ResumeAgents extends View {
         // Mark it first, so the next sweep doesn't type it again while
         // Claude starts up.
         await label(address, { [SHELL]: shell });
-        const saved = { session: labels[SESSION], cwd: labels[CWD] };
+        const dir = labels[DIR] || `${home()}/.claude`;
+        const saved = { session: labels[SESSION], cwd: labels[CWD], dir };
         if (UUID.test(saved.session) && saved.cwd && (await hasTranscript(saved))) {
-          await hc(["send", address, `cd ${shellQuote(labels[CWD])} && claude --resume ${labels[SESSION]}`]);
+          // The default account must start without CLAUDE_CONFIG_DIR: naming ~/.claude makes Claude act as a fresh install.
+          const env = dir === `${home()}/.claude` ? "" : `CLAUDE_CONFIG_DIR=${shellQuote(dir)} `;
+          await hc(["send", address, `cd ${shellQuote(labels[CWD])} && ${env}claude --resume ${labels[SESSION]}`]);
         }
         continue;
       }
@@ -129,7 +151,7 @@ export default class ResumeAgents extends View {
       this.goneSince.set(address, since);
       if (Date.now() - since >= QUIT_AFTER_MS) {
         this.goneSince.delete(address);
-        await label(address, { [SESSION]: "", [CWD]: "", [SHELL]: "" });
+        await label(address, { [SESSION]: "", [CWD]: "", [SHELL]: "", [DIR]: "" });
       }
     }
 

@@ -1,10 +1,10 @@
 import { View, div, svg, image } from "gpui-kit";
-import { v_flex, h_flex, InputState, Input } from "gpui-base";
+import { v_flex, h_flex, InputState, Input, Popover } from "gpui-base";
 import { theme, props, openOverlay, closeOverlay, shared, setShared, run, machines, notify, layout, nextCommand, focused, window } from "herdr";
 import { loadStore, store, updateStore, prKey, newId } from "./store.js";
-import { fetchMyPrs, fetchReviews, fetchDetail, statusPill, needsReview, readyToMerge, comparePriority, isOrgWide, ownerOf } from "./github.js";
-import { mergePr, markReady, updateBranch, rerunFailed, approvePr, commentOnPr, resolveThread, openUrl, copyText, markdownLink, toggleWatch, toggleHidden, report, usesTrunk, isTrunkPr, mergesThroughQueue } from "./actions.js";
-import { startFixSession, startReview, syncRuns, fixPrompt, findingsFixPrompt, reviewPromptForOthers, setFindingState, findingsMarkdown } from "./agents.js";
+import { fetchMyPrs, fetchReviews, fetchDetail, statusPill, needsReview, readyToMerge, comparePriority, isOrgWide, ownerOf, applyTrunk, rateLimitPause, RateLimited } from "./github.js";
+import { mergePr, markReady, updateBranch, rerunFailed, approvePr, postFindingsReview, resolveThread, openUrl, copyText, markdownLink, toggleWatch, toggleHidden, report, usesTrunk, isTrunkPr, mergesThroughQueue } from "./actions.js";
+import { startFixSession, startReview, syncRuns, fixPrompt, findingsFixPrompt, reviewPromptForOthers, reusedSessionPrompt, setFindingState, markFindingsPosted, setRunsArchived } from "./agents.js";
 import { processSnapshot, TRIGGERS, ACTION_KINDS } from "./automation.js";
 import { loadConfig, config, updateConfig, configPath, machineLabel } from "./config.js";
 import { forgetCheckouts, checkoutFor } from "./runner.js";
@@ -12,7 +12,7 @@ import { loadTrunk, dequeue, resetTrunk } from "./trunk.js";
 import { fetchServices, isIncident, queueService, statusOverview } from "./status.js";
 import { sidebarHeader, sidebarMine, sidebarReviews, sidebarRail, statusLine, prIcon, progressLine, stackHeader, gatesFor, splitByNeed, isQuiet, rowButtons, nextFor, needsYou, workRank } from "./sidebar.js";
 import { visualAsks, stackGroups, withoutDraftStacks, step, queueFor, withTrunkQueue } from "./steps.js";
-import { openClaude, CLAUDE_ICON } from "./claude.js";
+import { openClaude, pasteIntoClaude, CLAUDE_ICON } from "./claude.js";
 import { ago, button, iconButton, glyphButton, textIconButton, chip, badge, section, empty, field, menuItem, SPINNER, tone, TEXT, tint, avatar, countPill, codePill, gateStrip, titleText, readable } from "./ui.js";
 import { readiness, groupChecks, rowMatches, tallyChecks, tallyText, tallyLabel, worstBucket, mergeStateNote, changeShape, parseMarkdown } from "./sheet.js";
 
@@ -23,6 +23,7 @@ const TRUNK_EVERY_MS = 45000;
 const SERVICES_EVERY_MS = 120000;
 const FAILURES_BEFORE_ERROR = 3;
 const STALE_AFTER_MS = 20000;
+const UNFOCUSED_SLOWDOWN = 3;
 const VIEW_STACK = "pr-center";
 const PAGE_NODE = "prs-page";
 const WORK_NODE = "work";
@@ -34,6 +35,7 @@ const NAV_WIDTH = 230;
 const STATUS_TILE_MIN = 220;
 const STATUS_TILE_GAP = 10;
 const statusWidth = (gate) => gate * 5 + 12;
+const FOLDED_UNTIL_OPENED = new Set(["review:drafts"]);
 const GATE_HEADERS = ["CHECKS", "REVIEW", "THREADS", "CONFLICTS", "QUEUE"];
 const ICON = (name) => `mods/prs/icons/${name}.svg`;
 const GATE_ICONS = { ok: "tick", bad: "x", warn: "loader", run: "loader", info: "loader", merged: "merged", idle: "circle" };
@@ -122,6 +124,14 @@ function cleanBody(body) {
   return text.trim();
 }
 const keepFocus = (_e, cx) => cx.stop_propagation();
+async function handOff(pr, prompt, what, started) {
+  const text = reusedSessionPrompt(pr, prompt);
+  const copied = await copyText(text);
+  if (!copied.ok) return copied;
+  const agent = started?.shown?.agent;
+  if (agent && (await pasteIntoClaude(agent))) return { ok: true, message: `Claude is already open on this PR, so the ${what} prompt is pasted there. Press Enter to send it.` };
+  return { ok: true, message: `This PR is already open in a space, so it's shown instead. The ${what} prompt is on your clipboard to paste into Claude there.` };
+}
 const samePr = (a, b) => a.repo === b.repo && a.number === b.number;
 
 function claudeOn(pr) {
@@ -166,16 +176,20 @@ export const NAMED = {
   updateBranch: (pr) => act(pr, "update", `Update #${pr.number}`, () => updateBranch(pr)),
   rerunFailed: (pr) => act(pr, "rerun", `Rerun failed checks on #${pr.number}`, () => rerunFailed(pr)),
   fix: (pr) => act(pr, "fix", `Fix #${pr.number}`, async () => {
-    const started = await startFixSession(pr, fixPrompt(pr));
-    return started === false ? { ok: true, quiet: true } : { ok: true, message: `Opened a Claude session on ${agentsWhere()}.` };
+    const prompt = fixPrompt(pr);
+    const started = await startFixSession(pr, prompt);
+    if (started !== true) return handOff(pr, prompt, "fix", started);
+    return { ok: true, message: `Opened a Claude session on ${agentsWhere()}.` };
   }),
   agentReview: (pr) => act(pr, "review", `Agent review of #${pr.number}`, async () => {
     await startReview(pr);
     return { ok: true, message: `Started on ${agentsWhere()}: four lenses, then a judge.` };
   }),
   reviewInClaude: (pr) => act(pr, "claude-review", `Review #${pr.number}`, async () => {
-    const started = await startFixSession(pr, reviewPromptForOthers(pr), "review");
-    return started === false ? { ok: true, quiet: true } : { ok: true, message: `Opened a Claude review session on ${agentsWhere()}.` };
+    const prompt = reviewPromptForOthers(pr);
+    const started = await startFixSession(pr, prompt, "review");
+    if (started !== true) return handOff(pr, prompt, "review", started);
+    return { ok: true, message: `Opened a Claude review session on ${agentsWhere()}.` };
   }),
   approve: (pr) => act(pr, "approve", `Approve #${pr.number}`, () => approvePr(pr)),
   watch: (pr) => act(pr, "watch", pr.watching ? "Stopped watching" : "Watching", async () => {
@@ -288,6 +302,7 @@ export default class Prs extends View {
     this.viaFilter = null;
     this.savedFilter = null;
     this.showHidden = false;
+    this.showArchived = false;
     this.mine = shared("prs.cache.mine") ?? null;
     this.reviews = shared("prs.cache.reviews") ?? null;
     this.width = 0;
@@ -312,9 +327,6 @@ export default class Prs extends View {
     if (this.leader) {
       this.loadMine(cx);
       this.loadReviews(cx);
-      cx.timer.every(MINE_EVERY_MS, (cx) => this.loadMine(cx));
-      cx.timer.every(REVIEWS_EVERY_MS, (cx) => this.loadReviews(cx));
-      cx.timer.every(TRUNK_EVERY_MS, (cx) => this.loadTrunkData(cx));
       this.loadServices(cx);
       cx.timer.every(SERVICES_EVERY_MS, (cx) => this.loadServices(cx));
       cx.timer.every(RUNS_EVERY_MS, (cx) => cx.spawn(async (cx) => {
@@ -337,6 +349,7 @@ export default class Prs extends View {
     cx.timer.every(1500, (cx) => {
       if (this.leader) this.publishStatus();
       if (this.leader) this.refreshOnReturn(cx);
+      if (this.leader) this.pollDue(cx);
       const refreshAll = shared("prs.refreshAll") ?? null;
       if (this.leader && refreshAll !== this.seenRefreshAll) {
         this.seenRefreshAll = refreshAll;
@@ -385,15 +398,36 @@ export default class Prs extends View {
     if (now - (this.reviewsStartedAt ?? 0) > STALE_AFTER_MS) this.loadReviews(cx);
   }
 
+  pollDue(cx) {
+    const slowdown = window()?.active ? 1 : UNFOCUSED_SLOWDOWN;
+    const now = Date.now();
+    const due = (startedAt, every) => startedAt === undefined || now - startedAt >= every * slowdown;
+    if (due(this.mineStartedAt, MINE_EVERY_MS)) this.loadMine(cx);
+    if (due(this.reviewsStartedAt, REVIEWS_EVERY_MS)) this.loadReviews(cx);
+    if (due(this.trunkStartedAt, TRUNK_EVERY_MS)) this.loadTrunkData(cx);
+  }
+
+  githubError(error, current, failures) {
+    if (error instanceof RateLimited) return error.message;
+    if (!current || failures >= FAILURES_BEFORE_ERROR) return String(error?.message ?? error);
+    return null;
+  }
+
   loadMine(cx) {
     if (this.loadingMine) return;
-    this.loadingMine = true;
     this.mineStartedAt = Date.now();
+    const pause = rateLimitPause();
+    if (pause) {
+      this.mineError = pause.message;
+      cx.notify();
+      return;
+    }
+    this.loadingMine = true;
     cx.notify();
     cx.spawn(async (cx) => {
       try {
         await Promise.all([loadStore(), loadConfig()]);
-        this.mine = await fetchMyPrs(repos(), store().watched, config().trunk?.repo ?? null);
+        this.mine = await fetchMyPrs(repos(), store().watched, config().trunk?.repo ?? null, this.trunk);
         this.mineFailures = 0;
         this.mineError = null;
         setShared("prs.cache.mine", this.mine);
@@ -401,7 +435,7 @@ export default class Prs extends View {
         await processSnapshot({ viewer: this.mine.viewer, prs: this.mine.prs, reviews: this.reviews });
       } catch (error) {
         this.mineFailures++;
-        if (!this.mine || this.mineFailures >= FAILURES_BEFORE_ERROR) this.mineError = String(error?.message ?? error);
+        this.mineError = this.githubError(error, this.mine, this.mineFailures) ?? this.mineError;
       }
       this.loadingMine = false;
       this.announce();
@@ -412,11 +446,14 @@ export default class Prs extends View {
   loadTrunkData(cx) {
     if (this.loadingTrunk || !this.mine) return;
     this.loadingTrunk = true;
+    this.trunkStartedAt = Date.now();
     cx.spawn(async (cx) => {
       try {
         const result = await loadTrunk(this.mine.prs);
         this.trunk = !result.listing && this.trunk?.listing && result.available ? { ...this.trunk, error: result.error } : result;
         setShared("prs.cache.trunk", this.trunk);
+        applyTrunk(this.mine.prs, this.trunk);
+        setShared("prs.cache.mine", this.mine);
       } catch (error) {
         this.trunk = { ...(this.trunk ?? {}), error: String(error?.message ?? error) };
       }
@@ -557,9 +594,14 @@ export default class Prs extends View {
     return empty(t, error ? error : text);
   }
 
+  isFolded(id) {
+    return FOLDED_UNTIL_OPENED.has(id) ? !this.folded.has(`${id}:open`) : this.folded.has(id);
+  }
+
   toggleFold(id, cx) {
-    if (this.folded.has(id)) this.folded.delete(id);
-    else this.folded.add(id);
+    const key = FOLDED_UNTIL_OPENED.has(id) ? `${id}:open` : id;
+    if (this.folded.has(key)) this.folded.delete(key);
+    else this.folded.add(key);
     localStorage.setItem("folded", JSON.stringify([...this.folded]));
     cx.notify();
   }
@@ -608,19 +650,25 @@ export default class Prs extends View {
 
   loadReviews(cx) {
     if (this.loadingReviews) return;
-    this.loadingReviews = true;
     this.reviewsStartedAt = Date.now();
+    const pause = rateLimitPause();
+    if (pause) {
+      this.reviewsError = pause.message;
+      cx.notify();
+      return;
+    }
+    this.loadingReviews = true;
     cx.notify();
     cx.spawn(async (cx) => {
       try {
         await loadConfig();
-        this.reviews = await fetchReviews(repos());
+        this.reviews = await fetchReviews(repos(), this.trunk);
         this.reviewsFailures = 0;
         this.reviewsError = null;
         setShared("prs.cache.reviews", this.reviews);
       } catch (error) {
         this.reviewsFailures++;
-        if (!this.reviews || this.reviewsFailures >= FAILURES_BEFORE_ERROR) this.reviewsError = String(error?.message ?? error);
+        this.reviewsError = this.githubError(error, this.reviews, this.reviewsFailures) ?? this.reviewsError;
       }
       this.loadingReviews = false;
       cx.notify();
@@ -1282,24 +1330,55 @@ export default class Prs extends View {
   codeRows(t) {
     const runs = Object.values(store().runs).filter((run) => run.kind === "review" && !run.interactive).sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt));
     if (!runs.length) return [empty(t, "No agent reviews yet. Right-click a PR and pick Agent review.")];
-    return runs.map((run) => {
-      const findings = store().findings[prKey(run.repo, run.number)] ?? [];
-      const mineFindings = findings.filter((finding) => finding.runId === run.id);
-      const open = mineFindings.filter((finding) => finding.state === "open").length;
-      const dismissed = mineFindings.filter((finding) => finding.state === "dismissed").length;
-      const pr = this.findPr(run.repo, run.number);
-      return v_flex()
-        .id(`prs-code-${run.id}`)
-        .px(8)
-        .py(7)
-        .gap(4)
-        .rounded(8)
-        .cursor_pointer()
-        .hover((el) => el.bg(t.hover))
-        .on_click(() => openOverlay({ mod: "prs", kind: "dialog", width: 760, height: 700, props: { mode: "sheet", pr, tab: "findings" } }))
-        .child(h_flex().gap(6).items_center().child(this.runBadge(t, run)).child(div().flex_1().min_w(0).truncate().child(run.title)))
-        .child(div().truncate().text_size(11).text_color(t.dim).child(`${run.repo}#${run.number} · started ${ago(run.startedAt)}${run.status === "done" ? ` · ${open} open${dismissed ? `, ${dismissed} dismissed` : ""}` : ""}${run.summary && run.status === "failed" ? ` · ${run.summary}` : ""}`));
-    });
+    const active = runs.filter((run) => !run.archivedAt);
+    const archived = runs.filter((run) => run.archivedAt);
+    const finished = active.filter((run) => run.status !== "running");
+    const rows = [];
+    if (finished.length > 1) {
+      rows.push(h_flex().px(8).pb(6).child(button(t, "prs-code-archive-all", `Archive ${finished.length} finished`, () => setRunsArchived(finished.map((run) => run.id), true), { small: true, icon: "tick" })));
+    }
+    if (!active.length) rows.push(empty(t, "Every review is archived."));
+    rows.push(...active.map((run) => this.codeRow(t, run)));
+    if (archived.length) {
+      rows.push(
+        h_flex()
+          .id("prs-code-archived")
+          .px(8)
+          .py(10)
+          .text_size(12)
+          .text_color(t.dim)
+          .cursor_pointer()
+          .hover((s) => s.text_color(t.foreground))
+          .on_click((_e, cx) => {
+            this.showArchived = !this.showArchived;
+            cx.notify();
+          })
+          .child(`${this.showArchived ? "Hide" : "Show"} ${archived.length} archived review${archived.length === 1 ? "" : "s"}`),
+      );
+      if (this.showArchived) rows.push(...archived.map((run) => this.codeRow(t, run)));
+    }
+    return rows;
+  }
+
+  codeRow(t, run) {
+    const findings = store().findings[prKey(run.repo, run.number)] ?? [];
+    const mineFindings = findings.filter((finding) => finding.runId === run.id);
+    const open = mineFindings.filter((finding) => finding.state === "open").length;
+    const dismissed = mineFindings.filter((finding) => finding.state === "dismissed").length;
+    const pr = this.findPr(run.repo, run.number);
+    return v_flex()
+      .id(`prs-code-${run.id}`)
+      .px(8)
+      .py(7)
+      .gap(4)
+      .rounded(8)
+      .cursor_pointer()
+      .hover((el) => el.bg(t.hover))
+      .when(Boolean(run.archivedAt), (el) => el.opacity(0.6))
+      .on_click(() => openOverlay({ mod: "prs", kind: "dialog", width: 760, height: 700, props: { mode: "sheet", pr, tab: "findings" } }))
+      .child(h_flex().gap(6).items_center().child(this.runBadge(t, run)).child(div().flex_1().min_w(0).truncate().child(run.title))
+        .when(run.status !== "running", (el) => el.child(button(t, `prs-code-archive-${run.id}`, run.archivedAt ? "Restore" : "Archive", () => setRunsArchived([run.id], !run.archivedAt), { small: true, ghost: true, icon: run.archivedAt ? null : "tick" }))))
+      .child(div().truncate().text_size(11).text_color(t.dim).child(`${run.repo}#${run.number} · started ${ago(run.startedAt)}${run.status === "done" ? ` · ${open} open${dismissed ? `, ${dismissed} dismissed` : ""}` : ""}${run.summary && run.status === "failed" ? ` · ${run.summary}` : ""}${run.archivedAt ? ` · archived ${ago(run.archivedAt)}` : ""}`));
   }
 
   initSettingsForm() {
@@ -2087,9 +2166,12 @@ export default class Prs extends View {
   }
 
   findingsTab(t, pr, findings) {
+    const reviewedHead = (list) => (new Set(list.map((finding) => finding.headSha)).size === 1 ? list[0].headSha : null);
     const key = prKey(pr.repo, pr.number);
     const open = findings.filter((finding) => finding.state === "open");
+    const unposted = open.filter((finding) => !finding.posted);
     const reviewRunning = Object.values(store().runs).some((run) => run.kind === "review" && run.status === "running" && run.repo === pr.repo && run.number === pr.number);
+    const currentRun = store().runs[store().findingsFrom?.[key]?.runId];
     const rows = [
       h_flex()
         .gap(6)
@@ -2097,10 +2179,16 @@ export default class Prs extends View {
         .child(button(t, "prs-f-review", reviewRunning ? "Review running…" : findings.length ? "Review again" : "Start review", () => NAMED.agentReview(pr), { primary: !findings.length, disabled: reviewRunning }))
         .when(open.length > 0 && pr.mine, (el) => el.child(button(t, "prs-f-fix", `Fix ${open.length} in Claude`, () => act(pr, "fix", `Fix findings on #${pr.number}`, async () => {
           const prompt = findingsFixPrompt(pr, open);
-          if ((await startFixSession(pr, prompt)) === false) return copyText(prompt, "A fix session is already open on this PR, so it's shown instead. The findings prompt is on your clipboard to paste into it.");
+          const started = await startFixSession(pr, prompt);
+          if (started !== true) return handOff(pr, prompt, "findings", started);
           return { ok: true, message: `Opened a Claude session on ${agentsWhere()}.` };
         }), { primary: true })))
-        .when(open.length > 0, (el) => el.child(button(t, "prs-f-post", "Post to PR", () => act(pr, "post", `Post findings to #${pr.number}`, () => commentOnPr(pr, findingsMarkdown(open)))))),
+        .when(open.length > 0, (el) => el.child(button(t, "prs-f-post", unposted.length ? `Post ${unposted.length} to PR` : "Posted to PR", () => act(pr, "post", `Post findings to #${pr.number}`, async () => {
+          const result = await postFindingsReview(pr, unposted, reviewedHead(unposted));
+          if (result.ok) await markFindingsPosted(key, unposted.map((finding) => finding.id));
+          return result;
+        }), { disabled: !unposted.length || Boolean(shared("prs.busy")?.[busyKey(pr, "post")]) })))
+        .when(Boolean(currentRun) && currentRun.status !== "running", (el) => el.child(button(t, "prs-f-archive", currentRun.archivedAt ? "Restore review" : "Archive review", () => setRunsArchived([currentRun.id], !currentRun.archivedAt), { icon: currentRun.archivedAt ? null : "tick", tooltip: "Archived reviews leave Code review's list; find them under Show archived." }))),
     ];
     if (!findings.length) rows.push(empty(t, reviewRunning ? `The review is running on ${agentsWhere()}. Findings show up here when the judge finishes.` : "No findings. Start a review to run the correctness, security, reliability and tests lenses, then a judge."));
     for (const finding of findings) {
@@ -2248,24 +2336,34 @@ export default class Prs extends View {
     this.wfBase = InputState.new({ placeholder: "Base branch, e.g. master", value: this.wf.conditions.base ?? "" });
     this.wfTitle = InputState.new({ placeholder: "Title contains", value: this.wf.conditions.titleContains ?? "" });
     this.wfActionInputs = this.wf.actions.map((action) => this.actionInput(action));
-    for (const key of ["prs.pick.wfTrigger", "prs.pick.wfAction"]) this[`seen-${key}`] = shared(key)?.at;
+    this.wfMenu = null;
     for (const input of [this.wfName, this.wfLabelsAny, this.wfLabelsNone, this.wfBase, this.wfTitle]) input.on("change", (_e, cx) => cx.notify());
     this.wfName.focus();
-    cx.timer.every(250, (cx) => {
-      let changed = false;
-      this.consumePick("prs.pick.wfTrigger", (value) => {
-        if (value && !this.wf.triggers.includes(value)) this.wf.triggers.push(value);
-        changed = true;
-      });
-      this.consumePick("prs.pick.wfAction", (value) => {
-        if (!value) return;
-        const action = { kind: value, value: "" };
-        this.wf.actions.push(action);
-        this.wfActionInputs.push(this.actionInput(action));
-        changed = true;
-      });
-      if (changed) cx.notify();
-    });
+  }
+
+  addMenu(t, menu, label, options, onPick) {
+    const setOpen = (open, cx) => {
+      this.wfMenu = open ? menu : null;
+      cx.notify();
+    };
+    return Popover.new(`prs-wf-${menu}-menu`)
+      .anchor("top_right")
+      .open(this.wfMenu === menu)
+      .on_open_change(setOpen)
+      .trigger(button(t, `prs-wf-add${menu}`, label, (_e, cx) => setOpen(true, cx), { small: true }))
+      .content(v_flex()
+        .w(260)
+        .p(5)
+        .rounded(8)
+        .border_1()
+        .border_color(t.border)
+        .bg(t.popover)
+        .shadow_lg()
+        .text_size(12.5)
+        .children(options.map((option, index) => menuItem(t, `prs-wf-${menu}-${index}`, option.label, (_e, cx) => {
+          onPick(option.value);
+          setOpen(false, cx);
+        }))));
   }
 
   actionInput(action) {
@@ -2320,7 +2418,7 @@ export default class Prs extends View {
           .overflow_y_scrollbar()
           .child(div().text_size(16).font_semibold().child(p.id ? "Edit workflow" : "New workflow"))
           .child(field(t, "Name", this.input(t, this.wfName)))
-          .child(card("When this happens", "Any one of these events on your PRs or review requests.", button(t, "prs-wf-addtrigger", "+ Add trigger", () => this.pick("prs.pick.wfTrigger", TRIGGERS.filter((trigger) => !wf.triggers.includes(trigger.id)).map((trigger) => ({ label: trigger.label, value: trigger.id }))), { small: true }),
+          .child(card("When this happens", "Any one of these events on your PRs or review requests.", this.addMenu(t, "trigger", "+ Add trigger", TRIGGERS.filter((trigger) => !wf.triggers.includes(trigger.id)).map((trigger) => ({ label: trigger.label, value: trigger.id })), (value) => wf.triggers.push(value)),
             wf.triggers.length ? h_flex().gap(6).flex_wrap().children(wf.triggers.map((id) => removable(`prs-wf-t-${id}`, TRIGGERS.find((trigger) => trigger.id === id)?.label ?? id, (_e, cx) => {
               wf.triggers = wf.triggers.filter((item) => item !== id);
               cx.notify();
@@ -2345,7 +2443,11 @@ export default class Prs extends View {
               .child(this.input(t, this.wfLabelsNone))
               .child(this.input(t, this.wfBase))
               .child(this.input(t, this.wfTitle))))
-          .child(card("Do this", "In order, top to bottom. A failing step stops the rest.", button(t, "prs-wf-addaction", "+ Add action", () => this.pick("prs.pick.wfAction", ACTION_KINDS.map((kind) => ({ label: kind.label, value: kind.id }))), { small: true }),
+          .child(card("Do this", "In order, top to bottom. A failing step stops the rest.", this.addMenu(t, "action", "+ Add action", ACTION_KINDS.map((kind) => ({ label: kind.label, value: kind.id })), (value) => {
+            const action = { kind: value, value: "" };
+            wf.actions.push(action);
+            this.wfActionInputs.push(this.actionInput(action));
+          }),
             wf.actions.length
               ? v_flex().gap(6).children(wf.actions.map((action, index) => v_flex()
                   .gap(4)

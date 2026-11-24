@@ -21,7 +21,7 @@ Laid out for a vertical monitor; works on a wide one too. [README.md](README.md)
 
 - Tabs on the left, hidden while you only have one. `+`, Changes, GitHub, standup, search, settings on the right.
 - **GitHub badge**: the number of PRs waiting on your review that you haven't triaged. Click it for the Reviews view.
-- **Fact-check button** (Slack icon): opens a pane below with Claude (Opus, high effort) primed to fact-check the Slack link or screenshot you paste next. It answers "Paste it." and waits.
+- **Fact-check button** (Slack icon): opens a pane below with Claude (Opus, high effort) and the fact-check request already typed in, unsent, so you paste a Slack link or screenshot and press Enter. It borrows the clipboard to type the request and puts all of it back, images included (`mods/squirrel-topbar/clipboard.js`).
 - **Standup button** (megaphone): opens a pane below running Claude with your standup skill. A second click jumps to that pane.
 - **Glow**: soft neon bands drifting behind the bar, 7 s per colour, with a rim of the normal bar colour. `glow.js`.
 - `cmd-w` asks before closing a pane, so a stray key never kills an agent.
@@ -54,14 +54,17 @@ Laid out for a vertical monitor; works on a wide one too. [README.md](README.md)
 - The REVIEWS column counts approvals, open threads and comments from others, so non-blocking notes on an approved PR don't get missed. Click an open PR's row to read them: open threads first, then the latest comments, each linking to GitHub.
 - **RFR** next to a draft's chip marks it ready for review (`gh pr ready`). Every action refreshes the board.
 - **CI failed** chip: opens a pane below running Claude (Opus, high effort) in the PR's checkout. It fixes what's obvious without pushing, or stops and summarises what needs your call. A second click jumps to that pane.
-- **Add to queue** shows only on approved PRs whose CI isn't failing. **Add to queue** and **Remove** run `trunk merge` and `trunk merge cancel` from your PostHog checkout. Add runs at once and shows "Added ✓"; Remove asks for a second click within 4 s. Needs `trunk login` once.
+- **Add to queue** shows only on approved PRs whose CI isn't failing. **Add to queue** and **Remove** run `trunk merge` and `trunk merge cancel` from your PostHog checkout. Add runs at once and shows "Added ✓"; Remove asks for a second click within 4 s. Needs `trunk login` once. In repos other than PostHog/posthog the button is **Merge** instead: it runs `gh pr merge` with the method the repo allows (squash first) and asks for a second click.
 - The empty cells of merged rows are a visualizer: two live simulations (flow fields, a spectrum analyser, warp stars, orbs, rain, fireworks, Game of Life, random walkers, plasma) with random palettes, swapping every 9 to 17 s. `visualizer.js`.
 
 ### The rest
 
 - `mods/squirrel-pane-header/`: pane headers with the pane's name, folder, and split, zoom and close buttons.
 - `mods/squirrel-rename/`: `cmd-r` names the focused pane. Herdr only names tabs, so names live in shared state.
-- `mods/squirrel-new-menu/`: the `+` menu.
+- `mods/squirrel-error/`: clicking a failed GitHub refresh in the panel header shows the full error. Every failure is also appended to `~/.config/herdr-app/squirrel-errors.log`.
+- `mods/squirrel-reopen/`: the clock in the top bar lists Claude sessions closed in the last 3 days, newest first, with how long ago each closed. Click one to resume it in a pane below the focused one, under the same account and folder. `squirrel-topbar.reopen` opens it from a key.
+- `mods/squirrel-account/`: with two or more `claudeProfiles`, every Claude pane the top bar starts (`cmd-t`, `cmd-shift-d`, standup, fact-check) first asks which account: press 1, 2… or Enter for the last one used. The standup keeps `standupCommand`'s flags but runs on the account picked. A pick sets off `mods/squirrel-dragon/`, a dragon that breathes fire in that account's colour.
+- `mods/squirrel-new-menu/`: a new-pane menu. Nothing in the top bar opens it any more.
 - `layouts/Dopamine-Squirrel.json`: the top bar, the panel under it (`agents-panel`), then panes with Herdr's Files and Changes column on the right. No spaces list: this setup lives in one space.
 
 ## Keys
@@ -70,7 +73,7 @@ Laid out for a vertical monitor; works on a wide one too. [README.md](README.md)
 | --- | --- |
 | `cmd-1` / `cmd-2` / `cmd-3` | Running agents / Reviews / My PRs, showing the panel if it's hidden |
 | `cmd-b` | Show or hide the panel |
-| `cmd-t`, `cmd-shift-d` | New pane below, straight into Claude (no shell start-up); quitting Claude leaves a shell |
+| `cmd-t`, `cmd-shift-d` | New pane below, straight into Claude on the account you pick (no shell start-up); quitting Claude leaves a shell |
 | `cmd-shift-t` | New tab |
 | `cmd-r` | Rename the focused pane |
 | `cmd-w` | Close the focused pane, after asking |
@@ -96,6 +99,7 @@ Laid out for a vertical monitor; works on a wide one too. [README.md](README.md)
 - `reviewSkill`, `standupSkill`: project skills the CC and standup buttons ask Claude to load from the PostHog MCP.
 - `standupCommand`: how the standup pane starts Claude. Defaults to `["claude"]`; the example uses a second Claude subscription.
 - `posthogCheckout`: where `trunk` runs. Uses that checkout's flox `trunk` when there is one, else `trunk` on your PATH.
+- `nicknames`: short names for GitHub logins on the teammate-approved chips, e.g. `{"octocat": "cat"}`.
 - `claudeProfiles`: the Claude subscriptions the plan limits strip reads, by config folder. Defaults to `~/.claude`, named "claude". The first `/usage` read in a profile trusts the empty folder `~/.config/herdr-app/data/squirrel/usage` for it.
 
 ## Claude status
@@ -112,6 +116,6 @@ Context % and session cost come from Claude Code's statusline input, and so do l
 
 ## For agents changing this
 
-- Shared state keys: `squirrel.github` (PR lists, written by the top bar), `squirrel.triaged`, `squirrel.visited`, `squirrel.view`, `squirrel.pane-names`, `squirrel.review-panes`, `squirrel.review-sessions`, `squirrel.standup-pane`, `squirrel.settings`.
+- Shared state keys: `squirrel.github` (PR lists, written by the top bar), `squirrel.triaged`, `squirrel.visited`, `squirrel.view`, `squirrel.pane-names`, `squirrel.review-panes`, `squirrel.review-sessions`, `squirrel.standup-pane`, `squirrel.settings`, `squirrel.ai-triage`, `squirrel.ai-triage-feedback`, `squirrel.ai-triage-learned`.
 - The top bar owns fetching. The panel only reads `squirrel.github`, so a different fetcher can feed it.
 - Panel views are mixins on one `View`: `agents.js`, `reviews.js`, `my-prs.js`, with `table.js` for the shared cells and `shared.js` for constants.

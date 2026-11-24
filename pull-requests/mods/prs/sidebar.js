@@ -3,7 +3,8 @@ import { v_flex, h_flex } from "gpui-base";
 import { run } from "herdr";
 import { comparePriority } from "./github.js";
 import { step, queueFor, stackGroups, layerWaitingOn, visualAsks, fixable } from "./steps.js";
-import { CLAUDE_ICON } from "./claude.js";
+import { CLAUDE_ICON, agentOnPr, showTab } from "./claude.js";
+import { store } from "./store.js";
 import { ago, tone, actionButton, badge, gateStrip, titleText, TEXT } from "./ui.js";
 import { readiness } from "./sheet.js";
 import { mergesThroughQueue } from "./actions.js";
@@ -28,7 +29,7 @@ export function stat(t, iconName, text, toneName = "dim") {
 }
 
 function botApprovalStat(t, count) {
-  return h_flex().gap(1).flex_none().items_center().child(icon(t, "bot", "ok", 11)).child(icon(t, "approved", "ok", 9)).child(div().ml(2).text_size(TEXT.meta).text_color(tone(t, "ok")).child(String(count)));
+  return h_flex().gap(3).flex_none().items_center().tooltip(`Approved by ${count} bot${count === 1 ? "" : "s"}`).child(icon(t, "bot-approved", "ok", 11)).child(div().text_size(TEXT.meta).text_color(tone(t, "ok")).child(String(count)));
 }
 
 export function progressBar(t, run) {
@@ -44,7 +45,7 @@ export function progressBar(t, run) {
 }
 
 export function foldHeader(view, t, id, label, count, right) {
-  const folded = view.folded.has(id);
+  const folded = view.isFolded(id);
   return h_flex()
     .id(`prs-fold-${id}`)
     .px(6)
@@ -120,6 +121,54 @@ export function priorityBadge(t, pr) {
   return chip ? badge(t, chip.label, chip.points > 0 ? "ok" : "dim") : null;
 }
 
+const AGENT_STATUS = {
+  working: { label: "working", tone: "run" },
+  blocked: { label: "needs you", tone: "warn" },
+  done: { label: "done", tone: "ok" },
+  idle: { label: "idle", tone: "dim" },
+};
+
+function agentGlyph(t, agent, size) {
+  const path = agent.program?.icon;
+  if (!path) return image(CLAUDE_ICON).size(size);
+  return agent.program.tint ? svg(path).size(size).text_color(agent.program.color ?? t.foreground) : image(path).size(size);
+}
+
+const reviewRunning = (pr) => Object.values(store().runs).some((run) => run.kind === "review" && run.status === "running" && run.repo === pr.repo && run.number === pr.number);
+
+function workChips(t, pr) {
+  const chips = [];
+  const agent = agentOnPr(pr);
+  if (agent) {
+    const look = AGENT_STATUS[agent.status] ?? AGENT_STATUS.idle;
+    chips.push(div()
+      .id(`prs-agent-${pr.repo}-${pr.number}`)
+      .relative()
+      .size(16)
+      .flex_none()
+      .cursor_pointer()
+      .tooltip(`${agent.program?.name ?? "Agent"} ${look.label} in ${agent.tab_name}. Click to open it.`)
+      .on_click((_e, cx) => {
+        cx.stop_propagation();
+        showTab({ space: agent.space, tab: agent.tab });
+      })
+      .child(h_flex().absolute().top(0).left(0).size(16).items_center().justify_center().child(agentGlyph(t, agent, 10)))
+      .when(agent.status === "working", (el) => el.child(div().absolute().top(0).left(0).child(icon(t, "spinner", look.tone, 16, true))))
+      .when(agent.status === "blocked" || agent.status === "done", (el) => el.child(div().absolute().right(-1).bottom(-1).size(6).rounded(3).border_1().border_color(t.chrome).bg(tone(t, look.tone)))));
+  }
+  if (reviewRunning(pr)) {
+    chips.push(h_flex()
+      .id(`prs-reviewing-${pr.repo}-${pr.number}`)
+      .gap(3)
+      .flex_none()
+      .items_center()
+      .tooltip("A headless agent review is running on this PR.")
+      .child(icon(t, "spinner", "info", 10, true))
+      .child(div().text_size(TEXT.meta).text_color(tone(t, "info")).child("Reviewing")));
+  }
+  return chips;
+}
+
 export function rowButtons(view, t, pr, { scope, next, entry, group, plain = false }) {
   const buttons = [];
   if (scope !== "mine" || !next) return buttons;
@@ -128,7 +177,7 @@ export function rowButtons(view, t, pr, { scope, next, entry, group, plain = fal
   if (next.ready && (!group || group.members.length === 1) && !entry) buttons.push(actionButton(t, `prs-b-merge-${pr.number}`, "merged", mergesThroughQueue(pr) ? "Send to queue…" : "Merge…", () => view.act("merge", pr), "ok", { plain }));
   if (next.requeue) buttons.push(actionButton(t, `prs-b-again-${pr.number}`, "merged", mergesThroughQueue(pr) ? "Send to queue again…" : "Merge again…", () => view.act("merge", pr), "ok", { plain }));
   if (next.behind && pr.mine) buttons.push(actionButton(t, `prs-b-update-${pr.number}`, "refresh", "Update branch", () => view.act("updateBranch", pr), "info", { plain }));
-  if (fixable(pr)) buttons.push(actionButton(t, `prs-b-fix-${pr.number}`, "wrench", "Fix with Claude", () => view.act("fix", pr), "merged", { plain }));
+  if (fixable(pr) && !agentOnPr(pr)) buttons.push(actionButton(t, `prs-b-fix-${pr.number}`, "wrench", "Fix with Claude", () => view.act("fix", pr), "merged", { plain }));
   return buttons;
 }
 
@@ -150,6 +199,7 @@ export function statusLine(view, t, pr, { scope = "mine", group = null, buttons 
     .when(pr.threads.human > 0, (el) => el.child(stat(t, "comment", String(pr.threads.human), "warn")))
     .when(pr.threads.bot > 0, (el) => el.child(stat(t, "bot", String(pr.threads.bot), "dim")))
     .when(Boolean(pr.watching && !pr.mine), (el) => el.child(stat(t, "eye", "watching", "info")))
+    .children(workChips(t, pr))
     .when(buttons, (el) => el.child(div().flex_1()).children(rowButtons(view, t, pr, { scope, next, entry, group, plain: true })));
 }
 
@@ -221,8 +271,37 @@ function prRow(view, t, pr, { depth = 0, group = null, scope = "mine", quiet = f
     .when(Boolean(progress), (el) => el.child(div().pl(19).child(progress)));
 }
 
-export function stackHeader(view, t, group, { plain = true } = {}) {
+export const stackFoldId = (group) => `stack:${group.id}`;
+
+const QUEUE_DOT = { Failed: "bad", "Pending Failure": "bad", Testing: "queued", Pending: "queued", "Not Ready": "queued", "Tests Passed": "queued", Queued: "queued", Merged: "ok" };
+const DOT_COLOR = { queued: "ansi4" };
+
+function layerDot(view, pr, group) {
+  const { next, entry } = nextFor(view, pr, group);
+  const queued = entry ? QUEUE_DOT[entry.state] : pr.queue?.active ? "queued" : null;
+  const state = queued === "queued" && next.tone === "bad" ? "bad"
+    : queued ? queued
+    : pr.mergeable === "CONFLICTING" || pr.mergeState === "DIRTY" || pr.checks.failed > 0 || pr.stackDepth ? "bad"
+    : pr.checks.inProgress > 0 ? "warn"
+    : pr.checks.total > 0 ? "ok"
+    : "idle";
+  return { state, tip: `#${pr.number}: ${next.label}` };
+}
+
+function layerDots(view, t, group) {
+  return h_flex()
+    .flex_none()
+    .gap(3)
+    .items_center()
+    .children(group.members.map(({ pr }) => {
+      const dot = layerDot(view, pr, group);
+      return div().id(`prs-stack-dot-${pr.repo}-${pr.number}`).size(7).rounded_full().bg(dot.state === "idle" ? t.border : tone(t, DOT_COLOR[dot.state] ?? dot.state)).tooltip(dot.tip);
+    }));
+}
+
+export function stackHeader(view, t, group, { plain = true, foldable = false } = {}) {
   const trunk = view.trunk;
+  const folded = foldable && view.folded.has(stackFoldId(group));
   const top = group.members.at(-1).pr;
   const steps = group.members.map((member) => step(member.pr, queueFor(member.pr, group, trunk), trunk));
   const ready = steps.filter((item) => item.ready).length;
@@ -235,9 +314,20 @@ export function stackHeader(view, t, group, { plain = true } = {}) {
     .pb(2)
     .gap(6)
     .items_center()
+    .when(foldable, (el) =>
+      el
+        .pl(4)
+        .rounded(7)
+        .cursor_pointer()
+        .hover((s) => s.bg(t.hover))
+        .tooltip(folded ? "Show the stack's PRs" : "Collapse the stack")
+        .on_click((_e, cx) => view.toggleFold(stackFoldId(group), cx))
+        .child(icon(t, folded ? "chevron-right" : "chevron-down", "dim", 11)),
+    )
     .child(icon(t, "stack", "merged", 12))
     .child(div().min_w(0).truncate().text_size(TEXT.meta).text_color(t.muted).child(`Stack of ${group.members.length} · ${top.headRef}`))
     .child(div().flex_none().text_size(TEXT.meta).text_color(queued ? t.accent : all ? tone(t, "ok") : t.dim).child(queued ? queued.state : `${ready}/${group.members.length} ready`))
+    .when(folded, (el) => el.child(layerDots(view, t, group)))
     .child(div().flex_1())
     .when(all && !queued && top.mine, (el) => el.child(actionButton(t, `prs-stack-merge-${group.id}`, "merged", "Merge stack…", () => view.act("merge", top), "ok", { plain })));
 }
@@ -259,7 +349,8 @@ export function sidebarMine(view, t) {
     for (const group of part.groups) {
       const showRepo = group.repo !== primaryRepo;
       if (group.members.length > 1) {
-        rows.push(stackHeader(view, t, group));
+        rows.push(stackHeader(view, t, group, { foldable: true }));
+        if (view.folded.has(stackFoldId(group))) continue;
         for (const member of [...group.members].reverse()) rows.push(prRow(view, t, member.pr, { depth: 1, group, quiet: isQuiet(view, part, member.pr, group), showRepo }));
       } else rows.push(prRow(view, t, group.members[0].pr, { group, quiet: isQuiet(view, part, group.members[0].pr, group), showRepo }));
     }
@@ -270,13 +361,19 @@ export function sidebarMine(view, t) {
 export function sidebarReviews(view, t) {
   if (!view.reviews) return [view.placeholder(t, view.reviewsError, "Loading review requests…")];
   const { visible, hidden } = view.reviewsVisible();
-  const direct = visible.filter((pr) => pr.via.direct).sort(comparePriority);
-  const teams = visible.filter((pr) => !pr.via.direct).sort(comparePriority);
+  const ready = visible.filter((pr) => !pr.isDraft);
+  const direct = ready.filter((pr) => pr.via.direct).sort(comparePriority);
+  const teams = ready.filter((pr) => !pr.via.direct).sort(comparePriority);
+  const drafts = visible.filter((pr) => pr.isDraft).sort(comparePriority);
   const rows = [];
   rows.push(foldHeader(view, t, "review:direct", "Requested from you", direct.length));
   if (!view.folded.has("review:direct")) rows.push(...(direct.length ? direct.map((pr) => prRow(view, t, pr, { scope: "reviews" })) : [view.placeholder(t, null, "Nothing asks you directly.")]));
   rows.push(foldHeader(view, t, "review:teams", "Your teams", teams.length));
   if (!view.folded.has("review:teams")) rows.push(...teams.map((pr) => prRow(view, t, pr, { scope: "reviews" })));
+  if (drafts.length) {
+    rows.push(foldHeader(view, t, "review:drafts", "Drafts", drafts.length));
+    if (!view.isFolded("review:drafts")) rows.push(...drafts.map((pr) => prRow(view, t, pr, { scope: "reviews" })));
+  }
   if (hidden.length) {
     rows.push(foldHeader(view, t, "review:hidden", "Hidden", hidden.length));
     if (!view.folded.has("review:hidden")) rows.push(...hidden.map((pr) => prRow(view, t, pr, { scope: "reviews" })));

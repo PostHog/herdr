@@ -9,9 +9,12 @@ Each top-level folder with a `RECIPE.md` is one piece. You pick the pieces you w
 | [`claude-usage`](claude-usage/RECIPE.md) | Herdr's main layout plus a strip with your live Claude plan limits, and token counts per session. |
 | [`dopamine-squirrel`](dopamine-squirrel/README.md) | Jake Ruth's opinionated, ADHD-proof setup for a vertical monitor: a top bar and one panel for running agents (context %, cost, plan limits), review requests with triage, your PRs and the Trunk merge queue. Some buttons use Jake's PostHog skills; the README says which. Pick the parts you want. |
 | [`posthog-inbox`](posthog-inbox/README.md) | The PostHog self-driving inbox in Herdr's sidebar, with Conductor-style tasks: pick a report up into its own git worktree and agent, hand it to a PostHog cloud task, or sort the inbox by keyboard in a triage round. Needs a PostHog personal API key; the README says where it goes. |
+| [`coder-devbox`](coder-devbox/RECIPE.md) | Your PostHog devbox on its machine header in the `flat-spaces` spaces list: a globe icon that forwards the PostHog UI (`hogli devbox:forward`) and opens it, and a right-click menu of hogli devbox commands (status, logs, sync, open in VS Code or Cursor, restart, update, stop). Needs `pull-requests` and a PostHog checkout. |
 | [`resume-agents`](resume-agents/RECIPE.md) | Brings Claude Code back in its terminals after you restart or shut down your computer. The shared layouts above already make room for it. |
 | [`space-tree`](space-tree/RECIPE.md) | The `Pull-Requests` layout with one sidebar tree: spaces (with each repo's own icon), their terminals and agents, and each agent's sub-agents, grouped by machine. The tabs move from the top bar into the tree. Needs `pull-requests`. |
 | [`gustavo`](gustavo/README.md) | Gustavo Strassburger's task-first setup: each space is a task with its Claude sessions, PRs and worktrees, an Inbox of what waits on you, a Grafana view, a pixel-art Dungeon of your tasks with PostHog's hoggies, a history bar, and PostHog's dev stack on the right. Built around Feature Flags team work; take the parts you like. |
+| [`hogpilot`](hogpilot/RECIPE.md) | A side panel for CSMs: hogpilot's book of accounts with open signals and ARR at stake, and the account card for whichever account the focused terminal is working on, with buttons to ask Claude about it or open its dossier. Needs hogpilot installed. |
+| [`piece-picker`](piece-picker/RECIPE.md) | A dialog with one switch per piece in this repo. Each switch runs `install.sh enable` or `disable` for you, and Update runs `install.sh`. Herdr's command palette can't list mods, so a key opens it (`cmd-shift-p` in its `keys.json`). |
 | [`back-forward`](back-forward/RECIPE.md) | Slack-style back and forward buttons that step through the spaces and tabs you looked at. Add its block to your layout; the recipe has the JSON. |
 
 ## Install
@@ -60,6 +63,8 @@ It skips the pull when your checkout has local changes.
 `cmd-shift-l` cycles through every layout in Herdr's config folder.
 That's Herdr's own `main`, `terminals` and `win98`, which Herdr puts back on every start, plus the pieces you enabled.
 Herdr has no setting to hide a layout from the cycle, so enabling a piece is how you add its layout.
+
+Or enable `piece-picker`, and turn pieces on and off from a dialog in Herdr.
 
 What you enabled is kept per machine in `~/.config/herdr-app/.posthog-herdr-enabled`.
 If something of yours is in the way, the script moves it to `~/.config/herdr-app/.posthog-herdr-backup/` first.

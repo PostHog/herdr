@@ -12,22 +12,34 @@ function trunk(args) {
   return exec("/bin/sh", ["-c", script, "sh", checkout, ...args], { timeout: 60000 });
 }
 
+// Merges a PR outside Trunk with the repo's own allowed method: squash first, then merge commit, then rebase.
+function ghMerge(p) {
+  const script = 'cd "${TMPDIR:-/tmp}" && m=$(gh repo view "$1" --json squashMergeAllowed,mergeCommitAllowed '
+    + '--jq "if .squashMergeAllowed then \\"--squash\\" elif .mergeCommitAllowed then \\"--merge\\" else \\"--rebase\\" end") && gh pr merge "$2" "$m"';
+  return exec("/bin/sh", ["-c", script, "sh", p.repo, p.url], { timeout: 60000 });
+}
+
 const SECTION_GAP = 9;
 
 // My PRs: three tables on one column grid (in review, merge queue, recently merged) and the visualizer.
 const CI_PANES = "squirrel.ci-panes";
 
 export const myPrViews = {
-  // RFR on a draft: `gh pr ready`, then refresh so the row updates.
-  markReady(pr, cx) {
+  // RFR on a draft: `gh pr ready`, then refresh so the row updates. Undo turns it back into a draft.
+  markReady(pr, cx, undo = false) {
     this.readyBusy ??= {};
     if (this.readyBusy[pr.url]) return;
     this.readyBusy[pr.url] = true;
     cx.notify();
     cx.spawn(async (cx) => {
-      const r = await exec("gh", ["pr", "ready", pr.url], { timeout: 60000 }).catch((e) => ({ code: 1, stderr: String(e?.message ?? e) }));
+      const r = await exec("gh", ["pr", "ready", pr.url, ...(undo ? ["--undo"] : [])], { timeout: 60000 }).catch((e) => ({ code: 1, stderr: String(e?.message ?? e) }));
+      this.readyDone ??= {};
       if (r.code !== 0) this.queueError[pr.url] = (r.stderr || "gh pr ready failed").trim().split("\n").pop();
-      else { this.readyDone ??= {}; this.readyDone[pr.url] = Date.now(); }
+      else if (undo) delete this.readyDone[pr.url];
+      else {
+        this.readyDone[pr.url] = Date.now();
+        this.undoMine.push({ number: pr.number, label: "Ready for review", restore: (cx) => this.markReady(pr, cx, true) });
+      }
       delete this.readyBusy[pr.url];
       cx.notify();
       run("squirrel-topbar.gh_refresh");
@@ -63,10 +75,12 @@ export const myPrViews = {
   },
 
   // Trunk merge queue buttons: Add runs `trunk merge` at once; Remove asks for a second click within 4s.
-  queue(p, action, cx) {
+  // Repos without Trunk get Merge, which also asks for a second click since it can't be undone.
+  // Add and Remove go on My PRs' undo list; undoing one runs the other (undo = true keeps it off the list).
+  queue(p, action, cx, undo = false) {
     const key = p.url;
     if (this.queueBusy[key]) return;
-    if (action === "remove" && !this.confirm[key]) {
+    if (action !== "add" && !undo && !this.confirm[key]) {
       this.confirm[key] = true;
       cx.notify();
       cx.spawn(async (cx) => { await cx.sleep(4000); delete this.confirm[key]; cx.notify(); });
@@ -78,9 +92,13 @@ export const myPrViews = {
     cx.notify();
     const args = action === "add" ? ["merge", String(p.number)] : ["merge", "cancel", String(p.number)];
     cx.spawn(async (cx) => {
-      const r = await trunk(args).catch((e) => ({ code: 1, stderr: String(e?.message ?? e) }));
-      if (r.code !== 0) this.queueError[key] = (r.stderr || r.stdout || "trunk failed").replace(/\x1b\[[0-9;]*m/g, "").trim().split("\n").pop();
+      const r = await (action === "merge" ? ghMerge(p) : trunk(args)).catch((e) => ({ code: 1, stderr: String(e?.message ?? e) }));
+      if (r.code !== 0) this.queueError[key] = (r.stderr || r.stdout || `${action === "merge" ? "gh pr merge" : "trunk"} failed`).replace(/\x1b\[[0-9;]*m/g, "").trim().split("\n").pop();
       else if (action === "add") this.queueAdded[key] = Date.now();
+      else if (action === "merge") this.mergedNow[key] = Date.now();
+      else delete this.queueAdded[key];
+      if (r.code === 0 && !undo && action !== "merge") this.undoMine.push({ number: p.number, label: action === "add" ? "Add to queue" : "Remove",
+        restore: (cx) => this.queue(p, action === "add" ? "remove" : "add", cx, true) });
       delete this.queueBusy[key];
       cx.notify();
       run("squirrel-topbar.gh_refresh");
@@ -109,7 +127,8 @@ export const myPrViews = {
       const q = trunkOf(p), active = ["submitted", "waiting", "queued", "testing"].includes(q?.state);
       if (active) return "remove";
       const landable = p.review === "APPROVED" && !["FAILURE", "ERROR"].includes(p.ci);
-      return p.repo === "PostHog/posthog" && !p.draft && landable && q?.state !== "merged" ? "add" : null;
+      if (p.draft || !landable || q?.state === "merged") return null;
+      return p.repo === "PostHog/posthog" ? "add" : "merge";
     };
 
     const reviewBits = (p) => [
@@ -131,7 +150,14 @@ export const myPrViews = {
     };
 
     // On your own PR, CC works through the reviewers' comments rather than explaining the PR.
-    const handlePrompt = (p) => `Handle the review on my PR ${p.url}: read every open thread and comment. Fix what's clear and common sense, and reply on the thread saying what you changed. For anything that needs my judgment or taste, ask me first. Be clear, concise and direct.`;
+    const handlePrompt = (p) => [
+      `Review comments on my PR ${p.url}. Read every unresolved thread, review body and comment, and the CI status.`,
+      "Some comments are from people, some from bots. Bot findings are usually right but not always: check each against the code before agreeing with it.",
+      "An item is mechanical only if it's lint or formatting, a typo or copy fix, or a test broken in an obvious way. A reviewer's direct request is never mechanical, however easy it looks.",
+      "Fix mechanical items now and push them to the PR's branch (never force-push). Don't change anything else, and don't reply, react or resolve anything.",
+      "Then give me one list, one row per item: who asked and what, your take (agree, disagree, or needs me), the change you'd make, and a draft reply in my voice.",
+      "Wait for my go, then do only what I approve, and post only the replies I approved, worded as I approved them. Be clear, concise and direct, no filler or pedantry.",
+    ].join(" ");
     const ccButton = (p) => this.iconButton(`mine-review-${p.url}`, "mods/squirrel-panel/open-pane.svg", (_e, cx) => this.review(p, cx, handlePrompt(p)), t,
       { spin: this.starting[p.url], color: this.reviewPane(p) ? t.accent : t.muted });
     const queueButton = (p) => {
@@ -140,13 +166,14 @@ export const myPrViews = {
       if (!action) return div().w(W.merge).flex_none();
       const confirming = this.confirm[key], busy = this.queueBusy[key];
       return h_flex().id(`queue-${key}`).w(W.merge).flex_none().h(20).justify_center().items_center().rounded(4).border(1).text_size(11)
-        .border_color(confirming ? (action === "add" ? c.green : c.red) : t.border)
-        .text_color(confirming ? (action === "add" ? c.green : c.red) : t.muted)
+        .border_color(confirming ? (action === "remove" ? c.red : c.green) : t.border)
+        .text_color(confirming ? (action === "remove" ? c.red : c.green) : t.muted)
         .hover((s) => s.bg(t.raised).text_color(t.foreground)).cursor_pointer()
         .on_click((_e, cx) => this.queue(p, action, cx))
         .child(busy ? svg("mods/workspace-chrome/spinner.svg").size(12).spin(900)
           : this.queueAdded?.[key] && Date.now() - this.queueAdded[key] < 20000 ? "Added ✓"
-          : confirming ? "Click to confirm" : action === "add" ? "Add to queue" : "Remove");
+          : this.mergedNow?.[key] ? "Merged ✓"
+          : confirming ? "Click to confirm" : action === "add" ? "Add to queue" : action === "merge" ? "Merge" : "Remove");
     };
     const note = (p, kind) => {
       if (kind === "review") return h_flex().w(W.note).flex_none().gap(6).text_size(11).min_w(0).overflow_hidden()

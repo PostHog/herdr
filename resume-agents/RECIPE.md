@@ -29,7 +29,7 @@ It lands in the shell's history, so you can see what ran.
 
 ## How it behaves
 
-- Every 5 seconds, for each local terminal running Claude Code, it reads `~/.claude/sessions/<pid>.json`, which Claude Code writes for every running session.
+- Every 5 seconds, for each local terminal running Claude Code, it reads `~/.claude/sessions/<pid>.json`, which Claude Code writes for every running session. It also checks every `~/.claude-*` folder, for a second account started with `CLAUDE_CONFIG_DIR`, and resumes under that account.
   It keeps the session id, the folder and the terminal's shell pid as labels on the terminal (`resume-agents.claude.*`), so they survive a restart with the terminal.
   The session follows `/clear` and `/resume`.
 - A labelled terminal whose shell pid changed was recovered by herdr-core, so the mod types the resume command into it, once.
