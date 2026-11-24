@@ -8,7 +8,9 @@ A dialog with one switch per piece in this repo, so you turn pieces on and off w
 
 - `mod.open:piece-picker` opens the dialog. This piece's `keys.json` binds it to `cmd-shift-p`, which is Herdr's command palette key. Merge it by hand, and give the palette another key (for example `cmd-k`) if you still want one.
 - Herdr's command palette cannot list the dialog. The palette lists only Herdr's own commands and your layouts.
-- Each row shows a piece's name, the first sentence of its `RECIPE.md`, and a switch.
+- Each row shows a piece's name, the first sentence of its `RECIPE.md`, where it shows up for you, and a switch.
+  Where it shows up is the first that holds, in `accent` for the first three and `muted` otherwise:
+  "Your current layout" (one of its layouts is on screen), "Shows in your layout" (the layout places one of its mods, or a placed mod's code draws one from `mods/<name>/`), "Opens with ⌘⇧U" (a global key opens or runs one of its mods), "Adds a layout. Switch to it with ⌘⇧L", or "Not in your layout. Its recipe says where to add it".
 - A switch runs `./install.sh enable <piece>` or `./install.sh disable <piece>` in your checkout.
 - Update runs `./install.sh`. It pulls the latest and copies what changed, as it does in a terminal.
 - Under the list, the dialog shows what `install.sh` reports: key bindings to merge, new pieces, and errors.
