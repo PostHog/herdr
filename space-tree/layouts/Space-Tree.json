@@ -33,6 +33,19 @@
               "min": 180
             },
             {
+              "id": "inbox",
+              "type": "block",
+              "content": {
+                "mod": "ph-inbox",
+                "props": {
+                  "compact": true
+                }
+              },
+              "size": {
+                "px": 40.0
+              }
+            },
+            {
               "id": "pull-requests",
               "type": "block",
               "content": {
@@ -76,15 +89,35 @@
           "type": "column",
           "children": [
             {
-              "id": "tabs",
-              "type": "block",
-              "content": {
-                "mod": "space-tree-bar"
-              },
+              "id": "top-bar",
+              "type": "row",
               "size": {
                 "px": 42.0
               },
-              "window_drag": true
+              "children": [
+                {
+                  "id": "back-forward",
+                  "type": "block",
+                  "content": {
+                    "mod": "back-forward"
+                  },
+                  "size": {
+                    "px": 76.0
+                  },
+                  "window_drag": true
+                },
+                {
+                  "id": "tabs",
+                  "type": "block",
+                  "content": {
+                    "mod": "space-tree-bar"
+                  },
+                  "size": {
+                    "weight": 1.0
+                  },
+                  "window_drag": true
+                }
+              ]
             },
             {
               "id": "work-body",

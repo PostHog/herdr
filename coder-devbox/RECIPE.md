@@ -2,7 +2,7 @@
 
 Your PostHog devbox's hogli commands and its PostHog UI forward on its machine header in the spaces sidebar.
 
-A Herdr machine whose ssh target ends in `.coder` (Coder's default) or starts with `coder.` (what `hogli devbox:setup` writes) is a Coder devbox. This piece adds two things to its header in `flat-spaces` (the `pull-requests` piece's spaces list), and nothing else to the window.
+A Herdr machine whose ssh target ends in `.coder` (Coder's default) or starts with `coder.` (what `hogli devbox:setup` writes) is a Coder devbox. This piece adds two things to its header in `flat-spaces` (the `pull-requests` piece's spaces list) and in `space-tree`, and nothing else to the window.
 
 ## What you see
 
@@ -41,7 +41,7 @@ A Herdr machine whose ssh target ends in `.coder` (Coder's default) or starts wi
 - **Check box setup** runs `hogli devbox:check`, which lists the logins and dotfiles the box still needs. **Apply dotfiles** runs `hogli devbox:dotfiles` for a box that couldn't clone a private dotfiles repo at start.
 - **Claude Remote Control** opens a space named "Claude Remote Control" on the box (`space.new` with its `machine`) that runs `claude remote-control` in `~/posthog`. When it stops, Enter starts it again and Ctrl-D leaves a shell.
   The session lives as long as that terminal. A second click goes to the existing space instead of starting another.
-- `flat-spaces` shows the globe and the menu only when `mods/coder-devbox/main.js` exists, so the spaces list is unchanged without this piece.
+- `flat-spaces` and `space-tree` show the globe and the menu only when `mods/coder-devbox/main.js` exists, so the spaces list is unchanged without this piece.
 - It runs programs: `hc`, `nc`, `test`, `coder whoami`, your login shell with `bin/hogli`, and `open` (`xdg-open` on Linux). It reads `data/prs-config.json` and the checkout's `hogli.yaml`.
 
 ## Built from
@@ -49,4 +49,4 @@ A Herdr machine whose ssh target ends in `.coder` (Coder's default) or starts wi
 - `mods/coder-devbox/main.js`: the menu, opened with `openOverlay({ mod: "coder-devbox", kind: "popup", props: { machine, target, action } })`; `action: "ui"` starts the forward at once.
 - `mods/coder-devbox/hogli.js`: the target, the checkout search, starting and stopping the forward, and the command lines.
 - `mod.json`: `{ "place": "none" }`, so it only shows as that popup.
-- In `pull-requests/mods/flat-spaces/main.js`: the globe (`devboxChip`), the right-click on a devbox's header, and `devboxUi`, which finds the forward in `terminals()` by its label.
+- In `pull-requests/mods/flat-spaces/main.js` and `space-tree/mods/space-tree/main.js`: the globe (`devboxChip`), the right-click on a devbox's header, and `devboxUi`, which finds the forward in `terminals()` by its label.
