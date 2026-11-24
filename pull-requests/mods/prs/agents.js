@@ -48,7 +48,7 @@ export function fixPrompt(pr, extra = "") {
 Keep going until all three hold:
 1. Every review thread is resolved. Human feedback comes first. Bot comments are advisory: check each claim against the code, then fix it or reply with the reason it doesn't apply, and resolve the thread either way.
 2. CI is green on the head commit. Read the current failing logs with gh, fix real failures, and prove any claim that a failure isn't caused by this PR (for example, it fails on the base branch too).
-3. The branch merges cleanly into ${pr.baseRef}: no conflicts and not behind. Merge the base in; don't rebase.
+3. The branch merges cleanly into ${pr.baseRef} and isn't stale. Merge the base in only when there are conflicts, when GitHub blocks the merge for being behind (merge state BEHIND), or when origin/${pr.baseRef} is more than 48 hours or 1000 commits ahead of the merge base; otherwise leave it. Merge; don't rebase.
 ${extra ? `\nFocus first on this:\n${extra}\n` : ""}
 Rules:
 - Never pass --no-verify or bypass hooks, never force-push, and never skip, disable or loosen a test to make it pass.
