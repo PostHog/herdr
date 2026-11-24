@@ -30,7 +30,7 @@ The `Pull-Requests` layout with one tree in place of the spaces and agents lists
 ## Built from
 
 - `layouts/Space-Tree.json`: `pull-requests/layouts/Pull-Requests.json` with its `spaces` and `agents` blocks replaced by one `space-tree` block, and its `tabs` block by `space-tree-bar`. It needs the `pull-requests` piece for the PR panel and page.
-  It also places a `back-forward` block left of the bar and a compact `ph-inbox` bar (40 px) above the PR panel; the tree shows each block while its piece's mod is installed and hides it otherwise, checking every 2 seconds, so turning a piece on or off in the piece picker shows or hides its block.
+  It also places a `back-forward` block left of the bar and a compact `ph-inbox` bar (40 px) above the PR panel, and the `claude-usage` strip (140 px) above the sidebar footer; the tree shows each block while its piece's mod is installed and hides it otherwise, checking every 2 seconds, so turning a piece on or off in the piece picker shows or hides its block.
 - `mods/space-tree/main.js`: reads `spaces()`, `panes()` and `terminals()`; every 10 seconds `git rev-parse` per folder in view (each folder at most every 30 seconds), and for Claude Code `hc get`, `~/.claude/sessions/<pid>.json` and the tail of the transcript, on the terminal's own machine. A remote pane's folder comes from `terminals()` when `panes()` has none.
 - `mods/space-tree/icons.js`: scores the candidates `git ls-files` returns and copies the winner into `data/space-tree/icons/` under Herdr's home, named by its hash (an `.ico` becomes a PNG through macOS's `sips`). A found icon is looked at again every six hours.
 - `mods/space-tree-status/main.js`: Herdr's `workspace-status` mod (0.1.18) with the piece shortcut hints.
