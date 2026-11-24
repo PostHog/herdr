@@ -42,6 +42,9 @@ const RANK = { blocked: 4, done: 3, working: 2, idle: 1 };
 const GIT_MS = 30000;
 const CLAUDE_MS = 10000;
 const INDENT = 14;
+const AVATAR_DIR = "data/space-tree/avatars";
+const AVATAR_MS = 24 * 3600000;
+const githubOwner = (url) => url.match(/github\.com[:/]([^/\s]+)\/[^/\s]+?(?:\.git)?\/?$/)?.[1] ?? null;
 
 // The pull-requests piece's PR state, shortened to what a space row has room for.
 const PR_TONES = { ok: "ansi2", bad: "ansi1", warn: "ansi3", run: "working", info: "ansi6", dim: "dim" };
@@ -86,6 +89,8 @@ export default class SpaceTree extends View {
     this.git = {}; // "machine\0cwd" -> { branch, linked } | null
     this.gitAt = {};
     this.claude = {}; // terminal address -> the folder its Claude session is in now
+    this.remotes = {}; // "machine\0top" -> the GitHub owner of its origin remote, or null
+    this.avatars = JSON.parse(localStorage.getItem("avatars") ?? "{}"); // owner -> { path, at }
     this.termCwd = {}; // terminal address -> its folder, for panes that report none (another machine's)
     this.homes = {}; // machine -> its home folder
     this.machines = []; // `hc machine ls`, without temporary ones
@@ -153,6 +158,7 @@ export default class SpaceTree extends View {
       try {
         await this.findClaudeFolders();
         await this.readGit();
+        await this.findAvatars();
       } catch (e) {
         console.log(`space-tree: ${e}`);
       } finally {
@@ -207,10 +213,10 @@ export default class SpaceTree extends View {
       if (now - (this.gitAt[key] ?? 0) < GIT_MS) continue;
       this.gitAt[key] = now;
       try {
-        const r = await exec("git", ["rev-parse", "HEAD", "--abbrev-ref", "HEAD", "--path-format=absolute", "--git-dir", "--git-common-dir"], { cwd, on: on ?? undefined });
+        const r = await exec("git", ["rev-parse", "HEAD", "--abbrev-ref", "HEAD", "--path-format=absolute", "--git-dir", "--git-common-dir", "--show-toplevel"], { cwd, on: on ?? undefined });
         if (r.code !== 0) { this.git[key] = null; continue; }
-        const [sha, branch, gitDir, common] = r.stdout.trim().split("\n");
-        this.git[key] = { branch: branch === "HEAD" ? "detached" : branch, linked: gitDir !== common, sha };
+        const [sha, branch, gitDir, common, top] = r.stdout.trim().split("\n");
+        this.git[key] = { branch: branch === "HEAD" ? "detached" : branch, linked: gitDir !== common, sha, top };
       } catch {
         this.git[key] ??= null;
       }
@@ -294,7 +300,44 @@ export default class SpaceTree extends View {
       .child(`#${pr.number}${more.length ? ` +${more.length}` : ""}`);
   }
 
-  spaceRow(t, s, color, count, top, glyph) {
+  // The GitHub owner of the repo a space's first terminal is in.
+  spaceRepo(s, ps) {
+    const tabs = new Set(s.tabs.map((tab) => tab.id));
+    for (const p of ps) {
+      if (!tabs.has(p.tab) || !p.terminal) continue;
+      const top = this.git[`${s.machine ?? ""}\0${this.claude[p.terminal] ?? this.cwdOf(p)}`]?.top;
+      if (top) return `${s.machine ?? ""}\0${top}`;
+    }
+    return null;
+  }
+
+  // A space's default icon is its repo owner's GitHub avatar, downloaded once a day.
+  async findAvatars() {
+    const ps = panes();
+    const now = Date.now();
+    let changed = false;
+    for (const s of spaces()) {
+      const repo = this.spaceRepo(s, ps);
+      if (!repo || repo in this.remotes) continue;
+      const [machine, top] = repo.split("\0");
+      const r = await exec("git", ["remote", "get-url", "origin"], { cwd: top, on: machine || undefined });
+      this.remotes[repo] = r.code === 0 ? githubOwner(r.stdout.trim()) : null;
+    }
+    for (const owner of new Set(Object.values(this.remotes).filter(Boolean))) {
+      const seen = this.avatars[owner];
+      if (seen && now - seen.at < AVATAR_MS) continue;
+      const path = `${AVATAR_DIR}/${owner.toLowerCase()}.png`;
+      await exec("mkdir", ["-p", `${appHome()}/${AVATAR_DIR}`]);
+      const r = await exec("curl", ["-fsSL", "--max-time", "10", "-o", `${appHome()}/${path}`, `https://github.com/${owner}.png?size=64`]);
+      this.avatars[owner] = { path: r.code === 0 ? path : seen?.path ?? null, at: now };
+      changed = true;
+    }
+    if (changed) localStorage.setItem("avatars", JSON.stringify(this.avatars));
+    const bySpace = Object.fromEntries(spaces().map((s) => [s.id, this.avatars[this.remotes[this.spaceRepo(s, ps)]]?.path ?? null]).filter(([, path]) => path));
+    if (JSON.stringify(bySpace) !== JSON.stringify(shared("space-tree.avatars") ?? {})) setShared("space-tree.avatars", bySpace);
+  }
+
+  spaceRow(t, s, color, count, top, glyph, avatar) {
     const open = !this.folded.has(s.id);
     const fill = color?.startsWith("#") ? color : (MARK[color] ?? t[color] ?? t.accent);
     const id = `space-${s.id}`;
@@ -330,8 +373,10 @@ export default class SpaceTree extends View {
       .on_click(() => run("space.select", { id: s.id }))
       .on_mouse_down("right", () => openOverlay({ mod: "space-tree-menu", kind: "popup", width: 200, height: 260, props: { space: s.id } }))
       .child(this.chevron(t, s.id, open, count, top))
-      .child(h_flex().size(18).flex_none().rounded(5).bg(fill).items_center().justify_center().text_color("#ffffff")
-        .child(glyph ? svg(`mods/space-tree-icon/icons/${glyph}.svg`).size(12) : div().text_size(10.5).font_bold().child([...s.name][0]?.toUpperCase() ?? "?")))
+      .child(!glyph && avatar
+        ? image(avatar).size(18).flex_none().rounded(5)
+        : h_flex().size(18).flex_none().rounded(5).bg(fill).items_center().justify_center().text_color("#ffffff")
+          .child(glyph ? svg(`mods/space-tree-icon/icons/${glyph}.svg`).size(12) : div().text_size(10.5).font_bold().child([...s.name][0]?.toUpperCase() ?? "?")))
       .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(s.name))
       .when(!open && Boolean(top), (el) => el.child(this.status(t, top)))
       .when(this.hovered === id, (el) => el.child(newTab));
@@ -450,6 +495,7 @@ export default class SpaceTree extends View {
     const sp = spaces();
     const colors = this.colors(sp);
     const glyphs = shared("space-tree.icons") ?? {};
+    const avatars = shared("space-tree.avatars") ?? {};
     const openPrs = (shared("prs.cache.mine")?.prs ?? []).filter((pr) => pr.state === "OPEN" && pr.mine);
     if (narrow()) return this.rail(t, sp);
 
@@ -482,7 +528,7 @@ export default class SpaceTree extends View {
         return { tab, mine };
       });
       const count = groups.reduce((n, g) => n + g.mine.length, 0);
-      const head = this.spaceRow(t, s, colors[s.id], count, s.status, glyphs[s.id]);
+      const head = this.spaceRow(t, s, colors[s.id], count, s.status, glyphs[s.id], avatars[s.id]);
       if (this.folded.has(s.id)) return [head];
       return [head, ...groups.flatMap(({ tab, mine }) => mine.flatMap((p) => {
         if (isAgent(p)) order.push(p.terminal);

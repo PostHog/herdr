@@ -2,7 +2,7 @@
 // in icons/, drawn on the space's color, searched by name and Lucide's tags. The
 // choice goes in the shared map "space-tree.icons" (space id -> icon name), which the space tree reads.
 
-import { View, div, svg } from "gpui-kit";
+import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, Scrollbar, v_virtual_list } from "gpui-base";
 import { props, closeOverlay, theme, spaces, shared, setShared } from "herdr";
 import { TAGS } from "./tags.js";
@@ -52,6 +52,7 @@ export default class SpaceTreeIcon extends View {
     const color = (shared("space.colors") ?? {})[space?.id];
     const fill = color?.startsWith("#") ? color : (MARK[color] ?? t[color] ?? t.accent);
     const current = (shared("space-tree.icons") ?? {})[space?.id] ?? null;
+    const avatar = (shared("space-tree.avatars") ?? {})[space?.id] ?? null;
     const tile = (name, i) => h_flex()
       .size(TILE)
       .flex_none()
@@ -61,8 +62,10 @@ export default class SpaceTreeIcon extends View {
       .border(2)
       .border_color(i === this.at ? t.accent : name === current ? t.border : "#00000000")
       .hover((s) => s.bg(t.hover))
-      .child(h_flex().size(22).rounded(6).bg(fill).items_center().justify_center().text_color("#ffffff")
-        .child(name ? svg(`mods/space-tree-icon/icons/${name}.svg`).size(14) : div().text_size(12).font_bold().child([...(space?.name ?? "?")][0].toUpperCase())));
+      .child(!name && avatar
+        ? image(avatar).size(22).rounded(6)
+        : h_flex().size(22).rounded(6).bg(fill).items_center().justify_center().text_color("#ffffff")
+          .child(name ? svg(`mods/space-tree-icon/icons/${name}.svg`).size(14) : div().text_size(12).font_bold().child([...(space?.name ?? "?")][0].toUpperCase())));
     const rows = [];
     const list = choices(this.query);
     for (let i = 0; i < list.length; i += COLUMNS) rows.push(list.slice(i, i + COLUMNS));
@@ -93,6 +96,6 @@ export default class SpaceTreeIcon extends View {
             .on_item_click((key) => this.pick(rows[Number(key)]?.[this.column])))
           .child(Scrollbar.vertical("icon-grid").absolute().inset_0())
         : div().pt(8).text_size(12).text_color(t.dim).child(`No icon matches "${this.query.trim()}"`))
-      .child(div().h(16).text_size(11.5).text_color(t.dim).child(list.length ? (list[this.at] ?? "First letter") : ""));
+      .child(div().h(16).text_size(11.5).text_color(t.dim).child(list.length ? (list[this.at] ?? (avatar ? "GitHub avatar" : "First letter")) : ""));
   }
 }
