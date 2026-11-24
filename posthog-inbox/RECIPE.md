@@ -18,10 +18,10 @@ A report is read in a pane, started locally (a worktree, a space and an agent), 
   - A report is a 46 px row. Line one is a priority tile (22 by 16 px: P0 `ansi1`, P1 `ansi3`, P2 `ansi4`, else `dim`, on the same color at 15%) and the title. Line two is PostHog's reason it's yours (else the summary), then its state ("starting…", "in Tasks", `#123`, "yours", "claimed", "needs input"), then its age ("now", "12m", "3h", "2d").
   - The report shown in the pane has the `selected` background. A report with a task has a `muted` title.
   - "Show 25 more" loads the next page.
-  - Instead of rows it says what's missing: "Add a PostHog personal API key to connect your inbox:" and the config path, the error in `blocked`, "Loading…", or "Nothing is waiting for you."
+  - Instead of rows it says what's missing: "Add a PostHog personal API key to connect your inbox.", links to PostHog US and EU's new-key form with the MCP Server preset filled in (`/settings/user-api-keys?preset=mcp_server`), and the config path, the error in `blocked`, "Loading…", or "Nothing is waiting for you."
     When a refresh fails with a list already there, the list stays under "Showing the list from 4m ago." and the error.
   - "No personal ranking yet: PostHog's recommended order." shows when PostHog ranked the list without your personal ranking.
-- With `{ "compact": true }` in its layout props, the block is only the Inbox header bar (count, age, triage and refresh), for a layout that keeps another list in the sidebar. A failed load shows "Failed" or "No API key" in `blocked` in place of the age, with the error as its tooltip. Under 160 px wide it is only the inbox count, and a click on it opens triage.
+- With `{ "compact": true }` in its layout props, the block is only the Inbox header bar (count, age, triage and refresh), for a layout that keeps another list in the sidebar. A failed load shows "Failed" or "No API key" in `blocked` in place of the age, with the error as its tooltip. A click on "No API key" opens the US new-key form; its tooltip names the EU one and the config path. Under 160 px wide it is only the inbox count, and a click on it opens triage.
 - Under 160 px wide the sidebar is a rail: one 32 by 26 px cell per task with its status mark, then the inbox count. A click on the count widens the sidebar to 300 px.
 - **The report pane**, a tab named "Inbox": a header with the priority tile, the title (16 px semibold), a tag on its right that says who holds it ("Claimed by you" in `accent`, "Claimed by <name>" in `ansi3`, "Unclaimed" in `dim`, each on its color at 15%; a claim an agent made adds " via <agent>", and a cloud task's says "Claimed by <name>'s cloud task"), a facts line (status, work state, repository, scout, "14 signals", "updated 3h"), PostHog's reason, and buttons: "Start locally" (or "Go to task" when its task has a space), "Start in cloud", "Open in PostHog".
   Below, selectable markdown up to 820 px wide: the summary, "Suggested next steps", "Pull requests", and the "Work log".
@@ -100,7 +100,7 @@ A report is read in a pane, started locally (a worktree, a space and an agent), 
 
 - `herdr-app check ~/.config/herdr-app/mods/ph-inbox` passes.
 - `python3 ~/.config/herdr-app/mods/ph-inbox/phmcp.py check` prints `{"ok": true, ...}` with the number of tools.
-- With no key, the Inbox says "Add a PostHog personal API key to connect your inbox:" and the config path.
+- With no key, the Inbox says "Add a PostHog personal API key to connect your inbox.", links to the new-key form, and gives the config path.
 - With a key, the Inbox lists your reports, and a click on one shows it in the "Inbox" tab with its work log.
 - "Start now" on a report makes a worktree under `~/.herdr/worktrees/`, a space in it with the agent working from the report's prompt, and a task row. In PostHog the report is claimed by you.
 - After the agent commits and "Open a draft pull request…" runs, the task row shows the pull request's number and the report lists the pull request.

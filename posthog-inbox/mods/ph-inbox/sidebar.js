@@ -5,7 +5,7 @@
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { theme, layout, run, spaces, panes, focused, shared, setShared, openOverlay, notify, window, nextCommand } from "herdr";
-import { ph, CONFIG_PATH } from "./ph.js";
+import { ph, CONFIG_PATH, KEY_URLS } from "./ph.js";
 import { worktreeStatus, pullRequest } from "./git.js";
 import { activeTasks, archivedTasks, taskById, taskOfReport, patchTask, spaceOf, goToTask } from "./store.js";
 import { attachPr, jobs, waitingJobs, jobOf, runJob, dropJob, JOB_SAYS, JOB_REMOVES } from "./flows.js";
@@ -296,7 +296,14 @@ export class Sidebar {
   notice(t) {
     const say = (text, color) => div().px(8).py(6).text_size(12).text_color(color ?? t.dim).child(text);
     if (this.error?.code === "no_key") {
-      return [say("Add a PostHog personal API key to connect your inbox:"), say(CONFIG_PATH, t.muted)];
+      const link = (region) => div().id(`key-${region}`).text_color(t.accent).cursor_pointer().hover((s) => s.underline())
+        .on_click((_e, cx) => cx.open_url(KEY_URLS[region])).child(`PostHog ${region}`);
+      return [
+        say("Add a PostHog personal API key to connect your inbox. Create one with the MCP Server preset in:"),
+        h_flex().px(8).py(2).gap(10).text_size(12).child(link("US")).child(link("EU")),
+        say("Then put it in this file as \"api_key\":"),
+        say(CONFIG_PATH, t.muted),
+      ];
     }
     if (this.error && !this.reports.length) return [say(this.error.message, t.blocked)];
     if (!this.reports.length) return [say(this.loading ? "Loading…" : this.fetched ? "Nothing is waiting for you." : "")];
@@ -333,7 +340,12 @@ export class Sidebar {
     const status = this.loading ? "Refreshing…" : this.compact && this.error ? (this.error.code === "no_key" ? "No API key" : "Failed") : this.fetched ? ago(this.fetched) : "";
     return h_flex().h(31).pl(8).pr(2).flex_none().items_center().gap(2).text_size(11.5).text_color(t.dim)
       .child(div().flex_1().child(title))
-      .child(div().flex_none().pr(4).text_size(11).when(this.compact && Boolean(this.error), (el) => el.text_color(t.blocked).tooltip(this.error.message)).child(status))
+      .child(div().id("inbox-status").flex_none().pr(4).text_size(11)
+        .when(this.compact && Boolean(this.error), (el) => el.text_color(t.blocked).tooltip(this.error.message))
+        .when(this.compact && this.error?.code === "no_key", (el) => el.cursor_pointer().hover((s) => s.underline())
+          .tooltip(`Create a key with the MCP Server preset in PostHog US (EU: eu.posthog.com), then put it in ${CONFIG_PATH} as "api_key".`)
+          .on_click((_e, cx) => cx.open_url(KEY_URLS.US)))
+        .child(status))
       .child(tool("inbox-triage", "layers", "Triage the inbox", triage))
       .child(tool("inbox-refresh", "mods/ph-inbox/refresh.svg", "Refresh the inbox", (_e, cx) => this.refresh(cx)));
   }

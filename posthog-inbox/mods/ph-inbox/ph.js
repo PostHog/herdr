@@ -3,6 +3,11 @@
 import { exec, appHome, home, readTextFile } from "herdr";
 
 export const CONFIG_PATH = "~/.config/posthog-inbox/config.json";
+// PostHog's new-key form, filled in with the MCP Server preset (it includes the inbox and task scopes).
+export const KEY_URLS = {
+  US: "https://us.posthog.com/settings/user-api-keys?preset=mcp_server",
+  EU: "https://eu.posthog.com/settings/user-api-keys?preset=mcp_server",
+};
 export const expand = (path) => (path?.startsWith("~/") ? home() + path.slice(1) : path);
 
 // Calls one PostHog MCP tool. Throws an Error with `code` ("no_key",
