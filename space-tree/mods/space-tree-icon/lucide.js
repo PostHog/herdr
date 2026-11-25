@@ -34,16 +34,24 @@ export async function loadLucide() {
   let tags = await readTextFile(`${dir}/tags.json`).catch(() => null);
   if (!tags) {
     const tgz = `${dir}.tgz`;
-    await exec("mkdir", ["-p", dir]);
+    const partial = `${dir}.part`;
+    await exec("rm", ["-rf", partial]);
+    await exec("mkdir", ["-p", partial]);
     const got = await exec("curl", ["-fsSL", "--max-time", "60", "-o", tgz, TARBALL]);
     if (got.code !== 0) throw new Error(`Couldn't download Lucide: ${got.stderr.trim() || `curl exited ${got.code}`}`);
     if ((await sha256(tgz)) !== SHA256) {
-      await exec("rm", ["-f", tgz]);
+      await exec("rm", ["-rf", tgz, partial]);
       throw new Error("The downloaded Lucide package didn't match its checksum");
     }
-    const untar = await exec("tar", ["-xzf", tgz, "-C", dir, "--strip-components", "1", "package/icons", "package/LICENSE", "package/tags.json"]);
+    const untar = await exec("tar", ["-xzf", tgz, "-C", partial, "--strip-components", "1", "package/icons", "package/LICENSE", "package/tags.json"]);
     await exec("rm", ["-f", tgz]);
-    if (untar.code !== 0) throw new Error(`Couldn't unpack Lucide: ${untar.stderr.trim()}`);
+    if (untar.code !== 0) {
+      await exec("rm", ["-rf", partial]);
+      throw new Error(`Couldn't unpack Lucide: ${untar.stderr.trim()}`);
+    }
+    await exec("rm", ["-rf", dir]);
+    const moved = await exec("mv", [partial, dir]);
+    if (moved.code !== 0) throw new Error(`Couldn't install Lucide: ${moved.stderr.trim()}`);
     tags = await readTextFile(`${dir}/tags.json`);
   }
   return JSON.parse(tags);

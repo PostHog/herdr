@@ -153,7 +153,7 @@ install_piece() {
 
   # Files this piece placed before that it no longer has.
   if [ -f "$MANIFEST" ]; then
-    awk -F'\t' -v p="$piece" 'NR == FNR { kept[$0]; next } $1 == p && !($0 in kept) { print $2 }' "$placed" "$MANIFEST" |
+    awk -F'\t' -v p="$piece" 'FILENAME == ARGV[1] { kept[$0]; next } $1 == p && !($0 in kept) { print $2 }' "$placed" "$MANIFEST" |
       while IFS= read -r rel; do
         [ -d "$HOME_DIR/$rel" ] || rm -f "$HOME_DIR/$rel"
       done

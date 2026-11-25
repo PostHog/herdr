@@ -3,7 +3,7 @@
 // choice goes in the shared map "space-tree.icons" (space id -> icon name), which the space tree reads.
 
 import { View, div, svg, image } from "gpui-kit";
-import { v_flex, h_flex, InputState, Input, Scrollbar, v_virtual_list } from "gpui-base";
+import { v_flex, h_flex, InputState, Input, Scrollbar, v_virtual_list, VirtualListScrollHandle } from "gpui-base";
 import { props, closeOverlay, theme, spaces, shared, setShared } from "herdr";
 import { FEATURED, iconPath, loadLucide } from "./lucide.js";
 
@@ -29,19 +29,21 @@ export default class SpaceTreeIcon extends View {
       try {
         this.tags = await loadLucide();
         const current = (shared("space-tree.icons") ?? {})[props()?.space] ?? null;
-        this.at = Math.max(0, choices(this.tags, "").indexOf(current));
+        this.at = Math.max(0, choices(this.tags, this.query).indexOf(current));
+        this.scroll.scroll_to_item(Math.floor(this.at / COLUMNS), "center");
       } catch (e) {
         this.error = String(e?.message ?? e);
       }
       cx.notify();
     });
     this.input = InputState.new({ value: "", placeholder: "Search icons" });
-    this.input.on("change", (_e, cx) => { this.query = this.input.value(); this.at = 0; cx.notify(); });
+    this.input.on("change", (_e, cx) => { this.query = this.input.value(); this.at = 0; this.scroll.scroll_to_item(0); cx.notify(); });
     this.input.on("submit", () => this.pick(choices(this.tags, this.query)[this.at]));
     this.input.focus();
     cx.timer.after(600, () => this.input.focus());
     this.handle = cx.focus_handle();
     this.column = 0;
+    this.scroll = VirtualListScrollHandle.new();
   }
 
   pick(name) {
@@ -55,6 +57,7 @@ export default class SpaceTreeIcon extends View {
   move(step) {
     const n = choices(this.tags, this.query).length;
     this.at = Math.min(n - 1, Math.max(0, this.at + step));
+    this.scroll.scroll_to_item(Math.floor(this.at / COLUMNS));
   }
 
   render() {
@@ -104,6 +107,7 @@ export default class SpaceTreeIcon extends View {
           .child(v_virtual_list("icon-grid", rows.length, TILE + GAP, (r) => String(r),
             (range) => rows.slice(range.start, range.end).map((row, k) => h_flex().gap(GAP).children(row.map((name, c) => tile(name, (range.start + k) * COLUMNS + c)))))
             .size_full()
+            .track_scroll(this.scroll)
             .on_item_click((key) => this.pick(rows[Number(key)]?.[this.column])))
           .child(Scrollbar.vertical("icon-grid").absolute().inset_0())
         : div().pt(8).text_size(12).text_color(t.dim).child(`No icon matches "${this.query.trim()}"`))

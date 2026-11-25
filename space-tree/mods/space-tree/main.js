@@ -46,7 +46,8 @@ const AVATAR_DIR = "data/space-tree/avatars";
 // Where the space-tree-icon picker unpacks Lucide (its lucide.js; Herdr doesn't import across mods).
 const LUCIDE_DIR = "data/space-tree-icon/lucide-0.460.0";
 const AVATAR_MS = 24 * 3600000;
-const githubOwner = (url) => url.match(/github\.com[:/]([^/\s]+)\/[^/\s]+?(?:\.git)?\/?$/)?.[1] ?? null;
+const REMOTE_RETRY_MS = 10 * 60000;
+const githubRepo = (url) => url.match(/github\.com[:/]([^/\s]+\/[^/\s]+?)(?:\.git)?\/?$/)?.[1] ?? null;
 
 // The pull-requests piece's PR state, shortened to what a space row has room for.
 const PR_TONES = { ok: "ansi2", bad: "ansi1", warn: "ansi3", run: "working", info: "ansi6", dim: "dim" };
@@ -91,7 +92,7 @@ export default class SpaceTree extends View {
     this.git = {}; // "machine\0cwd" -> { branch, linked } | null
     this.gitAt = {};
     this.claude = {}; // terminal address -> the folder its Claude session is in now
-    this.remotes = {}; // "machine\0top" -> the GitHub owner of its origin remote, or null
+    this.remotes = {}; // "machine\0top" -> { repo: its origin's GitHub "owner/name", or null; at }
     this.avatars = JSON.parse(localStorage.getItem("avatars") ?? "{}"); // owner -> { path, at }
     this.termCwd = {}; // terminal address -> its folder, for panes that report none (another machine's)
     this.homes = {}; // machine -> its home folder
@@ -303,7 +304,7 @@ export default class SpaceTree extends View {
       .child(`#${pr.number}${more.length ? ` +${more.length}` : ""}`);
   }
 
-  // The GitHub owner of the repo a space's first terminal is in.
+  // The checkout ("machine\0top") a space's first terminal is in.
   spaceRepo(s, ps) {
     const tabs = new Set(s.tabs.map((tab) => tab.id));
     for (const p of ps) {
@@ -319,24 +320,28 @@ export default class SpaceTree extends View {
     const ps = panes();
     const now = Date.now();
     let changed = false;
-    for (const s of spaces()) {
-      const repo = this.spaceRepo(s, ps);
-      if (!repo || repo in this.remotes) continue;
-      const [machine, top] = repo.split("\0");
-      const r = await exec("git", ["remote", "get-url", "origin"], { cwd: top, on: machine || undefined });
-      this.remotes[repo] = r.code === 0 ? githubOwner(r.stdout.trim()) : null;
+    const checkouts = new Set(Object.entries(this.git).filter(([, g]) => g?.top).map(([key, g]) => `${key.split("\0")[0]}\0${g.top}`));
+    for (const checkout of checkouts) {
+      const known = this.remotes[checkout];
+      if (known && (known.repo || now - known.at < REMOTE_RETRY_MS)) continue;
+      const [machine, top] = checkout.split("\0");
+      const r = await exec("git", ["remote", "get-url", "origin"], { cwd: top, on: machine || undefined }).catch(() => null);
+      this.remotes[checkout] = { repo: r?.code === 0 ? githubRepo(r.stdout.trim()) : null, at: now };
     }
-    for (const owner of new Set(Object.values(this.remotes).filter(Boolean))) {
+    for (const owner of new Set(Object.values(this.remotes).map((r) => r.repo?.split("/")[0]).filter(Boolean))) {
       const seen = this.avatars[owner];
       if (seen && now - seen.at < AVATAR_MS) continue;
       const path = `${AVATAR_DIR}/${owner.toLowerCase()}.png`;
+      const file = `${appHome()}/${path}`;
       await exec("mkdir", ["-p", `${appHome()}/${AVATAR_DIR}`]);
-      const r = await exec("curl", ["-fsSL", "--max-time", "10", "-o", `${appHome()}/${path}`, `https://github.com/${owner}.png?size=64`]);
-      this.avatars[owner] = { path: r.code === 0 ? path : seen?.path ?? null, at: now };
+      const r = await exec("curl", ["-fsSL", "--max-time", "10", "-o", `${file}.part`, `https://github.com/${owner}.png?size=64`]);
+      const saved = r.code === 0 && (await exec("mv", ["-f", `${file}.part`, file])).code === 0;
+      if (!saved) await exec("rm", ["-f", `${file}.part`]);
+      this.avatars[owner] = { path: saved ? path : seen?.path ?? null, at: now };
       changed = true;
     }
     if (changed) localStorage.setItem("avatars", JSON.stringify(this.avatars));
-    const bySpace = Object.fromEntries(spaces().map((s) => [s.id, this.avatars[this.remotes[this.spaceRepo(s, ps)]]?.path ?? null]).filter(([, path]) => path));
+    const bySpace = Object.fromEntries(spaces().map((s) => [s.id, this.avatars[this.remotes[this.spaceRepo(s, ps)]?.repo?.split("/")[0]]?.path ?? null]).filter(([, path]) => path));
     if (JSON.stringify(bySpace) !== JSON.stringify(shared("space-tree.avatars") ?? {})) setShared("space-tree.avatars", bySpace);
   }
 
@@ -527,18 +532,19 @@ export default class SpaceTree extends View {
     const spaceRows = (s) => {
       const tabs = s.tabs.filter((tab) => !tab.settled || tab.active);
       const groups = tabs.map((tab) => {
-        const mine = ps.filter((p) => p.tab === tab.id && p.terminal && !nested.has(p.terminal) && shown(p));
-        return { tab, mine };
+        const panesInTab = ps.filter((p) => p.tab === tab.id && p.terminal && !nested.has(p.terminal));
+        return { tab, mine: panesInTab.filter(shown), split: panesInTab.length > 1 };
       });
       const count = groups.reduce((n, g) => n + g.mine.length, 0);
       const head = this.spaceRow(t, s, colors[s.id], count, s.status, glyphs[s.id], avatars[s.id]);
       if (this.folded.has(s.id)) return [head];
-      return [head, ...groups.flatMap(({ tab, mine }) => mine.flatMap((p) => {
+      return [head, ...groups.flatMap(({ tab, mine, split }) => mine.flatMap((p) => {
         if (isAgent(p)) order.push(p.terminal);
         const kids = tree(p.terminal);
         const g = this.git[`${s.machine ?? ""}\0${this.claude[p.terminal] ?? this.cwdOf(p)}`];
-        const prs = g ? openPrs.filter((pr) => (!quiet(g.branch) && pr.headRef === g.branch) || pr.headSha === g.sha) : [];
-        const row = this.terminalRow(t, s, tab, p, mine.length > 1, kids, 1, g, prs);
+        const repo = g && this.remotes[`${s.machine ?? ""}\0${g.top}`]?.repo?.toLowerCase();
+        const prs = g ? openPrs.filter((pr) => pr.headSha === g.sha || (repo && pr.repo?.toLowerCase() === repo && !quiet(g.branch) && pr.headRef === g.branch)) : [];
+        const row = this.terminalRow(t, s, tab, p, split, kids, 1, g, prs);
         if (this.folded.has(p.terminal)) return [row];
         return [row, ...kids.map((k) => this.subRow(t, k, k.lines))];
       }))];
