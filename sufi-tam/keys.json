@@ -1,0 +1,6 @@
+{
+  "global": {
+    "cmd-shift-n": "tam-accounts.new-task",
+    "cmd-k": "tam-accounts.search"
+  }
+}
