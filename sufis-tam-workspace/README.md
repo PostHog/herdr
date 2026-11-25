@@ -1,4 +1,4 @@
-# sufi-tam
+# sufis-tam-workspace
 
 Sufi's Herdr setup for TAM work: your book of accounts in the sidebar, with tasks and their Claude chats under each account, an account pane beside the chat, a book-wide Opportunities board, opp editing that writes to Salesforce, and a Share button on every Claude chat.
 
@@ -34,7 +34,7 @@ It's built on the account pane (PostHog/claude-code-account-pane, internal): tha
    ```
 
    Claude keeps sessions per folder, so chats started in the old folders won't resume from the new ones.
-3. Enable the piece: `./install.sh enable sufi-tam`, then `herdr-app do layout.switch '{"name":"tam"}'`.
+3. Enable the piece: `./install.sh enable sufis-tam-workspace`, then `herdr-app do layout.switch '{"name":"tam"}'`.
 4. Merge `keys.json` (`cmd-shift-n`, `cmd-k`) into `~/.config/herdr-app/keys.json` by hand. `cmd-k` is free in Herdr's defaults, but check yours.
 5. Write `~/.config/tam-herdr/config.json`. The links and Customer Analytics prompts need it, and it stays out of this repo:
 
