@@ -6,7 +6,6 @@
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { spaces, panes, terminals, machines, focused, run, openOverlay, exec, hc, home, readTextFile, theme, shared, setShared, setAgentOrder, layout, appHome, window } from "herdr";
-import { findIcon } from "./icons.js";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -42,9 +41,29 @@ const installed = (mod) => readTextFile(`${appHome()}/mods/${mod}/main.js`).then
 const RANK = { blocked: 4, done: 3, working: 2, idle: 1 };
 const GIT_MS = 30000;
 const CLAUDE_MS = 10000;
-const ICON_MS = 6 * 3600000;
-const MISS_MS = 10 * 60000;
 const INDENT = 14;
+const AVATAR_DIR = "data/space-tree/avatars";
+// Where the space-tree-icon picker unpacks Lucide (its lucide.js; Herdr doesn't import across mods).
+const LUCIDE_DIR = "data/space-tree-icon/lucide-0.460.0";
+const AVATAR_MS = 24 * 3600000;
+const REMOTE_RETRY_MS = 10 * 60000;
+const githubRepo = (url) => url.match(/github\.com[:/]([^/\s]+\/[^/\s]+?)(?:\.git)?\/?$/)?.[1] ?? null;
+
+// The pull-requests piece's PR state, shortened to what a space row has room for.
+const PR_TONES = { ok: "ansi2", bad: "ansi1", warn: "ansi3", run: "working", info: "ansi6", dim: "dim" };
+function prState(pr) {
+  const c = pr.checks ?? {};
+  if (pr.queue?.active) return { label: `In the merge queue (${pr.queue.state.replace(/_/g, " ")})`, tone: "info" };
+  if (pr.queue && ["failed", "cancelled"].includes(pr.queue.state)) return { label: `Merge queue ${pr.queue.state}`, tone: "bad" };
+  if (pr.mergeable === "CONFLICTING" || pr.mergeState === "DIRTY") return { label: "Conflicts", tone: "bad" };
+  if (pr.reviewDecision === "CHANGES_REQUESTED") return { label: "Changes requested", tone: "bad" };
+  if (c.failed > 0 && pr.mergeState !== "UNSTABLE") return { label: `${c.failed} of ${c.total} checks failing`, tone: "bad" };
+  if (c.inProgress > 0) return { label: `${c.inProgress} of ${c.total} checks running`, tone: "run" };
+  if (pr.isDraft) return { label: "Draft", tone: "dim" };
+  if (pr.mergeState === "BEHIND") return { label: "Behind its base", tone: "warn" };
+  if (pr.mergeState === "BLOCKED" && pr.reviewDecision !== "APPROVED") return { label: "Waiting on review", tone: "warn" };
+  return { label: "Ready to merge", tone: "ok" };
+}
 
 const clean = (s) => (s ?? "").replace(/^[^\p{L}\p{N}]+/u, "").trim();
 const quiet = (b) => !b || b === "main" || b === "master";
@@ -69,10 +88,12 @@ function label(tab, p, many) {
 export default class SpaceTree extends View {
   init(_props, cx) {
     this.folded = new Set(JSON.parse(localStorage.getItem("folded") ?? "[]"));
+    this.showTerminals = localStorage.getItem("terminals") === "shown";
     this.git = {}; // "machine\0cwd" -> { branch, linked } | null
     this.gitAt = {};
     this.claude = {}; // terminal address -> the folder its Claude session is in now
-    this.icons = Object.fromEntries(Object.entries(JSON.parse(localStorage.getItem("icons") ?? "{}")).filter(([k]) => k.includes("\0"))); // "machine\0root" -> { path, at }
+    this.remotes = {}; // "machine\0top" -> { repo: its origin's GitHub "owner/name", or null; at }
+    this.avatars = JSON.parse(localStorage.getItem("avatars") ?? "{}"); // owner -> { path, at }
     this.termCwd = {}; // terminal address -> its folder, for panes that report none (another machine's)
     this.homes = {}; // machine -> its home folder
     this.machines = []; // `hc machine ls`, without temporary ones
@@ -127,6 +148,12 @@ export default class SpaceTree extends View {
     cx.notify();
   }
 
+  toggleTerminals(cx) {
+    this.showTerminals = !this.showTerminals;
+    localStorage.setItem("terminals", this.showTerminals ? "shown" : "hidden");
+    cx.notify();
+  }
+
   refresh(cx) {
     if (this.busy) return;
     this.busy = true;
@@ -134,7 +161,8 @@ export default class SpaceTree extends View {
       try {
         await this.findClaudeFolders();
         await this.readGit();
-        await this.findIcons();
+        await this.findAvatars();
+        if (!this.lucide) this.lucide = await readTextFile(`${appHome()}/${LUCIDE_DIR}/tags.json`).then(Boolean, () => false);
       } catch (e) {
         console.log(`space-tree: ${e}`);
       } finally {
@@ -189,10 +217,10 @@ export default class SpaceTree extends View {
       if (now - (this.gitAt[key] ?? 0) < GIT_MS) continue;
       this.gitAt[key] = now;
       try {
-        const r = await exec("git", ["rev-parse", "--abbrev-ref", "HEAD", "--path-format=absolute", "--git-dir", "--git-common-dir", "--show-toplevel"], { cwd, on: on ?? undefined });
+        const r = await exec("git", ["rev-parse", "HEAD", "--abbrev-ref", "HEAD", "--path-format=absolute", "--git-dir", "--git-common-dir", "--show-toplevel"], { cwd, on: on ?? undefined });
         if (r.code !== 0) { this.git[key] = null; continue; }
-        const [branch, gitDir, common, top] = r.stdout.trim().split("\n");
-        this.git[key] = { branch: branch === "HEAD" ? "detached" : branch, linked: gitDir !== common, top };
+        const [sha, branch, gitDir, common, top] = r.stdout.trim().split("\n");
+        this.git[key] = { branch: branch === "HEAD" ? "detached" : branch, linked: gitDir !== common, sha, top };
       } catch {
         this.git[key] ??= null;
       }
@@ -200,34 +228,8 @@ export default class SpaceTree extends View {
     for (const key of Object.keys(this.git)) if (!wanted.has(key)) { delete this.git[key]; delete this.gitAt[key]; }
   }
 
-  // The repo a space is in: where its first terminal is now.
   cwdOf(p) {
     return p.cwd ?? this.termCwd[p.terminal] ?? null;
-  }
-
-  spaceRoot(s, ps) {
-    const tabs = new Set(s.tabs.map((t) => t.id));
-    const first = ps.find((p) => tabs.has(p.tab) && this.cwdOf(p));
-    const cwd = first ? this.cwdOf(first) : null;
-    const top = cwd ? this.git[`${s.machine ?? ""}\0${cwd}`]?.top : null;
-    return top ? `${s.machine ?? ""}\0${top}` : null;
-  }
-
-  async findIcons() {
-    const now = Date.now();
-    const ps = panes();
-    let changed = false;
-    for (const s of spaces()) {
-      const root = this.spaceRoot(s, ps);
-      const seen = this.icons[root];
-      // A miss is asked again sooner: the repo may gain an icon, or its machine was away.
-      if (!root || (seen && now - seen.at < (seen.path ? ICON_MS : MISS_MS))) continue;
-      let path = null;
-      try { path = await findIcon(root.split("\0")[1], s.machine ?? null); } catch (e) { console.log(`space-tree icon: ${e}`); }
-      this.icons[root] = { path, at: now };
-      changed = true;
-    }
-    if (changed) localStorage.setItem("icons", JSON.stringify(this.icons));
   }
 
   colors(sp) {
@@ -281,7 +283,69 @@ export default class SpaceTree extends View {
       .child(div().min_w(0).truncate().child(g.branch));
   }
 
-  spaceRow(t, s, color, count, top, pic) {
+  prChip(t, key, prs) {
+    const [pr, ...more] = prs;
+    const state = prState(pr);
+    return h_flex()
+      .id(`pr-${key}`)
+      .flex_none()
+      .gap(3)
+      .px(5)
+      .h(18)
+      .rounded(5)
+      .items_center()
+      .text_size(11.5)
+      .text_color(t[PR_TONES[state.tone]] ?? t.dim)
+      .hover((st) => st.bg(t.hover))
+      .tooltip(`#${pr.number} ${pr.title}\n${state.label}${more.length ? `\nAlso ${more.map((p) => `#${p.number}`).join(", ")}` : ""}`)
+      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+      .on_click((_e, cx) => { cx.stop_propagation(); exec("open", [pr.url]); })
+      .child(svg("mods/workspace-chrome/git-compare.svg").size(11).flex_none())
+      .child(`#${pr.number}${more.length ? ` +${more.length}` : ""}`);
+  }
+
+  // The checkout ("machine\0top") a space's first terminal is in.
+  spaceRepo(s, ps) {
+    const tabs = new Set(s.tabs.map((tab) => tab.id));
+    for (const p of ps) {
+      if (!tabs.has(p.tab) || !p.terminal) continue;
+      const top = this.git[`${s.machine ?? ""}\0${this.claude[p.terminal] ?? this.cwdOf(p)}`]?.top;
+      if (top) return `${s.machine ?? ""}\0${top}`;
+    }
+    return null;
+  }
+
+  // A space's default icon is its repo owner's GitHub avatar, downloaded once a day.
+  async findAvatars() {
+    const ps = panes();
+    const now = Date.now();
+    let changed = false;
+    const checkouts = new Set(Object.entries(this.git).filter(([, g]) => g?.top).map(([key, g]) => `${key.split("\0")[0]}\0${g.top}`));
+    for (const checkout of checkouts) {
+      const known = this.remotes[checkout];
+      if (known && (known.repo || now - known.at < REMOTE_RETRY_MS)) continue;
+      const [machine, top] = checkout.split("\0");
+      const r = await exec("git", ["remote", "get-url", "origin"], { cwd: top, on: machine || undefined }).catch(() => null);
+      this.remotes[checkout] = { repo: r?.code === 0 ? githubRepo(r.stdout.trim()) : null, at: now };
+    }
+    for (const owner of new Set(Object.values(this.remotes).map((r) => r.repo?.split("/")[0]).filter(Boolean))) {
+      const seen = this.avatars[owner];
+      if (seen && now - seen.at < AVATAR_MS) continue;
+      const path = `${AVATAR_DIR}/${owner.toLowerCase()}.png`;
+      const file = `${appHome()}/${path}`;
+      await exec("mkdir", ["-p", `${appHome()}/${AVATAR_DIR}`]);
+      const r = await exec("curl", ["-fsSL", "--max-time", "10", "-o", `${file}.part`, `https://github.com/${owner}.png?size=64`]);
+      const saved = r.code === 0 && (await exec("mv", ["-f", `${file}.part`, file])).code === 0;
+      if (!saved) await exec("rm", ["-f", `${file}.part`]);
+      this.avatars[owner] = { path: saved ? path : seen?.path ?? null, at: now };
+      changed = true;
+    }
+    if (changed) localStorage.setItem("avatars", JSON.stringify(this.avatars));
+    const bySpace = Object.fromEntries(spaces().map((s) => [s.id, this.avatars[this.remotes[this.spaceRepo(s, ps)]?.repo?.split("/")[0]]?.path ?? null]).filter(([, path]) => path));
+    if (JSON.stringify(bySpace) !== JSON.stringify(shared("space-tree.avatars") ?? {})) setShared("space-tree.avatars", bySpace);
+  }
+
+  spaceRow(t, s, color, count, top, glyph, avatar) {
     const open = !this.folded.has(s.id);
     const fill = color?.startsWith("#") ? color : (MARK[color] ?? t[color] ?? t.accent);
     const id = `space-${s.id}`;
@@ -315,14 +379,13 @@ export default class SpaceTree extends View {
       .when(s.active, (el) => el.bg(t.selected))
       .when(!s.active, (el) => el.hover((st) => st.bg(t.hover)))
       .on_click(() => run("space.select", { id: s.id }))
-      .on_mouse_down("right", () => openOverlay({ mod: "menu", kind: "popup", width: 200, height: 260, props: { tab: "space", target: { id: s.id } } }))
+      .on_mouse_down("right", () => openOverlay({ mod: "space-tree-menu", kind: "popup", width: 200, height: 260, props: { space: s.id } }))
       .child(this.chevron(t, s.id, open, count, top))
-      .child(pic
-        // A light tile, as browsers draw favicons, so dark or light logos read in either theme.
-        ? h_flex().size(18).flex_none().rounded(5).overflow_hidden().bg("#ffffff").border(1).border_color(t.border).items_center().justify_center().child(image(pic).w(14).h(14))
-        : h_flex().size(18).flex_none().rounded(5).bg(fill).items_center().justify_center().text_size(10.5).font_bold().text_color("#ffffff").child([...s.name][0]?.toUpperCase() ?? "?"))
+      .child(!glyph && avatar
+        ? image(avatar).size(18).flex_none().rounded(5)
+        : h_flex().size(18).flex_none().rounded(5).bg(fill).items_center().justify_center().text_color("#ffffff")
+          .child(glyph ? svg(`${LUCIDE_DIR}/icons/${glyph}.svg`).size(12) : div().text_size(10.5).font_bold().child([...s.name][0]?.toUpperCase() ?? "?")))
       .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(s.name))
-      .when(!quiet(s.branch), (el) => el.child(div().flex_none().max_w(130).truncate().text_size(11.5).text_color(t.dim).child(s.branch)))
       .when(!open && Boolean(top), (el) => el.child(this.status(t, top)))
       .when(this.hovered === id, (el) => el.child(newTab));
   }
@@ -360,9 +423,8 @@ export default class SpaceTree extends View {
   // The same as a tab in Herdr's tab bar: click to show it, double-click to rename,
   // drag onto another row of the space to move the tab there, right-click for the
   // tab menu, the X to close. A tab split into panes closes one pane at a time.
-  terminalRow(t, s, tab, p, many, kids, depth) {
+  terminalRow(t, s, tab, p, many, kids, depth, g, prs) {
     const st = p.program?.agent || p.status ? p.status : null;
-    const g = this.git[`${s.machine ?? ""}\0${this.claude[p.terminal] ?? this.cwdOf(p)}`];
     const open = !this.folded.has(p.terminal);
     const top = kids.reduce((m, k) => ((RANK[k.st] ?? 0) > (RANK[m] ?? 0) ? k.st : m), null);
     const on = s.active && tab.active && p.focused;
@@ -411,7 +473,7 @@ export default class SpaceTree extends View {
       .child(this.chevron(t, p.terminal, open, kids.length, top))
       .child(icon(p.program, 14, t.muted))
       .child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(st || on ? t.foreground : t.muted).child(tab.zoomed && on ? `${label(tab, p, many)} Z` : label(tab, p, many)))
-      .child(this.branchTag(t, g, s.branch) ?? div())
+      .child(prs.length ? this.prChip(t, p.terminal, prs) : this.branchTag(t, g, s.branch) ?? div())
       .child(this.status(t, st) ?? div())
       .when(on || this.hovered === id, (el) => el.child(this.closeButton(t, id, () => (many ? run("pane.close", { pane: p.pane }) : run("tab.close", { id: tab.id })))));
   }
@@ -440,6 +502,9 @@ export default class SpaceTree extends View {
     const t = theme();
     const sp = spaces();
     const colors = this.colors(sp);
+    const glyphs = this.lucide ? shared("space-tree.icons") ?? {} : {};
+    const avatars = shared("space-tree.avatars") ?? {};
+    const openPrs = (shared("prs.cache.mine")?.prs ?? []).filter((pr) => pr.state === "OPEN" && pr.mine);
     if (narrow()) return this.rail(t, sp);
 
     const ps = panes();
@@ -460,21 +525,26 @@ export default class SpaceTree extends View {
     // A sub-agent with a pane of its own shows under its parent, not twice.
     const nested = new Set(all.filter((k) => k.parent && all.some((p) => p.address === k.parent)).map((k) => k.address));
 
+    const isAgent = (p) => Boolean(p.program?.agent || p.status);
+    const shown = (p) => this.showTerminals || isAgent(p) || all.some((k) => k.parent === p.terminal);
+
     const order = [];
     const spaceRows = (s) => {
       const tabs = s.tabs.filter((tab) => !tab.settled || tab.active);
       const groups = tabs.map((tab) => {
-        const mine = ps.filter((p) => p.tab === tab.id && p.terminal && !nested.has(p.terminal));
-        return { tab, mine };
+        const panesInTab = ps.filter((p) => p.tab === tab.id && p.terminal && !nested.has(p.terminal));
+        return { tab, mine: panesInTab.filter(shown), split: panesInTab.length > 1 };
       });
       const count = groups.reduce((n, g) => n + g.mine.length, 0);
-      const root = this.spaceRoot(s, ps);
-      const head = this.spaceRow(t, s, colors[s.id], count, s.status, root ? this.icons[root]?.path : null);
+      const head = this.spaceRow(t, s, colors[s.id], count, s.status, glyphs[s.id], avatars[s.id]);
       if (this.folded.has(s.id)) return [head];
-      return [head, ...groups.flatMap(({ tab, mine }) => mine.flatMap((p) => {
-        if (p.program?.agent || p.status) order.push(p.terminal);
+      return [head, ...groups.flatMap(({ tab, mine, split }) => mine.flatMap((p) => {
+        if (isAgent(p)) order.push(p.terminal);
         const kids = tree(p.terminal);
-        const row = this.terminalRow(t, s, tab, p, mine.length > 1, kids, 1);
+        const g = this.git[`${s.machine ?? ""}\0${this.claude[p.terminal] ?? this.cwdOf(p)}`];
+        const repo = g && this.remotes[`${s.machine ?? ""}\0${g.top}`]?.repo?.toLowerCase();
+        const prs = g ? openPrs.filter((pr) => pr.headSha === g.sha || (repo && pr.repo?.toLowerCase() === repo && !quiet(g.branch) && pr.headRef === g.branch)) : [];
+        const row = this.terminalRow(t, s, tab, p, split, kids, 1, g, prs);
         if (this.folded.has(p.terminal)) return [row];
         return [row, ...kids.map((k) => this.subRow(t, k, k.lines))];
       }))];
@@ -492,8 +562,15 @@ export default class SpaceTree extends View {
     return v_flex().size_full().min_h(0).bg(t.chrome).text_size(13)
       .child(h_flex().h(31).pl(16).pr(10).flex_none().items_center().justify_between().text_size(11.5).text_color(t.dim)
         .child("Spaces")
-        .child(div().id("space-new").size(26).flex_none().flex().items_center().justify_center().rounded(6).hover((s) => s.bg(t.hover).text_color(t.foreground))
-          .on_click(() => run("space.new")).child(svg("mods/workspace-chrome/plus.svg").size(14))))
+        .child(h_flex().gap(2).items_center()
+          .child(div().id("space-terminals").size(26).flex_none().flex().items_center().justify_center().rounded(6)
+            .text_color(this.showTerminals ? t.foreground : t.dim)
+            .when(this.showTerminals, (el) => el.bg(t.raised))
+            .hover((s) => s.bg(t.hover).text_color(t.foreground))
+            .tooltip(this.showTerminals ? "Hide terminals that aren't agents" : "Show every terminal")
+            .on_click((_e, cx) => this.toggleTerminals(cx)).child(svg("mods/workspace-chrome/terminal.svg").size(14)))
+          .child(div().id("space-new").size(26).flex_none().flex().items_center().justify_center().rounded(6).hover((s) => s.bg(t.hover).text_color(t.foreground))
+          .on_click(() => run("space.new")).child(svg("mods/workspace-chrome/plus.svg").size(14)))))
       .child(v_flex().id("tree").flex_1().min_h(0).px(8).pb(14).overflow_y_scrollbar().mode("always")
         .on_mouse_up("left", (_e, cx) => { this.pressed = null; this.over = null; cx.notify(); })
         .children(rows));

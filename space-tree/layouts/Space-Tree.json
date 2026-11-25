@@ -123,7 +123,7 @@
                   "id": "tabs",
                   "type": "block",
                   "content": {
-                    "mod": "space-tree-bar"
+                    "mod": "tabs"
                   },
                   "size": {
                     "weight": 1.0
