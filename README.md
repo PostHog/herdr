@@ -17,6 +17,7 @@ Each top-level folder with a `RECIPE.md` is one piece. You pick the pieces you w
 | [`piece-picker`](piece-picker/RECIPE.md) | A dialog with one switch per piece in this repo. Each switch runs `install.sh enable` or `disable` for you, and Update runs `install.sh`. Herdr's command palette can't list mods, so a key opens it (`cmd-shift-p` in its `keys.json`). |
 | [`update-lag`](update-lag/RECIPE.md) | Keeps Herdr and herdr-core a few days behind the newest release, while they still update by themselves. A dialog (`cmd-shift-u` in its `keys.json`) sets it up, changes the number of days, holds updates or takes the latest now. macOS on Apple Silicon only. |
 | [`back-forward`](back-forward/RECIPE.md) | Slack-style back and forward buttons that step through the spaces and tabs you looked at. Add its block to your layout; the recipe has the JSON. |
+| [`sufis-tam-workspace`](sufis-tam-workspace/README.md) | Sufi's TAM setup: your book of accounts in the sidebar, each with tasks and their Claude chats, the account pane beside the chat, a board of every open opp with an editor that saves to Salesforce, and a Share button on every Claude chat. Needs the account pane plugin; the README says what goes in its config. |
 
 ## Install
 
