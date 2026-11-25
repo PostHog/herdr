@@ -1,4 +1,4 @@
-import { div, svg } from "gpui-kit";
+import { div, svg, image } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { agents, panes, terminals, run, theme, setAgentOrder, shared, setShared, home, exec, hc } from "herdr";
 import { NAMES, VIEW, GITHUB, TRIAGED, REVIEW_PANES, VISITED, ROW, HEADER, COLS, MAX_ROWS, LINE, STALE_MS, CARD_W, CARD_H, GAP, now, settings, ago, order, newest } from "./shared.js";
@@ -28,7 +28,8 @@ export async function readContext() {
       const saved = JSON.parse(line.slice(tab + 1)), status = saved.status ?? saved;
       terminals[line.slice(0, tab)] = { pct: contextPercent(status), cost: status?.cost?.total_cost_usd ?? null,
         sessionId: status?.session_id ?? null, cwd: status?.workspace?.current_dir ?? status?.cwd ?? null,
-        transcript: status?.transcript_path ?? null };
+        transcript: status?.transcript_path ?? null, configDir: saved.config_dir ?? null,
+        model: status?.model?.display_name ?? null, effort: status?.effort?.level ?? null };
       const account = (accounts[saved.config_dir ?? "~/.claude"] ??= {});
       for (const [window, v] of Object.entries(status?.rate_limits ?? {})) {
         const have = account[window];
@@ -65,6 +66,7 @@ const inTime = (ms) => {
 export function usageStrip(t, accounts, usage = {}) {
   const profiles = settings().claudeProfiles ?? [];
   const label = (dir) => profiles.find((p) => p.configDir && p.configDir.replace(/^~/, home()).replace(/\/$/, "") === dir)?.name ?? dir.replace(/^.*\/\.?/, "");
+  const dragonOf = (dir) => { const i = profiles.findIndex((p) => p.configDir && p.configDir.replace(/^~/, home()).replace(/\/$/, "") === dir); return i >= 0 ? i % 2 : null; };
   const lines = accountLines(accounts, usage);
   if (!lines.length) return null;
   // 5h and week first, credits last, any per-model weeks (Fable…) between.
@@ -81,7 +83,9 @@ export function usageStrip(t, accounts, usage = {}) {
   };
   return v_flex().flex_none().px(GAP + 4).py(2).text_size(11).text_color(t.muted).border_b(1).border_color(t.border)
     .children(lines.map(({ dir, windows }) => h_flex().h(USAGE_H).gap(12).items_center().min_w(0).overflow_hidden()
-      .child(div().w(64).flex_none().truncate().font_semibold().text_color(t.foreground).child(label(dir)))
+      .child(h_flex().w(88).flex_none().gap(6).items_center()
+        .when(dragonOf(dir) != null, (el) => el.child(image(`mods/squirrel-dragon/dragon-${dragonOf(dir)}.svg`).w(18).h(11).flex_none()))
+        .child(div().flex_1().min_w(0).truncate().font_semibold().text_color(t.foreground).child(label(dir))))
       .children(columns.map((key) => cell(key, windows[key])))));
 }
 

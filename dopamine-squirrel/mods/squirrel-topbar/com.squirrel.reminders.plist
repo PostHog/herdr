@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Posts the macOS notification for reminders that came due, every minute, also while Herdr is closed
+     (mods/squirrel-topbar/reminders.py tick mac). Installed as ~/Library/LaunchAgents/com.squirrel.reminders.plist, with __HOME__ replaced by your home folder. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.squirrel.reminders</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>__HOME__/.config/herdr-app/mods/squirrel-topbar/reminders.py</string>
+    <string>tick</string>
+    <string>mac</string>
+  </array>
+  <key>StartInterval</key><integer>60</integer>
+  <key>RunAtLoad</key><true/>
+  <key>StandardErrorPath</key><string>__HOME__/.config/herdr-app/data/squirrel/reminders-job.log</string>
+</dict>
+</plist>

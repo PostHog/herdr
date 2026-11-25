@@ -45,8 +45,8 @@ export const reviewViews = {
       + "Check every claim against the code before you state it; if you haven't checked something, say so or leave it out. "
       + "Label opinion as opinion. Be clear, concise and direct: answer first, no filler, no recap, no pedantry.";
     const argv = past?.sessionId
-      ? ["/bin/sh", "-c", 'cd "$1" 2>/dev/null; exec claude --resume "$2"', "sh", past.cwd ?? home(), past.sessionId]
-      : ["claude", prompt];
+      ? ["/bin/sh", "-c", 'cd "$1" 2>/dev/null; exec claude --model claude-opus-5-5 --effort high --resume "$2"', "sh", past.cwd ?? home(), past.sessionId]
+      : ["claude", "--model", "claude-opus-5-5", "--effort", "high", prompt];
     run("pane.split", { direction: "down", argv });
     cx.spawn(async (cx) => {
       for (let i = 0; i < 50; i++) {
