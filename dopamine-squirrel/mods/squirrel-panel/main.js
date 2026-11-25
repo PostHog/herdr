@@ -1,16 +1,17 @@
-// Dopamine Squirrel's panel under the top bar (cmd-b toggles it, cmd-1/2/3 pick a view).
-// Views: Running agents (agents.js), Reviews (reviews.js) and My PRs (my-prs.js). squirrel-topbar
+// Dopamine Squirrel's panel under the top bar (cmd-b toggles it, cmd-1/2/3/4 pick a view).
+// Views: Running agents (agents.js), Devboxes (devboxes.js), Reviews (reviews.js) and My PRs (my-prs.js). squirrel-topbar
 // fetches the PR lists into shared "squirrel.github" every 5 minutes.
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { agents, panes, terminals, run, theme, shared, setShared, openOverlay } from "herdr";
-import { VIEW, GITHUB, TRIAGED, ROW, HEADER, COLS, MAX_ROWS, CARD_W, CARD_H, GAP, ago } from "./shared.js";
+import { agents, panes, terminals, run, theme, shared, setShared, openOverlay, home } from "herdr";
+import { VIEW, GITHUB, TRIAGED, ROW, HEADER, COLS, MAX_ROWS, CARD_W, CARD_H, GAP, ago, settings } from "./shared.js";
 import { stepSim, drawSim } from "./visualizer.js";
 import { readContext, readBackground, readSubagents, pruneContext, linkParents, agentsViews, usageHeight } from "./agents.js";
 import { readUsage } from "./usage.js";
 import { tableParts } from "./table.js";
 import { reviewViews } from "./reviews.js";
 import { myPrViews } from "./my-prs.js";
+import { devboxViews, DEVBOXES } from "./devboxes.js";
 
 export default class SquirrelPanel extends View {
   init(_props, cx) {
@@ -30,6 +31,15 @@ export default class SquirrelPanel extends View {
         const bg = await readBackground(ids);
         if (JSON.stringify(bg) !== JSON.stringify(this.background ?? {})) { this.background = bg; cx.notify(); }
         if (JSON.stringify(next) !== JSON.stringify(this.context)) { this.context = next; cx.notify(); }
+        // Each Claude terminal's subscription (1, 2… in claudeProfiles order), model and effort, for squirrel-pane-header.
+        const norm = (d) => (d ?? "~/.claude").replace(/^~/, home()).replace(/\/$/, "");
+        const order = (settings().claudeProfiles ?? []).map((p) => norm(p.configDir));
+        const accountOf = {};
+        for (const [id, s] of Object.entries(next.terminals)) {
+          const i = order.indexOf(norm(s.configDir));
+          accountOf[id] = { account: order.length > 1 && i >= 0 ? i + 1 : null, model: s.model, effort: s.effort };
+        }
+        if (JSON.stringify(accountOf) !== JSON.stringify(shared("squirrel.terminal-claude") ?? {})) setShared("squirrel.terminal-claude", accountOf);
         await cx.sleep(10000);
       }
     });
@@ -63,9 +73,15 @@ export default class SquirrelPanel extends View {
         this.vizAt = nowMs;
         this.sims ??= {};
         // The strip in the tab bar runs in every view; the merged-rows canvases only on My PRs.
-        if (this.headerViz) this.sims.header = stepSim(this.sims.header, ...this.headerViz, dt);
-        if (this.view() === "mine" && (shared(GITHUB)?.merged ?? []).length && this.vizSize)
-          for (const key of ["left", "right"]) this.sims[key] = stepSim(this.sims[key], ...this.vizSize[key], dt);
+        // A scene that throws starts a fresh one instead of ending this loop, which would freeze every strip.
+        try {
+          if (this.headerViz) this.sims.header = stepSim(this.sims.header, ...this.headerViz, dt);
+          if (this.view() === "mine" && (shared(GITHUB)?.merged ?? []).length && this.vizSize)
+            for (const key of ["left", "right"]) this.sims[key] = stepSim(this.sims[key], ...this.vizSize[key], dt);
+        } catch (e) {
+          console.log(`squirrel-panel visualizer: ${e}`);
+          this.sims = {};
+        }
         const subsLive = this.view() === "agents" && Object.keys(this.subagents ?? {}).length > 0;
         if (this.headerViz || this.view() === "mine" || subsLive) cx.notify();
       }
@@ -83,7 +99,7 @@ export default class SquirrelPanel extends View {
     this.showTriaged = false;
   }
 
-  view() { const v = shared(VIEW); return v === "reviews" || v === "mine" ? v : "agents"; }
+  view() { const v = shared(VIEW); return v === "reviews" || v === "mine" || v === "devboxes" ? v : "agents"; }
 
   // Every view sizes the panel to its content.
   fit(view, want) {
@@ -102,6 +118,8 @@ export default class SquirrelPanel extends View {
     const gh = shared(GITHUB) ?? {};
     const marks = shared(TRIAGED) ?? {};
     const reviewCount = (gh.prs ?? []).filter((p) => !p.draft && (!marks[p.url] || this.resurfaced(p, marks[p.url]))).length;
+    const boxes = shared(DEVBOXES) ?? {};
+    const boxesUp = (boxes.boxes ?? []).filter((b) => b.status === "running").length;
     const tab = (id, label) => h_flex().id(`view-${id}`).h(22).px(8).gap(5).items_center().rounded(4).text_size(11.5)
       .bg(view === id ? t.selected : t.chrome).text_color(view === id ? t.foreground : t.muted)
       .hover((s) => s.bg(t.hover)).on_click(() => setShared(VIEW, id)).child(label);
@@ -117,7 +135,7 @@ export default class SquirrelPanel extends View {
       if (this.width) this.fit("agents", HEADER + strip + (this.cardsHeight ?? GAP * 2 + rows * CARD_H + (rows - 1) * GAP) + 2);
     }
     else {
-      const v = view === "reviews" ? this.reviewsView(t, gh) : this.mineView(t, gh);
+      const v = view === "devboxes" ? this.devboxesView(t) : view === "reviews" ? this.reviewsView(t, gh) : this.mineView(t, gh);
       columns = v.columns; body = v.body;
       // Up to MAX_ROWS rows show before the list scrolls under the sticky header.
       this.fit(view, HEADER + COLS + Math.min(v.content, MAX_ROWS * ROW) + 6);
@@ -131,6 +149,7 @@ export default class SquirrelPanel extends View {
       })
       .child(h_flex().flex_none().h(HEADER).px(6).gap(4).items_center().border_b(1).border_color(t.border)
         .child(tab("agents", `Running agents (${agents().length})`))
+        .child(tab("devboxes", `Devboxes (${boxesUp})`))
         .child(tab("reviews", `Reviews (${reviewCount})`))
         .child(tab("mine", `My PRs (${(gh.mine ?? []).length})`))
         .child(div().flex_1().min_w(0).h(HEADER - 8).mx(8).relative().rounded(4).overflow_hidden().bg("#00000055")
@@ -142,7 +161,11 @@ export default class SquirrelPanel extends View {
             cx?.notify();
           })
           .children(this.headerViz ? drawSim(this.sims?.header, t.dim) : []))
-        .when(view !== "agents", (el) => el
+        .when(view === "devboxes", (el) => el
+          .child(div().text_size(10.5).text_color(t.dim).child(boxes.loading ? "refreshing…" : boxes.at ? `updated ${ago(boxes.at)} ago` : "loading…"))
+          .child(div().id("devbox-refresh").h(22).px(6).flex().items_center().rounded(4).text_size(11).text_color(t.muted)
+            .hover((s) => s.bg(t.hover).text_color(t.foreground)).on_click(() => run("squirrel-topbar.devbox_refresh")).child("Refresh")))
+        .when(view === "reviews" || view === "mine", (el) => el
           .when(Boolean(gh.error), (el) => el.child(div().id("gh-error").max_w(320).truncate().text_size(10.5).text_color(t.ansi1).cursor_pointer().underline()
             .tooltip("Show the full error").on_click(() => openOverlay({ mod: "squirrel-error" })).child(gh.error)))
           .when(Boolean(undo), (el) => el.child(div().id("undo").h(22).px(6).mr(4).flex().items_center().rounded(4).text_size(11)
@@ -157,4 +180,4 @@ export default class SquirrelPanel extends View {
   }
 }
 
-Object.assign(SquirrelPanel.prototype, agentsViews, tableParts, reviewViews, myPrViews);
+Object.assign(SquirrelPanel.prototype, agentsViews, tableParts, reviewViews, myPrViews, devboxViews);

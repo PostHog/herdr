@@ -241,7 +241,7 @@ export const myPrViews = {
           .when(Boolean(p.cloud), (el) => el.child(div().id(`cloud-${p.url}`).flex_none().px(5).h(16).flex().items_center().rounded(3)
             .border(1).border_color(t.ansi6).text_size(10).font_semibold().text_color(t.ansi6).cursor_pointer().tooltip("Opened by your PostHog cloud task")
             .on_click((_e, cx) => { cx.stop_propagation(); cx.open_url(p.taskUrl); }).child("cloud")))
-          .child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(t.foreground).child(p.title)))
+          .child(div().id(`title-m0-${p.url}`).tooltip(p.title).flex_1().min_w(0).truncate().text_size(12.5).text_color(t.foreground).child(p.title)))
         .child(note(p, kind))
         .child(c.cell(W.age, ago(Date.parse(p.created))))
         .child(c.cell(W.when, when ? ago(Date.parse(when)) : "", kind === "merged" ? c.green : t.dim))

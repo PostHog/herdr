@@ -12,13 +12,23 @@ Jake Ruth's opinionated, ADHD-proof Herdr setup: one top bar and one panel for e
 
 Review count, a fact-check button (paste a Slack link or screenshot, Claude checks it before you hit send), one-click standup, and a slow neon glow (sped up here).
 
+A bell for reminders: `cmd-shift-r`, type "monday 8am review the deploy PR" and Claude reads the time and task. Tick "Use this conversation" and it pulls what the task needs from the Claude pane you're in. Nothing saves until you confirm. When one comes due you get a toast and a Mac notification, and Start opens Claude with the task typed in. Reminders are in `data/squirrel/reminders.json`, so a force quit can't lose them.
+
+## Pane headers
+
+Each Claude pane shows its account's dragon, model and effort. Click the dragon to move that conversation to your other account, same history. A collapsed pane with a reply you haven't opened gets a glowing Unread chip. Work Claude left running in the background shows as quiet text ("1 shell in background"), so the spinner only means it's replying.
+
 ## Running agents · `cmd-1`
 
 ![Running agents](screenshots/agents.png)
 
 Every agent with its cost, context %, and what it's running in the background (shells, monitors, helpers), grouped by tab. Helpers say whose they are. On top, your Claude plan limits (5h, week, Fable, credits) for each subscription.
 
-## Reviews · `cmd-2`
+## Devboxes · `cmd-2`
+
+Your PostHog devboxes: running or stopped, when each auto-stops, which folder is synced to it and which panes work in that folder, with Stop and Start. Needs `hogli devbox:setup`.
+
+## Reviews · `cmd-3`
 
 ![Reviews](screenshots/reviews.png)
 
@@ -30,7 +40,7 @@ Team review requests get an AI tag: **You care** or **Not important**. Click a t
 
 Below them, PRs that asked for you by name, or team PRs tagged You care, that merged without your review, to glance at and tick off.
 
-## My PRs · `cmd-3`
+## My PRs · `cmd-4`
 
 ![My PRs](screenshots/my-prs.gif)
 
@@ -40,12 +50,18 @@ Your open PRs in any repo, the Trunk merge queue, and what merged this week, wit
 
 | | |
 | --- | --- |
-| `cmd-1` `cmd-2` `cmd-3` | Running agents, Reviews, My PRs |
+| `cmd-1` `cmd-2` `cmd-3` `cmd-4` | Running agents, Devboxes, Reviews, My PRs |
 | `cmd-b` | Show or hide the panel |
 | `cmd-t` `cmd-shift-d` | New pane, straight into Claude on the account you pick (1, 2, Enter for the last); quit it to get a shell |
 | `cmd-shift-t` | New tab |
 | `cmd-r` | Rename a pane |
 | `cmd-w` | Close a pane (asks first) |
+| `cmd-a` | The selected pane fills its column; the others shrink to their header |
+| `cmd-s` / `cmd-shift-s` | Only the panes above / below shrink; the selected pane takes their space |
+| `cmd-shift-a` | Open panes (and the selected one) get equal heights |
+| Same key within 5 s | Undo the last of those four |
+| `cmd-shift-r` | Add a reminder in plain words |
+| `cmd-alt-r` | Show reminders (the bell) |
 
 ## Heads up: some of this is Jake's
 
@@ -74,12 +90,16 @@ Setting this up or taking a part of it? [RECIPE.md](RECIPE.md) has setup, every 
 | Reviews, triage, CC button | `mods/squirrel-panel/reviews.js`, `table.js` |
 | AI review tags | `mods/squirrel-topbar/triage-ai.js`, `review-triage.md` |
 | My PRs, merge queue | `mods/squirrel-panel/my-prs.js` |
+| Devboxes | `mods/squirrel-panel/devboxes.js`, `mods/squirrel-topbar/devboxes.js` |
 | Visualizer | `mods/squirrel-panel/visualizer.js` |
 | Confetti | `mods/squirrel-confetti/` |
 | GitHub refresh error popup | `mods/squirrel-error/` |
 | Reopen a closed Claude pane | `mods/squirrel-reopen/` |
 | Pick the Claude account for a new pane | `mods/squirrel-account/`, `mods/squirrel-dragon/` |
 | Pane headers, rename | `mods/squirrel-pane-header/`, `mods/squirrel-rename/` |
+| Pane resize keys | `mods/squirrel-topbar/fit.js` |
+| Move a conversation to the other account (click the dragon) | `mods/squirrel-topbar/switch.js` |
+| Reminders: add, bell, firing, Mac notifications | `mods/squirrel-remind/`, `mods/squirrel-reminders/`, `mods/squirrel-topbar/reminders.js`, `reminders.py`, `recent-talk.py`, `com.squirrel.reminders.plist` |
 | Layout, keys | `layouts/Dopamine-Squirrel.json`, `keys.json` |
 
 What changes colour, since screenshots can't show it:

@@ -1,13 +1,20 @@
 {
   "layout:Dopamine-Squirrel": {
     "cmd-b": "layout.toggle:agents-panel",
+    "cmd-a": "squirrel-topbar.fit_only",
+    "cmd-s": "squirrel-topbar.fit_above",
+    "cmd-shift-a": "squirrel-topbar.fit_even",
+    "cmd-shift-s": "squirrel-topbar.fit_below",
     "cmd-1": "squirrel-topbar.show_agents",
-    "cmd-2": "squirrel-topbar.show_reviews",
-    "cmd-3": "squirrel-topbar.show_mine",
+    "cmd-2": "squirrel-topbar.show_devboxes",
+    "cmd-3": "squirrel-topbar.show_reviews",
+    "cmd-4": "squirrel-topbar.show_mine",
     "cmd-t": "squirrel-topbar.new_claude",
     "cmd-shift-d": "squirrel-topbar.new_claude",
     "cmd-shift-t": "tab.new",
     "cmd-r": "mod.open:squirrel-rename",
+    "cmd-shift-r": "squirrel-topbar.remind",
+    "cmd-alt-r": "squirrel-topbar.reminders_open",
     "cmd-w": "squirrel-topbar.close_pane"
   }
 }

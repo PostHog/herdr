@@ -45,8 +45,8 @@ export const reviewViews = {
       + "Check every claim against the code before you state it; if you haven't checked something, say so or leave it out. "
       + "Label opinion as opinion. Be clear, concise and direct: answer first, no filler, no recap, no pedantry.";
     const argv = past?.sessionId
-      ? ["/bin/sh", "-c", 'cd "$1" 2>/dev/null; exec claude --resume "$2"', "sh", past.cwd ?? home(), past.sessionId]
-      : ["claude", prompt];
+      ? ["/bin/sh", "-c", 'cd "$1" 2>/dev/null; exec claude --model claude-opus-5-5 --effort high --resume "$2"', "sh", past.cwd ?? home(), past.sessionId]
+      : ["claude", "--model", "claude-opus-5-5", "--effort", "high", prompt];
     run("pane.split", { direction: "down", argv });
     cx.spawn(async (cx) => {
       for (let i = 0; i < 50; i++) {
@@ -137,9 +137,9 @@ export const reviewViews = {
   },
 
   aiTag(p, tag, key, c, t) {
-    const care = tag.verdict === "needs";
-    return div().id(`ai-${key}`).flex_none().cursor_pointer()
-      .tooltip(`${tag.reason}${tag.note ? `\nYour note: ${tag.note}` : ""}\nClick to ${tag.corrected ? "hand it back to the AI" : "flip it"}`)
+    const care = tag.verdict === "needs", recheck = !tag.corrected && p.headSha && tag.sha !== p.headSha && tag.sha !== "merged";
+    return div().id(`ai-${key}`).flex_none().cursor_pointer().when(recheck, (el) => el.opacity(0.55))
+      .tooltip(`${recheck ? "From an earlier commit, re-checking the new ones\n" : ""}${tag.reason}${tag.note ? `\nYour note: ${tag.note}` : ""}\nClick to ${tag.corrected ? "hand it back to the AI" : "flip it"}`)
       .on_click((_e, cx) => { cx.stop_propagation(); this.correctTag(p); this.noteState(p); this.expanded[key] = true; cx.notify(); })
       .child(c.tag(`${care ? "You care" : "Not important"}${tag.corrected ? " ✓" : ""}`, care ? c.yellow : t.dim, Boolean(tag.corrected)));
   },
@@ -192,9 +192,13 @@ export const reviewViews = {
     const isDone = (p) => Boolean(marks[p.url]) && !back.get(p.url + p.number);
     // You care (asked by name, tagged You care, or not tagged yet): approved with CI passed, then CI passed, then the rest.
     // Not important last. Longest waiting first in each group.
-    const group = (p) => p.mine || aiTags[p.url]?.verdict !== "skip" ? (p.ci !== "SUCCESS" ? 2 : p.review === "APPROVED" ? 0 : 1) : 3;
-    // The order is set when GitHub data arrives, so a click (a tag flip) never moves rows under the pointer.
-    if (this.reviewOrder?.at !== gh.at) this.reviewOrder = { at: gh.at,
+    // After new commits the previous tag shows and counts until the AI re-checks, the same as it shows.
+    const tagOf = (p) => aiTags[p.url] ?? null;
+    const group = (p) => p.mine || tagOf(p)?.verdict !== "skip" ? (p.ci !== "SUCCESS" ? 2 : p.review === "APPROVED" ? 0 : 1) : 3;
+    // The order is set when GitHub data arrives or the AI tags a PR, so your own click (a tag flip) never
+    // moves rows under the pointer.
+    const aiKey = gh.at + prs.map((p) => { const tag = tagOf(p); return tag ? (tag.corrected ? tag.aiVerdict : tag.verdict) : "-"; }).join();
+    if (this.reviewOrder?.at !== aiKey) this.reviewOrder = { at: aiKey,
       pos: new Map(prs.slice().sort((a, b) => group(a) - group(b) || Date.parse(a.requestedAt) - Date.parse(b.requestedAt)).map((p, i) => [p.url, i])) };
     const sorted = prs.slice().sort((a, b) => (this.reviewOrder.pos.get(a.url) ?? 1e9) - (this.reviewOrder.pos.get(b.url) ?? 1e9));
     const open = sorted.filter((p) => !isDone(p)), done = sorted.filter(isDone);
@@ -234,8 +238,8 @@ export const reviewViews = {
             .when(p.mine, (el) => el.child(c.tag("@you", t.accent, true)))
             .when(Boolean(again), (el) => el.child(c.tag(`↻ ${again}`, c.yellow, false)))
             .when(p.mentioned, (el) => el.child(c.tag("mentioned", t.accent, false)))
-            .when(!p.mine && Boolean(aiTags[p.url]) && (aiTags[p.url].sha === p.headSha || aiTags[p.url].corrected), (el) => el.child(this.aiTag(p, aiTags[p.url], key, c, t)))
-            .child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(t.foreground).when(p.myReview === null, (el) => el.font_semibold()).child(p.title)))
+            .when(!p.mine && Boolean(aiTags[p.url]), (el) => el.child(this.aiTag(p, aiTags[p.url], key, c, t)))
+            .child(div().id(`title-r0-${p.url}`).tooltip(p.title).flex_1().min_w(0).truncate().text_size(12.5).text_color(t.foreground).when(p.myReview === null, (el) => el.font_semibold()).child(p.title)))
           .child(c.cell(110, p.author, t.muted))
           .child(div().w(52).flex_none().text_size(11).when(stale, (el) => el.font_semibold()).text_color(stale ? c.red : t.dim).child(ago(Date.parse(p.requestedAt))))
           .child(c.cell(36, ago(Date.parse(p.updated))))
@@ -294,7 +298,7 @@ export const reviewViews = {
           .child(h_flex().flex_1().min_w(0).gap(5).items_center()
             .when(Boolean(aiTags[p.url]), (el) => el.child(this.aiTag(p, aiTags[p.url], key, c, t)))
             .when(Boolean(p.coveredBy?.length), (el) => el.child(c.tag(`✓ ${p.coveredBy.map((l) => settings().nicknames?.[l] ?? l).join(", ")}`, c.green, false)))
-            .child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(rank(p) ? t.muted : t.foreground).child(p.title)))
+            .child(div().id(`title-r1-${p.url}`).tooltip(p.title).flex_1().min_w(0).truncate().text_size(12.5).text_color(rank(p) ? t.muted : t.foreground).child(p.title)))
           .child(c.cell(110, p.author, t.muted))
           .child(c.cell(52, ago(Date.parse(p.mergedAt)), c.green))
           .child(div().w(36).flex_none()).child(div().w(52).flex_none())

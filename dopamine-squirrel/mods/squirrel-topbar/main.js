@@ -1,9 +1,13 @@
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex, ScrollHandle } from "gpui-base";
-import { spaces, panes, run, openOverlay, theme, window, shared, setShared, layout, updates, nextCommand, home, hc, exec, appHome } from "herdr";
+import { spaces, panes, run, openOverlay, theme, window, shared, setShared, layout, updates, nextCommand, home, hc, exec, appHome, notify, focused } from "herdr";
 import { fetchGh, GH_EVERY_MS, myPrsChanged } from "./github.js";
+import { fetchDevboxes, devboxAction, DEVBOXES_EVERY_MS } from "./devboxes.js";
 import { tagReviews } from "./triage-ai.js";
 import { glow } from "./glow.js";
+import { fitPanes } from "./fit.js";
+import { switchAccount, otherProfile } from "./switch.js";
+import { refresh as refreshReminders, addReminder, updateReminder, tickHerdr, parseReminder, readTranscript, LIST as REMINDERS } from "./reminders.js";
 import { loadSettings, squirrelSettings } from "./settings.js";
 
 // A WATCH triage mark ({at, watch}) lets a PR back in on new commits, a new comment or a re-request.
@@ -38,8 +42,9 @@ function belowBar(width) {
 export default class SquirrelTopbar extends View {
   init(_props, cx) {
     cx.spawn(async (cx) => { for (;;) { await loadSettings().catch(() => null); await fetchGh(cx); await cx.sleep(GH_EVERY_MS); } });
-    // Tags new team review requests a few at a time, so a backlog clears in minutes (triage-ai.js).
-    cx.spawn(async (cx) => { for (;;) { await cx.sleep(60000); await tagReviews().catch(() => null); } });
+    // Tags new team review requests and new commits a few at a time, in parallel (triage-ai.js).
+    cx.spawn(async (cx) => { for (;;) { await cx.sleep(15000); await tagReviews().catch(() => null); } });
+    cx.spawn(async (cx) => { for (;;) { await fetchDevboxes().catch(() => null); await cx.sleep(DEVBOXES_EVERY_MS); } });
     cx.spawn(async (cx) => { for (;;) { await cx.sleep(60000); if (await myPrsChanged().catch(() => false)) await fetchGh(cx); } });
     // A pick in squirrel-account starts the Claude pane that asked for it (withAccount).
     cx.spawn(async (cx) => {
@@ -47,6 +52,17 @@ export default class SquirrelTopbar extends View {
         await cx.sleep(60);
         const pick = shared("squirrel.account-pick");
         if (this.awaiting && pick?.req === this.awaiting.req) { const go = this.awaiting.launch; this.awaiting = null; go(accountEnv(pick.configDir), cx); }
+      }
+    });
+    // Reminders: anything that came due while Herdr was closed shows at start, then every 30 seconds (reminders.js).
+    cx.spawn(async (cx) => {
+      await refreshReminders().catch(() => null);
+      for (;;) {
+        const due = await tickHerdr().catch(() => []);
+        // Also picks up changes made outside Herdr (the background job, or the file edited by hand).
+        if (!due.length) await refreshReminders().catch(() => null);
+        for (const r of due) notify({ title: "Reminder", body: r.task, level: "info", timeout: 0, action: { name: "squirrel-topbar.reminders_open" } });
+        await cx.sleep(30000);
       }
     });
     // squirrel.json edits show up within 30 seconds.
@@ -57,15 +73,39 @@ export default class SquirrelTopbar extends View {
       for (;;) {
         const c = await nextCommand();
         if (c === "gh_refresh" || c?.name === "gh_refresh") fetchGh(cx);
+        if (c === "devbox_refresh" || c?.name === "devbox_refresh") fetchDevboxes().catch(() => null);
+        if (c === "devbox_stop" || c === "devbox_start") devboxAction(c.slice("devbox_".length)).catch(() => null);
         // From a key or `do`: a centred dialog, since a popup opens at the click.
         if (c === "reopen" || c?.name === "reopen") openOverlay({ mod: "squirrel-reopen", kind: "dialog", width: 460, height: 380 });
         if (c === "fact_check" || c?.name === "fact_check") this.withAccount(null, (env, cx) => this.factCheck(cx, env));
         // cmd-t and cmd-shift-d: Claude in a pane below, on the subscription picked, then a shell when it exits.
         if (c === "new_claude" || c?.name === "new_claude")
           this.withAccount(null, (env) => run("pane.split", { direction: "down", argv: ["/bin/sh", "-c", '"$@"; exec "$SHELL" -l', "sh", ...env, "claude"] }));
-        for (const v of ["agents", "reviews", "mine"]) {
+        for (const v of ["agents", "devboxes", "reviews", "mine"]) {
           if (c === `show_${v}` || c?.name === `show_${v}`) { setShared("squirrel.view", v); run("layout.show", { id: "agents-panel" }); }
         }
+        if (c === "fit_only" || c?.name === "fit_only") fitPanes("only", cx);
+        if (c === "fit_above" || c?.name === "fit_above") fitPanes("above", cx);
+        if (c === "fit_even" || c?.name === "fit_even") fitPanes("even", cx);
+        if (c === "fit_below" || c?.name === "fit_below") fitPanes("below", cx);
+        // A click on a pane header's dragon asks first, then moves that pane's conversation (switch.js).
+        if (c === "switch_ask" || c?.name === "switch_ask") this.askSwitch();
+        if (c === "switch_account" || c?.name === "switch_account") {
+          const terminal = this.switchTerminal;
+          this.switchTerminal = null;
+          cx.spawn(async (cx) => {
+            const why = await switchAccount(terminal, squirrelSettings().claudeProfiles ?? [], cx).catch((e) => String(e?.message ?? e));
+            if (why) notify({ title: "Couldn't move the conversation", body: why, level: "error" });
+          });
+        }
+        if (c === "remind" || c?.name === "remind") this.openRemind(cx);
+        if (c === "reminders_open" || c?.name === "reminders_open") openOverlay({ mod: "squirrel-reminders", kind: "popup", width: 520, height: 460, at: belowBar(520) });
+        if (c === "remind_parse" || c?.name === "remind_parse") this.remindParse(cx);
+        if (c === "remind_save" || c?.name === "remind_save") {
+          const r = shared("squirrel.remind-save");
+          if (r) addReminder(r).catch((e) => notify({ title: "Couldn't save the reminder", body: String(e?.message ?? e), level: "error" }));
+        }
+        if (c === "remind_act" || c?.name === "remind_act") this.remindAct(cx);
         if (c === "close_pane" || c?.name === "close_pane") {
           openOverlay({ mod: "confirm", kind: "dialog", width: 340, height: 150,
             props: { title: "Close this pane?", detail: "Anything running in it stops.", command: { name: "pane.close" } } });
@@ -106,6 +146,16 @@ export default class SquirrelTopbar extends View {
   }
 
   // GitHub icon with the count of PRs waiting on me; opens the GitHub view in the agents panel.
+  // Reminders (reminders.js): the count is how many have come due and wait for Start, Snooze or Dismiss.
+  bell(t, stop) {
+    const due = (shared(REMINDERS) ?? []).filter((r) => r.status === "due").length;
+    return h_flex().id("bell").h(26).px(6).gap(4).flex_none().items_center().rounded(6).text_color(due ? t.foreground : t.dim)
+      .hover((s) => s.bg(t.hover)).tooltip("Reminders ⌥⌘R · add one ⇧⌘R").on_mouse_down("left", stop)
+      .on_click(() => openOverlay({ mod: "squirrel-reminders", kind: "popup", width: 520, height: 460, at: belowBar(520) }))
+      .child(svg("mods/squirrel-topbar/bell.svg").size(15))
+      .when(due > 0, (el) => el.child(div().px(5).h(16).flex().items_center().rounded(8).bg(t.blocked).text_color(t.background).text_size(10.5).font_semibold().child(String(due))));
+  }
+
   ghBadge(t, stop) {
     const gh = shared("squirrel.github") ?? {};
     const triaged = shared("squirrel.triaged") ?? {};
@@ -120,6 +170,55 @@ export default class SquirrelTopbar extends View {
       .child(svg("icons/gh.svg").size(14))
       .when(count > 0, el => el.child(div().px(5).h(16).flex().items_center().rounded(8).bg(t.blocked).text_color(t.background).text_size(10.5).font_semibold().child(String(count))))
       .when(Boolean(gh.error), el => el.child("!"));
+  }
+
+  // cmd-shift-r: the add popup, told which Claude conversation you were in, if any, so it can pick
+  // out what the reminder refers to.
+  async openRemind(cx) {
+    const f = focused(), pane = panes().find((p) => p.pane === f?.pane);
+    const transcript = pane?.program?.agent && f?.terminal ? await readTranscript(f.terminal) : null;
+    openOverlay({ mod: "squirrel-remind", kind: "dialog", width: 560, height: 330, props: { transcript, title: pane?.title ?? null } });
+  }
+
+  remindParse(cx) {
+    const req = shared("squirrel.remind-req");
+    if (!req) return;
+    cx.spawn(async () => {
+      try { setShared("squirrel.remind-res", { id: req.id, result: await parseReminder(req.text, req.transcript) }); }
+      catch (e) { setShared("squirrel.remind-res", { id: req.id, error: String(e?.message ?? e) }); }
+    });
+  }
+
+  remindAct(cx) {
+    const act = shared("squirrel.remind-act");
+    if (!act) return;
+    setShared("squirrel.remind-act", null);
+    const r = (shared(REMINDERS) ?? []).find((x) => x.id === act.id);
+    if (!r) return;
+    const fail = (e) => notify({ title: "Couldn't update the reminder", body: String(e?.message ?? e), level: "error" });
+    if (act.action === "dismiss") updateReminder(r.id, { status: "dismissed", done_at: Date.now() }).catch(fail);
+    if (act.action === "delete") updateReminder(r.id, { status: "deleted", done_at: Date.now() }).catch(fail);
+    if (act.action === "snooze") updateReminder(r.id, { status: "upcoming", at: act.at, herdr_told: false, mac_told: false }).catch(fail);
+    if (act.action === "start") {
+      this.withAccount(null, (env, cx) => {
+        const text = [r.task, r.context].filter(Boolean).join("\n\n");
+        this.claudeWithText(cx, env, ["--model", r.model || "claude-opus-5-5", "--effort", r.effort || "high", "-n", r.task.slice(0, 60)], text);
+        updateReminder(r.id, { status: "started", done_at: Date.now() }).catch(fail);
+      });
+    }
+  }
+
+  askSwitch() {
+    // Only the pane whose dragon was just clicked, never a guess at which pane was meant.
+    const clicked = shared("squirrel.switch-target"), profiles = squirrelSettings().claudeProfiles ?? [];
+    this.switchTerminal = clicked && Date.now() - clicked.at < 5000 ? clicked.terminal : null;
+    const from = profiles[(shared("squirrel.terminal-claude")?.[this.switchTerminal]?.account ?? 0) - 1];
+    const to = from && otherProfile(from.configDir, profiles);
+    if (!to) return notify({ title: "Couldn't move the conversation", body: "Couldn't tell which subscription this pane is on.", level: "error" });
+    openOverlay({ mod: "confirm", kind: "dialog", width: 380, height: 190, props: {
+      title: `Move this conversation to ${to.name}?`,
+      detail: `Claude restarts in this pane on ${to.name}, with the same history, model and effort. Anything typed but not sent is lost.`,
+      command: { name: "squirrel-topbar.switch_account" } } });
   }
 
   // One click starts the standup: Claude (standupCommand) with the standup skill from the PostHog MCP. A second click focuses that pane.
@@ -141,13 +240,21 @@ export default class SquirrelTopbar extends View {
     const template = "Fact-check this before I send it. Verify each claim against the code, docs, PRs or data you can reach "
       + "(read Slack links with the Slack tools). Tell me plainly if I'm wrong, overstating, missing context, or about to look "
       + "like a retard. Verdict first, then corrected wording ready to paste into Slack: Slack formatting (*bold*, _italic_, "
-      + "`code`, bullets) is fine, but no blockquote bars or other terminal-only gutter characters. Be clear, concise and direct. Here it is: ";
+      + "`code`, bullets) is fine, but no blockquote bars or other terminal-only gutter characters. Do every check yourself: open and read each "
+      + "source directly, and never hand reading or checking to a subagent or another model. Only state what you read yourself, with its link "
+      + "and the line you relied on; if you couldn't check something, say so. Think it through before you answer, and re-read the source before "
+      + "you take anything back. Be clear, concise and direct. Here it is: ";
+    this.claudeWithText(cx, env, ["--model", "claude-opus-5-5", "--effort", "high", "--disallowed-tools", "Agent,Workflow", "-n", "Fact check"], template);
+  }
+
+  // Claude in a pane below with `text` typed into its input, not sent. Herdr can only type by pasting,
+  // so this borrows the clipboard and puts all of it back after, images included (clipboard.js).
+  claudeWithText(cx, env, flags, text) {
     const checkout = squirrelSettings().posthogCheckout.replace(/^~/, home());
     const clip = (mode) => exec("/bin/sh", ["-c", 'osascript -l JavaScript "$1" "$2" "${TMPDIR:-/tmp}/squirrel-clipboard" 2>/dev/null',
       "sh", `${appHome()}/mods/squirrel-topbar/clipboard.js`, mode]).catch(() => null);
     const before = new Set(panes().map((p) => p.pane));
-    run("pane.split", { direction: "down", argv: ["/bin/sh", "-c", 'cd "$1" 2>/dev/null || cd; shift; exec "$@"', "sh", checkout,
-      ...env, "claude", "--model", "opus", "--effort", "high", "-n", "Fact check"] });
+    run("pane.split", { direction: "down", argv: ["/bin/sh", "-c", 'cd "$1" 2>/dev/null || cd; shift; exec "$@"', "sh", checkout, ...env, "claude", ...flags] });
     cx.spawn(async (cx) => {
       let pane = null;
       for (let i = 0; i < 50 && !pane; i++) { pane = panes().find((p) => !before.has(p.pane)); if (!pane) await cx.sleep(100); }
@@ -159,7 +266,7 @@ export default class SquirrelTopbar extends View {
         await cx.sleep(250);
       }
       await clip("save");
-      await exec("/bin/sh", ["-c", 'printf "%s" "$1" | pbcopy', "sh", template]).catch(() => null);
+      await exec("/bin/sh", ["-c", 'printf "%s" "$1" | pbcopy', "sh", text]).catch(() => null);
       run("pane.focus", { pane: pane.pane });
       run("terminal.paste");
       await cx.sleep(400);
@@ -272,6 +379,7 @@ export default class SquirrelTopbar extends View {
       .child(div().id("standup").size(26).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.ansi3)
         .hover(s => s.bg(t.hover)).tooltip("Start today's standup").on_mouse_down("left", stop).on_click((_e, cx) => this.standup(cx))
         .child(this.standupStarting ? svg("mods/workspace-chrome/spinner.svg").size(14).spin(900) : svg("mods/squirrel-topbar/megaphone.svg").size(15)))
+      .child(this.bell(t, stop))
       .child(button("reopen", svg("mods/workspace-chrome/clock.svg").size(15), () => openOverlay({ mod: "squirrel-reopen", kind: "popup", width: 460, height: 380, at: belowBar(460) })).tooltip("Reopen a closed Claude pane"))
       .child(button("search", svg("mods/workspace-chrome/search.svg").size(15), () => run("mod.open", { name: "picker" })))
       .child(button("machine", svg("mods/workspace-chrome/server.svg").size(15), () => run("mod.open", { name: "machine-add" })))

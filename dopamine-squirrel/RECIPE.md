@@ -36,6 +36,9 @@ Laid out for a vertical monitor; works on a wide one too. [README.md](README.md)
 - **Plan limits strip**: one line per Claude subscription, with the same columns on each: 5-hour, week, per-model weeks such as Fable, and usage credits, each with when it resets. `usage.js` reads Claude Code's own `/usage` screen every 3 minutes: it starts a hidden Claude session in an empty folder, types `/usage`, reads the screen and closes the session. That sends nothing to the model. Between reads, the statusline keeps 5-hour and week current after every reply.
 - The panel sizes itself to the rows of cards.
 
+### Devboxes (`mods/squirrel-panel/devboxes.js`)
+One row per PostHog devbox: status, instance type and region, time until it auto-stops, the folder synced to it with the panes working in that folder (click one to go to it), whether the PostHog app is up, and a Stop or Start button. The button runs `hogli devbox:stop` / `devbox:start` from your PostHog checkout in `squirrel-topbar`; while it runs the status chip counts up (`stopping 12s`), the boxes are re-read every 10 seconds, and a toast reports the result. A failure shows hogli's last line under the row. `squirrel-topbar/devboxes.js` reads the boxes every minute with the `coder` and `mutagen` binaries that `hogli devbox:setup` installs in `~/.hogli/bin`. Without them the tab says so.
+
 ### Reviews (`mods/squirrel-panel/reviews.js`)
 
 - Every open PR where you or one of your teams is a requested reviewer, newest first, PRs that ask for you by name on top (`@you` tag and an accent edge).
@@ -71,7 +74,7 @@ Laid out for a vertical monitor; works on a wide one too. [README.md](README.md)
 
 | Key | Does |
 | --- | --- |
-| `cmd-1` / `cmd-2` / `cmd-3` | Running agents / Reviews / My PRs, showing the panel if it's hidden |
+| `cmd-1` / `cmd-2` / `cmd-3` / `cmd-4` | Running agents / Devboxes / Reviews / My PRs, showing the panel if it's hidden |
 | `cmd-b` | Show or hide the panel |
 | `cmd-t`, `cmd-shift-d` | New pane below, straight into Claude on the account you pick (no shell start-up); quitting Claude leaves a shell |
 | `cmd-shift-t` | New tab |
